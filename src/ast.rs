@@ -12,6 +12,13 @@ pub enum Op
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct Closure
+{
+    pub params: Vec<String>,
+    pub body: Box<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr
 {
     // Basic Values
@@ -19,6 +26,7 @@ pub enum Expr
     Identifier(String),
     String(String), // "hello"
     Boolean(bool),
+    Nil,
     Shell(String), // `ls`
 
     // Operations
@@ -39,9 +47,12 @@ pub enum Expr
     // Function calls (simplified for scripting)
     Call
     {
-        function: String,
+        function: Box<Expr>,
         args: Vec<Expr>,
+        block: Option<Closure>,
     },
+
+    Yield(Vec<Expr>),
 
     If
     {

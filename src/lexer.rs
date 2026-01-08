@@ -21,6 +21,8 @@ pub enum Token
     While,
     For,
     In,
+    Yield,
+    Pipe,
     End,
     True,
     False,
@@ -170,6 +172,11 @@ impl Lexer
                 self.position += 1;
                 Token::Colon
             }
+            '|' =>
+            {
+                self.position += 1;
+                Token::Pipe
+            }
             _ =>
             {
                 // Ignore unknown chars for this MVP
@@ -224,6 +231,7 @@ impl Lexer
             "while" => Token::While,
             "for" => Token::For,
             "in" => Token::In,
+            "yield" => Token::Yield,
             "true" => Token::True,
             "false" => Token::False,
             "fn" => Token::Fn,

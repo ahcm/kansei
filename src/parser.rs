@@ -1,4 +1,4 @@
-use crate::ast::{Expr, Op};
+use crate::ast::{Closure, Expr, Op};
 use crate::lexer::{Lexer, Token};
 
 pub struct Parser
@@ -40,13 +40,11 @@ impl Parser
         self.parse_block()
     }
 
-    // Handles: x = ...
     fn parse_assignment(&mut self) -> Expr
     {
         if let Token::Identifier(name) = &self.current_token
         {
-            // Peek ahead cheat: we should use proper peeking, but cloning for MVP is fine
-            let mut temp_lexer = self.lexer.clone(); // Note: Lexer needs Clone derive added
+            let mut temp_lexer = self.lexer.clone();
             if temp_lexer.next_token() == Token::Equals
             {
                 let var_name = name.clone();
@@ -61,7 +59,6 @@ impl Parser
         self.parse_expression()
     }
 
-    // LEVEL 1: Equality & Comparison (==, !=, <, >)
     fn parse_expression(&mut self) -> Expr
     {
         let mut left = self.parse_math(); 
@@ -90,7 +87,6 @@ impl Parser
         left
     }
 
-    // LEVEL 2: Addition & Subtraction (+, -)
     fn parse_math(&mut self) -> Expr
     {
         let mut left = self.parse_term();
@@ -114,7 +110,6 @@ impl Parser
         left
     }
 
-    // LEVEL 3: Multiplication & Division (*, /)
     fn parse_term(&mut self) -> Expr
     {
         let mut left = self.parse_factor();
@@ -138,7 +133,6 @@ impl Parser
         left
     }
 
-    // LEVEL 4: Atoms and Postfix (Indexing)
     fn parse_factor(&mut self) -> Expr
     {
         let mut expr = self.parse_atom();
@@ -151,6 +145,53 @@ impl Parser
                 expr = Expr::Index {
                     target: Box::new(expr),
                     index: Box::new(index),
+                };
+            } else if self.current_token == Token::LeftParen {
+                self.eat(); // (
+                let mut args = Vec::new();
+                if self.current_token != Token::RightParen {
+                    loop {
+                        args.push(self.parse_expression());
+                        if self.current_token == Token::Comma {
+                            self.eat();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                self.expect(Token::RightParen);
+
+                // Check for Block { |params| body }
+                let block = if self.current_token == Token::LeftBrace {
+                    self.eat(); // {
+                    let mut params = Vec::new();
+                    if self.current_token == Token::Pipe {
+                        self.eat(); // |
+                        loop {
+                            match &self.current_token {
+                                Token::Identifier(p) => params.push(p.clone()),
+                                _ => panic!("Expected param name"),
+                            }
+                            self.eat();
+                            if self.current_token == Token::Comma {
+                                self.eat();
+                            } else {
+                                break;
+                            }
+                        }
+                        self.expect(Token::Pipe);
+                    }
+                    let body = self.parse_block();
+                    self.expect(Token::RightBrace);
+                    Some(Closure { params, body: Box::new(body) })
+                } else {
+                    None
+                };
+
+                expr = Expr::Call {
+                    function: Box::new(expr),
+                    args,
+                    block,
                 };
             } else {
                 break;
@@ -190,42 +231,11 @@ impl Parser
             }
             Token::Identifier(name) =>
             {
-                // Check for Call with Parens: func(arg1, arg2)
-                let mut temp_lexer = self.lexer.clone();
-                if temp_lexer.next_token() == Token::LeftParen
-                {
-                    self.eat(); // eat name
-                    self.eat(); // eat (
-                    let mut args = Vec::new();
-                    if self.current_token != Token::RightParen
-                    {
-                        loop
-                        {
-                            args.push(self.parse_expression());
-                            if self.current_token == Token::Comma
-                            {
-                                self.eat();
-                            }
-                            else
-                            {
-                                break;
-                            }
-                        }
-                    }
-                    self.expect(Token::RightParen);
-                    return Expr::Call {
-                        function: name,
-                        args,
-                    };
-                }
-
                 self.eat();
 
-                // Legacy built-in support (puts "hello")
+                // Legacy built-in support
                 if name == "puts" || name == "print" || name == "write_file" || name == "read_file" || name == "len"
                 {
-                    // Note: added 'len' to legacy support check just in case, though usually len() has parens.
-                    // If user types 'len arr', it goes here.
                     let mut args = Vec::new();
                     args.push(self.parse_expression());
 
@@ -236,8 +246,9 @@ impl Parser
                     }
 
                     return Expr::Call {
-                        function: name,
+                        function: Box::new(Expr::Identifier(name)),
                         args,
+                        block: None,
                     };
                 }
                 Expr::Identifier(name)
@@ -248,6 +259,51 @@ impl Parser
             Token::For => self.parse_for(),
             Token::LeftBracket => self.parse_array(),
             Token::LeftBrace => self.parse_map(),
+            Token::LeftParen => {
+                self.eat();
+                if self.current_token == Token::RightParen {
+                    self.eat();
+                    return Expr::Nil;
+                }
+                let expr = self.parse_expression();
+                self.expect(Token::RightParen);
+                expr
+            },
+            Token::Yield => {
+                self.eat();
+                let mut args = Vec::new();
+                if self.current_token == Token::LeftParen {
+                     self.eat();
+                     if self.current_token != Token::RightParen {
+                         loop {
+                             args.push(self.parse_expression());
+                             if self.current_token == Token::Comma {
+                                 self.eat();
+                             } else {
+                                 break;
+                             }
+                         }
+                     }
+                     self.expect(Token::RightParen);
+                } else {
+                    // Variadic-ish greedy parsing
+                    while self.current_token != Token::EOF &&
+                          self.current_token != Token::End &&
+                          self.current_token != Token::Else &&
+                          self.current_token != Token::Elif &&
+                          self.current_token != Token::RightBrace &&
+                          self.current_token != Token::RightParen
+                    {
+                        args.push(self.parse_expression());
+                        if self.current_token == Token::Comma {
+                            self.eat();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                Expr::Yield(args)
+            }
             _ => panic!("Unexpected token: {:?}", self.current_token),
         }
     }
@@ -418,6 +474,7 @@ impl Parser
         while self.current_token != Token::End
             && self.current_token != Token::Else
             && self.current_token != Token::Elif
+            && self.current_token != Token::RightBrace // Handle block end }
             && self.current_token != Token::EOF
         {
             statements.push(self.parse_assignment());

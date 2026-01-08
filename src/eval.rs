@@ -1,42 +1,24 @@
-use crate::ast::{Expr, Op};
-use crate::value::Value;
+use crate::ast::{Closure, Expr, Op};
+use crate::value::{Environment, Value};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
 use std::process::Command;
-
-#[derive(Clone)]
-struct UserFunction {
-    params: Vec<String>,
-    body: Expr,
-}
+use std::rc::Rc;
+use std::cell::RefCell;
 
 pub struct Interpreter {
-    // Stack of environments. Index 0 is global.
-    scopes: Vec<HashMap<String, Value>>,
-    functions: HashMap<String, UserFunction>,
+    // Current environment (scope)
+    env: Rc<RefCell<Environment>>,
+    // Stack of blocks passed to currently executing functions.
+    block_stack: Vec<Option<(Closure, Rc<RefCell<Environment>>)>>,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
         Self {
-            scopes: vec![HashMap::new()],
-            functions: HashMap::new(),
-        }
-    }
-
-    fn get_var(&self, name: &str) -> Value {
-        for scope in self.scopes.iter().rev() {
-            if let Some(val) = scope.get(name) {
-                return val.clone();
-            }
-        }
-        panic!("Undefined variable: {}", name);
-    }
-
-    fn set_var(&mut self, name: String, val: Value) {
-        if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(name, val);
+            env: Rc::new(RefCell::new(Environment::new(None))),
+            block_stack: Vec::new(),
         }
     }
 
@@ -45,6 +27,7 @@ impl Interpreter {
             Expr::Integer(i) => Value::Integer(*i),
             Expr::String(s) => Value::String(s.clone()),
             Expr::Boolean(b) => Value::Boolean(*b),
+            Expr::Nil => Value::Nil,
             Expr::Shell(cmd_str) => {
                 let output = if cfg!(target_os = "windows") {
                     Command::new("cmd").args(&["/C", cmd_str]).output()
@@ -60,19 +43,52 @@ impl Interpreter {
                     Err(_) => Value::String("".to_string()),
                 }
             }
-            Expr::Identifier(name) => self.get_var(name),
+            Expr::Identifier(name) => {
+                self.env.borrow().get(name).expect(&format!("Undefined variable: {}", name))
+            }
             Expr::Assignment { name, value } => {
                 let val = self.eval(value);
-                self.set_var(name.clone(), val.clone());
+                self.env.borrow_mut().define(name.clone(), val.clone());
                 val
             }
             Expr::FunctionDef { name, params, body } => {
-                let func = UserFunction {
+                // Capture current env (Closure)
+                let func_env = self.env.clone();
+                let func = Value::Function {
                     params: params.clone(),
-                    body: *body.clone(),
+                    body: body.clone(),
+                    env: func_env,
                 };
-                self.functions.insert(name.clone(), func);
-                Value::Nil
+                self.env.borrow_mut().define(name.clone(), func.clone());
+                func
+            }
+            Expr::Yield(args) => {
+                let block_data = self.block_stack.last().cloned();
+                
+                if let Some(Some((closure, saved_env))) = block_data {
+                     let arg_vals: Vec<Value> = args.iter().map(|a| self.eval(a)).collect();
+                     
+                     // Create new env for block, parent = saved_env (Lexical Scoping)
+                     let new_env = Rc::new(RefCell::new(Environment::new(Some(saved_env))));
+                     
+                     // Bind params
+                     for (param, val) in closure.params.iter().zip(arg_vals.into_iter()) {
+                         new_env.borrow_mut().define(param.clone(), val);
+                     }
+                     
+                     // Swap env
+                     let original_env = self.env.clone();
+                     self.env = new_env;
+                     
+                     let result = self.eval(&closure.body);
+                     
+                     // Restore env
+                     self.env = original_env;
+                     
+                     result
+                } else {
+                    panic!("No block given for yield");
+                }
             }
             Expr::Array(elements) => {
                 let vals = elements.iter().map(|e| self.eval(e)).collect();
@@ -83,7 +99,6 @@ impl Interpreter {
                 for (k_expr, v_expr) in entries {
                     let k_val = self.eval(k_expr);
                     let v_val = self.eval(v_expr);
-                    // Force key to string for simplicity
                     let k_str = match k_val {
                         Value::String(s) => s,
                         _ => k_val.inspect(),
@@ -116,109 +131,113 @@ impl Interpreter {
                         };
                         map.get(&key).cloned().unwrap_or(Value::Nil)
                     }
-                    Value::String(s) => {
-                         // Optional: String indexing
-                         if let Value::Integer(idx) = index_val {
-                            let i = idx as usize;
-                            if idx >= 0 && i < s.len() {
-                                // Simplified: assumes ASCII/byte indexing or char?
-                                // Rust strings are UTF-8. 
-                                // Let's skip string indexing for now to avoid complexity or do chars().nth()
-                                s.chars().nth(i).map(|c| Value::String(c.to_string())).unwrap_or(Value::Nil)
-                            } else {
-                                Value::Nil
-                            }
-                         } else {
-                             panic!("String index must be an integer");
-                         }
-                    }
                     _ => panic!("Index operator not supported on this type"),
                 }
             }
-            Expr::Call { function, args } => {
-                // 1. Check User Functions
-                if let Some(func) = self.functions.get(function).cloned() {
-                    let arg_vals: Vec<Value> = args.iter().map(|a| self.eval(a)).collect();
-
-                    if arg_vals.len() != func.params.len() {
-                        panic!(
-                            "Arity mismatch for '{}': expected {}, got {}",
-                            function,
-                            func.params.len(),
-                            arg_vals.len()
-                        );
-                    }
-
-                    let mut new_scope = HashMap::new();
-                    for (param, val) in func.params.iter().zip(arg_vals.into_iter()) {
-                        new_scope.insert(param.clone(), val);
-                    }
-
-                    self.scopes.push(new_scope);
-                    let result = self.eval(&func.body);
-                    self.scopes.pop();
-                    return result;
+            Expr::Call { function, args, block } => {
+                // Check for built-ins first (optimization + legacy support)
+                if let Expr::Identifier(name) = &**function {
+                     match name.as_str() {
+                        "puts" | "print" => {
+                            let mut last_val = Value::Nil;
+                            for arg in args {
+                                let val = self.eval(arg);
+                                if name == "puts" {
+                                    println!("{}", val);
+                                } else {
+                                    print!("{}", val);
+                                    io::stdout().flush().unwrap();
+                                }
+                                last_val = val;
+                            }
+                            return last_val;
+                        }
+                        "len" => {
+                            let val = self.eval(&args[0]);
+                            return match val {
+                                Value::String(s) => Value::Integer(s.len() as i64),
+                                Value::Array(arr) => Value::Integer(arr.len() as i64),
+                                Value::Map(map) => Value::Integer(map.len() as i64),
+                                _ => Value::Integer(0),
+                            };
+                        }
+                        "read_file" => {
+                            let path = self.eval(&args[0]).to_string();
+                            return match fs::read_to_string(&path) {
+                                Ok(content) => Value::String(content),
+                                Err(_) => Value::Nil,
+                            };
+                        }
+                        "write_file" => {
+                            let path = self.eval(&args[0]).to_string();
+                            let content = self.eval(&args[1]).to_string();
+                            return match fs::File::create(&path) {
+                                Ok(mut file) => {
+                                    write!(file, "{}", content).unwrap();
+                                    Value::Boolean(true)
+                                }
+                                Err(_) => Value::Boolean(false),
+                            };
+                        }
+                        _ => {} // Fall through to variable lookup
+                     }
                 }
 
-                // 2. Built-ins
-                match function.as_str() {
-                    "puts" | "print" => {
-                        let mut last_val = Value::Nil;
-                        for arg in args {
-                            let val = self.eval(arg);
-                            if function == "puts" {
-                                println!("{}", val);
-                            } else {
-                                print!("{}", val);
-                                io::stdout().flush().unwrap();
-                            }
-                            last_val = val;
+                // Evaluate function expression (First-Class Functions)
+                let func_val = self.eval(function);
+
+                if let Value::Function { params: func_params, body: func_body, env: func_env } = func_val {
+                    let arg_vals: Vec<Value> = args.iter().map(|a| self.eval(a)).collect();
+
+                    if arg_vals.len() < func_params.len() {
+                        // CURRYING / PARTIAL APPLICATION
+                        // Create new env extending the function's closure
+                        let new_env = Rc::new(RefCell::new(Environment::new(Some(func_env.clone()))));
+                        
+                        // Bind provided args
+                        for (param, val) in func_params.iter().zip(arg_vals.iter()) {
+                             new_env.borrow_mut().define(param.clone(), val.clone());
                         }
-                        last_val
+
+                        // Return new function with remaining params
+                        let remaining_params = func_params[arg_vals.len()..].to_vec();
+                        
+                        return Value::Function {
+                            params: remaining_params,
+                            body: func_body.clone(),
+                            env: new_env,
+                        };
+                    } else if arg_vals.len() > func_params.len() {
+                         panic!("Too many arguments");
                     }
-                    "len" => {
-                        if args.len() != 1 {
-                             panic!("len() requires 1 argument");
-                        }
-                        let val = self.eval(&args[0]);
-                        match val {
-                            Value::String(s) => Value::Integer(s.len() as i64),
-                            Value::Array(arr) => Value::Integer(arr.len() as i64),
-                            Value::Map(map) => Value::Integer(map.len() as i64),
-                            _ => Value::Integer(0), // or panic
-                        }
+
+                    // FULL CALL
+                    let block_entry = if let Some(closure) = block {
+                        Some((closure.clone(), self.env.clone()))
+                    } else {
+                        None
+                    };
+                    self.block_stack.push(block_entry);
+
+                    let new_env = Rc::new(RefCell::new(Environment::new(Some(func_env.clone()))));
+                    for (param, val) in func_params.iter().zip(arg_vals.into_iter()) {
+                        new_env.borrow_mut().define(param.clone(), val);
                     }
-                    "read_file" => {
-                        if args.is_empty() {
-                            panic!("read_file requires 1 argument");
-                        }
-                        let path = self.eval(&args[0]).to_string();
-                        match fs::read_to_string(&path) {
-                            Ok(content) => Value::String(content),
-                            Err(_) => Value::Nil,
-                        }
-                    }
-                    "write_file" => {
-                        if args.len() < 2 {
-                            panic!("write_file requires 2 arguments");
-                        }
-                        let path = self.eval(&args[0]).to_string();
-                        let content = self.eval(&args[1]).to_string();
-                        match fs::File::create(&path) {
-                            Ok(mut file) => {
-                                write!(file, "{}", content).unwrap();
-                                Value::Boolean(true)
-                            }
-                            Err(_) => Value::Boolean(false),
-                        }
-                    }
-                    _ => panic!("Unknown function: {}", function),
+
+                    let original_env = self.env.clone();
+                    self.env = new_env;
+                    let result = self.eval(&func_body);
+                    self.env = original_env;
+                    self.block_stack.pop();
+                    
+                    result
+                } else {
+                    panic!("Tried to call a non-function value: {}", func_val);
                 }
             }
             Expr::BinaryOp { left, op, right } => {
                 let l = self.eval(left);
                 let r = self.eval(right);
-
                 match (l, r) {
                     (Value::Integer(i1), Value::Integer(i2)) => match op {
                         Op::Add => Value::Integer(i1 + i2),
@@ -296,13 +315,13 @@ impl Interpreter {
                 match iter_val {
                     Value::Array(arr) => {
                         for item in arr {
-                            self.set_var(var.clone(), item);
+                            self.env.borrow_mut().assign(var.clone(), item);
                             last_val = self.eval(body);
                         }
                     }
                     Value::Map(map) => {
                         for key in map.keys() {
-                            self.set_var(var.clone(), Value::String(key.clone()));
+                            self.env.borrow_mut().assign(var.clone(), Value::String(key.clone()));
                             last_val = self.eval(body);
                         }
                     }

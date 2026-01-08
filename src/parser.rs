@@ -37,7 +37,7 @@ impl Parser
 
     pub fn parse(&mut self) -> Expr
     {
-        self.parse_assignment()
+        self.parse_block()
     }
 
     // Handles: x = ...
@@ -261,7 +261,7 @@ impl Parser
             && self.current_token != Token::Elif
             && self.current_token != Token::EOF
         {
-            statements.push(self.parse_expression());
+            statements.push(self.parse_assignment());
         }
 
         // Optimization: If block is just 1 line, return that line.

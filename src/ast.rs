@@ -56,6 +56,13 @@ pub enum Expr
         body: Box<Expr>,
     },
 
+    FunctionDef
+    {
+        name: String,
+        params: Vec<String>,
+        body: Box<Expr>,
+    },
+
     // A block of code (so an 'if' can run multiple lines)
     Block(Vec<Expr>),
 }

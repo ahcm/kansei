@@ -172,10 +172,66 @@ impl Parser
             }
             Token::Identifier(name) =>
             {
+                // Check for Call with Parens: func(arg1, arg2)
+                let mut temp_lexer = self.lexer.clone();
+                if temp_lexer.next_token() == Token::LeftParen
+                {
+                    self.eat(); // eat name
+                    self.eat(); // eat (
+                    let mut args = Vec::new();
+                    if self.current_token != Token::RightParen
+                    {
+                        loop
+                        {
+                            args.push(self.parse_expression());
+                            if self.current_token == Token::Comma
+                            {
+                                self.eat();
+                            }
+                            else
+                            {
+                                break;
+                            }
+                        }
+                    }
+                    self.expect(Token::RightParen);
+                    return Expr::Call {
+                        function: name,
+                        args,
+                    };
+                }
+
                 self.eat();
+
+                // Legacy built-in support (puts "hello")
                 if name == "puts" || name == "print" || name == "write_file" || name == "read_file"
                 {
+                    // Check if we already consumed parens? No, the logic above handles parens.
+                    // If we are here, it means NO parens.
+                    // So we expect args separated by commas, unless it's just 'print' (no args?)
+                    // The old logic assumed at least one arg if I recall?
+                    // "args.push(self.parse_expression())" -> assumes at least one.
+                    // Let's check peek?
+                    // If next token is NOT EOF, NOT newline (we don't have newlines in token stream), NOT operator...
+                    // The safest is: if it's a built-in, try to parse args.
+                    // But 'puts' might be a variable? No, built-ins are reserved in this logic.
+
+                    // If the next token is valid start of expression?
+                    // Integer, String, True, False, Identifier, etc.
+                    // Checking for 'End' or 'Else' is safer?
+                    // Actually, let's keep it simple: built-ins without parens consume args.
+
                     let mut args = Vec::new();
+                    // We try to parse at least one arg if possible?
+                    // The old code:
+                    // args.push(self.parse_expression());
+                    // while Comma ...
+                    // This forces `puts` to have arguments. `puts` alone fails?
+                    // `parse_expression` will fail if it hits `End`?
+                    // `parse_factor` panics on unexpected token.
+                    // So `puts` at end of block -> `puts end` -> `parse_expression` sees `End` -> `parse_math` -> `parse_term` -> `parse_factor` -> PANIC.
+                    // So `puts` MUST have args in current implementation.
+                    // Let's keep it that way for now.
 
                     args.push(self.parse_expression());
 
@@ -192,9 +248,55 @@ impl Parser
                 }
                 Expr::Identifier(name)
             }
+            Token::Fn => self.parse_fn(),
             Token::If => self.parse_if(),
             Token::While => self.parse_while(),
             _ => panic!("Unexpected token: {:?}", self.current_token),
+        }
+    }
+
+    fn parse_fn(&mut self) -> Expr
+    {
+        self.eat(); // eat 'fn'
+
+        let name = match &self.current_token
+        {
+            Token::Identifier(n) => n.clone(),
+            _ => panic!("Expected function name"),
+        };
+        self.eat();
+
+        self.expect(Token::LeftParen);
+        let mut params = Vec::new();
+        if self.current_token != Token::RightParen
+        {
+            loop
+            {
+                match &self.current_token
+                {
+                    Token::Identifier(arg) => params.push(arg.clone()),
+                    _ => panic!("Expected parameter name"),
+                }
+                self.eat();
+                if self.current_token == Token::Comma
+                {
+                    self.eat();
+                }
+                else
+                {
+                    break;
+                }
+            }
+        }
+        self.expect(Token::RightParen);
+
+        let body = self.parse_block();
+        self.expect(Token::End);
+
+        Expr::FunctionDef {
+            name,
+            params,
+            body: Box::new(body),
         }
     }
 

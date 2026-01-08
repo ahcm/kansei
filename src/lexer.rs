@@ -23,6 +23,9 @@ pub enum Token
     True,
     False,
     Comma,
+    Fn,
+    LeftParen,
+    RightParen,
 }
 
 #[derive(Clone)]
@@ -125,6 +128,16 @@ impl Lexer
                 self.position += 1;
                 Token::Comma
             }
+            '(' =>
+            {
+                self.position += 1;
+                Token::LeftParen
+            }
+            ')' =>
+            {
+                self.position += 1;
+                Token::RightParen
+            }
             _ =>
             {
                 // Ignore unknown chars for this MVP
@@ -179,6 +192,7 @@ impl Lexer
             "while" => Token::While,
             "true" => Token::True,
             "false" => Token::False,
+            "fn" => Token::Fn,
             _ => Token::Identifier(ident),
         }
     }

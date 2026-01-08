@@ -4,27 +4,42 @@ mod lexer;
 mod parser;
 mod value;
 
-use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
+use rustyline::DefaultEditor;
 use std::panic;
+use std::path::PathBuf;
+use directories::ProjectDirs;
+use std::fs;
 
-fn main() -> rustyline::Result<()>
-{
+fn main() -> rustyline::Result<()> {
     // The new identity
-    println!("k>");
+    println!("Kansei v0.1.0");
     println!("The intuitive scripting language. (Ctrl+C to exit)");
 
     let mut interpreter = eval::Interpreter::new();
     let mut input_buffer = String::new();
 
     let mut rl = DefaultEditor::new()?;
-    if rl.load_history("history.txt").is_err()
-    {
-        // No history file found
+
+    // Determine history file path
+    let history_path = if let Some(proj_dirs) = ProjectDirs::from("com", "ahcm", "kansei") {
+        let data_dir = proj_dirs.data_dir();
+        // Ensure the directory exists
+        if let Err(e) = fs::create_dir_all(data_dir) {
+            eprintln!("Warning: Could not create data directory: {}", e);
+            PathBuf::from("history.txt")
+        } else {
+            data_dir.join("history.txt")
+        }
+    } else {
+        PathBuf::from("history.txt")
+    };
+
+    if rl.load_history(&history_path).is_err() {
+        // No history file found or unable to read
     }
 
-    loop
-    {
+    loop {
         // Determine prompt based on buffer status
         let is_continuation = !input_buffer.is_empty();
         let prompt = if is_continuation { ".. " } else { "kansei> " };
@@ -115,14 +130,13 @@ fn main() -> rustyline::Result<()>
                 println!("CTRL-D");
                 break;
             }
-            Err(err) =>
-            {
+            Err(err) => {
                 println!("Error: {:?}", err);
                 break;
             }
         }
     }
-    rl.save_history("history.txt")
+    rl.save_history(&history_path)
 }
 
 // Counts keywords to see if blocks are closed

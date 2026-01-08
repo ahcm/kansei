@@ -296,7 +296,6 @@ impl Interpreter {
                 }
                 last
             }
-            _ => panic!("Not implemented"),
         }
     }
 }

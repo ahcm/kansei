@@ -74,6 +74,67 @@ impl Interpreter {
                 self.functions.insert(name.clone(), func);
                 Value::Nil
             }
+            Expr::Array(elements) => {
+                let vals = elements.iter().map(|e| self.eval(e)).collect();
+                Value::Array(vals)
+            }
+            Expr::Map(entries) => {
+                let mut map = HashMap::new();
+                for (k_expr, v_expr) in entries {
+                    let k_val = self.eval(k_expr);
+                    let v_val = self.eval(v_expr);
+                    // Force key to string for simplicity
+                    let k_str = match k_val {
+                        Value::String(s) => s,
+                        _ => k_val.inspect(),
+                    };
+                    map.insert(k_str, v_val);
+                }
+                Value::Map(map)
+            }
+            Expr::Index { target, index } => {
+                let target_val = self.eval(target);
+                let index_val = self.eval(index);
+
+                match target_val {
+                    Value::Array(arr) => {
+                        if let Value::Integer(idx) = index_val {
+                            let i = idx as usize; 
+                            if idx >= 0 && i < arr.len() {
+                                arr[i].clone()
+                            } else {
+                                Value::Nil
+                            }
+                        } else {
+                            panic!("Array index must be an integer");
+                        }
+                    }
+                    Value::Map(map) => {
+                        let key = match index_val {
+                             Value::String(s) => s,
+                             _ => index_val.inspect(),
+                        };
+                        map.get(&key).cloned().unwrap_or(Value::Nil)
+                    }
+                    Value::String(s) => {
+                         // Optional: String indexing
+                         if let Value::Integer(idx) = index_val {
+                            let i = idx as usize;
+                            if idx >= 0 && i < s.len() {
+                                // Simplified: assumes ASCII/byte indexing or char?
+                                // Rust strings are UTF-8. 
+                                // Let's skip string indexing for now to avoid complexity or do chars().nth()
+                                s.chars().nth(i).map(|c| Value::String(c.to_string())).unwrap_or(Value::Nil)
+                            } else {
+                                Value::Nil
+                            }
+                         } else {
+                             panic!("String index must be an integer");
+                         }
+                    }
+                    _ => panic!("Index operator not supported on this type"),
+                }
+            }
             Expr::Call { function, args } => {
                 // 1. Check User Functions
                 if let Some(func) = self.functions.get(function).cloned() {
@@ -114,6 +175,18 @@ impl Interpreter {
                             last_val = val;
                         }
                         last_val
+                    }
+                    "len" => {
+                        if args.len() != 1 {
+                             panic!("len() requires 1 argument");
+                        }
+                        let val = self.eval(&args[0]);
+                        match val {
+                            Value::String(s) => Value::Integer(s.len() as i64),
+                            Value::Array(arr) => Value::Integer(arr.len() as i64),
+                            Value::Map(map) => Value::Integer(map.len() as i64),
+                            _ => Value::Integer(0), // or panic
+                        }
                     }
                     "read_file" => {
                         if args.is_empty() {
@@ -223,6 +296,7 @@ impl Interpreter {
                 }
                 last
             }
+            _ => panic!("Not implemented"),
         }
     }
 }

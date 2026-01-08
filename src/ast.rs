@@ -63,6 +63,14 @@ pub enum Expr
         body: Box<Expr>,
     },
 
+    Array(Vec<Expr>),
+    Map(Vec<(Expr, Expr)>),
+    Index
+    {
+        target: Box<Expr>,
+        index: Box<Expr>,
+    },
+
     // A block of code (so an 'if' can run multiple lines)
     Block(Vec<Expr>),
 }

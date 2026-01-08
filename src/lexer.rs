@@ -26,6 +26,11 @@ pub enum Token
     Fn,
     LeftParen,
     RightParen,
+    LeftBracket,
+    RightBracket,
+    LeftBrace,
+    RightBrace,
+    Colon,
 }
 
 #[derive(Clone)]
@@ -137,6 +142,31 @@ impl Lexer
             {
                 self.position += 1;
                 Token::RightParen
+            }
+            '[' =>
+            {
+                self.position += 1;
+                Token::LeftBracket
+            }
+            ']' =>
+            {
+                self.position += 1;
+                Token::RightBracket
+            }
+            '{' =>
+            {
+                self.position += 1;
+                Token::LeftBrace
+            }
+            '}' =>
+            {
+                self.position += 1;
+                Token::RightBrace
+            }
+            ':' =>
+            {
+                self.position += 1;
+                Token::Colon
             }
             _ =>
             {

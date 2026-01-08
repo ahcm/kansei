@@ -62,10 +62,9 @@ impl Parser
     }
 
     // LEVEL 1: Equality & Comparison (==, !=, <, >)
-    // This is now the "top" of the expression logic
     fn parse_expression(&mut self) -> Expr
     {
-        let mut left = self.parse_math(); // Go down to math first
+        let mut left = self.parse_math(); 
 
         while matches!(
             self.current_token,
@@ -92,7 +91,6 @@ impl Parser
     }
 
     // LEVEL 2: Addition & Subtraction (+, -)
-    // Renamed from 'parse_expression' to 'parse_math'
     fn parse_math(&mut self) -> Expr
     {
         let mut left = self.parse_term();
@@ -140,8 +138,28 @@ impl Parser
         left
     }
 
-    // LEVEL 4: Atoms (Ints, Strings, Bools, Parens)
+    // LEVEL 4: Atoms and Postfix (Indexing)
     fn parse_factor(&mut self) -> Expr
+    {
+        let mut expr = self.parse_atom();
+
+        loop {
+            if self.current_token == Token::LeftBracket {
+                self.eat(); // [
+                let index = self.parse_expression();
+                self.expect(Token::RightBracket);
+                expr = Expr::Index {
+                    target: Box::new(expr),
+                    index: Box::new(index),
+                };
+            } else {
+                break;
+            }
+        }
+        expr
+    }
+
+    fn parse_atom(&mut self) -> Expr
     {
         match self.current_token.clone()
         {
@@ -206,33 +224,7 @@ impl Parser
                 // Legacy built-in support (puts "hello")
                 if name == "puts" || name == "print" || name == "write_file" || name == "read_file"
                 {
-                    // Check if we already consumed parens? No, the logic above handles parens.
-                    // If we are here, it means NO parens.
-                    // So we expect args separated by commas, unless it's just 'print' (no args?)
-                    // The old logic assumed at least one arg if I recall?
-                    // "args.push(self.parse_expression())" -> assumes at least one.
-                    // Let's check peek?
-                    // If next token is NOT EOF, NOT newline (we don't have newlines in token stream), NOT operator...
-                    // The safest is: if it's a built-in, try to parse args.
-                    // But 'puts' might be a variable? No, built-ins are reserved in this logic.
-
-                    // If the next token is valid start of expression?
-                    // Integer, String, True, False, Identifier, etc.
-                    // Checking for 'End' or 'Else' is safer?
-                    // Actually, let's keep it simple: built-ins without parens consume args.
-
                     let mut args = Vec::new();
-                    // We try to parse at least one arg if possible?
-                    // The old code:
-                    // args.push(self.parse_expression());
-                    // while Comma ...
-                    // This forces `puts` to have arguments. `puts` alone fails?
-                    // `parse_expression` will fail if it hits `End`?
-                    // `parse_factor` panics on unexpected token.
-                    // So `puts` at end of block -> `puts end` -> `parse_expression` sees `End` -> `parse_math` -> `parse_term` -> `parse_factor` -> PANIC.
-                    // So `puts` MUST have args in current implementation.
-                    // Let's keep it that way for now.
-
                     args.push(self.parse_expression());
 
                     while self.current_token == Token::Comma
@@ -251,8 +243,50 @@ impl Parser
             Token::Fn => self.parse_fn(),
             Token::If => self.parse_if(),
             Token::While => self.parse_while(),
+            Token::LeftBracket => self.parse_array(),
+            Token::LeftBrace => self.parse_map(),
             _ => panic!("Unexpected token: {:?}", self.current_token),
         }
+    }
+
+    fn parse_array(&mut self) -> Expr
+    {
+        self.eat(); // [
+        let mut elements = Vec::new();
+        if self.current_token != Token::RightBracket {
+            loop {
+                elements.push(self.parse_expression());
+                if self.current_token == Token::Comma {
+                    self.eat();
+                } else {
+                    break;
+                }
+            }
+        }
+        self.expect(Token::RightBracket);
+        Expr::Array(elements)
+    }
+
+    fn parse_map(&mut self) -> Expr
+    {
+        self.eat(); // {
+        let mut entries = Vec::new();
+        if self.current_token != Token::RightBrace {
+            loop {
+                let key = self.parse_expression();
+                self.expect(Token::Colon);
+                let value = self.parse_expression();
+                entries.push((key, value));
+                
+                if self.current_token == Token::Comma {
+                    self.eat();
+                } else {
+                    break;
+                }
+            }
+        }
+        self.expect(Token::RightBrace);
+        Expr::Map(entries)
     }
 
     fn parse_fn(&mut self) -> Expr
@@ -311,21 +345,18 @@ impl Parser
         {
             Token::Elif =>
             {
-                // RECURSION MAGIC:
-                // We treat 'elif' exactly like a new 'if' statement
-                // that lives inside the 'else' slot of the parent.
                 Some(Box::new(self.parse_if()))
             }
             Token::Else =>
             {
                 self.eat();
                 let block = self.parse_block();
-                self.expect(Token::End); // The chain ends here
+                self.expect(Token::End);
                 Some(Box::new(block))
             }
             Token::End =>
             {
-                self.eat(); // The chain ends here
+                self.eat();
                 None
             }
             _ => panic!("Expected elif, else, or end"),
@@ -352,12 +383,10 @@ impl Parser
         }
     }
 
-    // 2. The Worker: Collects lines of code until told to stop
     fn parse_block(&mut self) -> Expr
     {
         let mut statements = Vec::new();
 
-        // Keep parsing until we hit a keyword that ends a block
         while self.current_token != Token::End
             && self.current_token != Token::Else
             && self.current_token != Token::Elif
@@ -366,8 +395,6 @@ impl Parser
             statements.push(self.parse_assignment());
         }
 
-        // Optimization: If block is just 1 line, return that line.
-        // Otherwise return a Block of lines.
         if statements.len() == 1
         {
             statements.pop().unwrap()

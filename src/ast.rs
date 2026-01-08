@@ -56,6 +56,13 @@ pub enum Expr
         body: Box<Expr>,
     },
 
+    For
+    {
+        var: String,
+        iterable: Box<Expr>,
+        body: Box<Expr>,
+    },
+
     FunctionDef
     {
         name: String,

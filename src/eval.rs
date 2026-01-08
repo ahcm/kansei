@@ -289,6 +289,27 @@ impl Interpreter {
                 }
                 last_val
             }
+            Expr::For { var, iterable, body } => {
+                let iter_val = self.eval(iterable);
+                let mut last_val = Value::Nil;
+
+                match iter_val {
+                    Value::Array(arr) => {
+                        for item in arr {
+                            self.set_var(var.clone(), item);
+                            last_val = self.eval(body);
+                        }
+                    }
+                    Value::Map(map) => {
+                        for key in map.keys() {
+                            self.set_var(var.clone(), Value::String(key.clone()));
+                            last_val = self.eval(body);
+                        }
+                    }
+                    _ => panic!("Type is not iterable"),
+                }
+                last_val
+            }
             Expr::Block(statements) => {
                 let mut last = Value::Nil;
                 for stmt in statements {

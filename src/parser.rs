@@ -222,8 +222,10 @@ impl Parser
                 self.eat();
 
                 // Legacy built-in support (puts "hello")
-                if name == "puts" || name == "print" || name == "write_file" || name == "read_file"
+                if name == "puts" || name == "print" || name == "write_file" || name == "read_file" || name == "len"
                 {
+                    // Note: added 'len' to legacy support check just in case, though usually len() has parens.
+                    // If user types 'len arr', it goes here.
                     let mut args = Vec::new();
                     args.push(self.parse_expression());
 
@@ -243,6 +245,7 @@ impl Parser
             Token::Fn => self.parse_fn(),
             Token::If => self.parse_if(),
             Token::While => self.parse_while(),
+            Token::For => self.parse_for(),
             Token::LeftBracket => self.parse_array(),
             Token::LeftBrace => self.parse_map(),
             _ => panic!("Unexpected token: {:?}", self.current_token),
@@ -379,6 +382,31 @@ impl Parser
 
         Expr::While {
             condition: Box::new(condition),
+            body: Box::new(body),
+        }
+    }
+
+    fn parse_for(&mut self) -> Expr
+    {
+        self.eat(); // eat 'for'
+
+        // Expect variable name
+        let var_name = match &self.current_token {
+            Token::Identifier(name) => name.clone(),
+            _ => panic!("Expected identifier after 'for'"),
+        };
+        self.eat();
+
+        self.expect(Token::In);
+
+        let iterable = self.parse_expression();
+
+        let body = self.parse_block();
+        self.expect(Token::End);
+
+        Expr::For {
+            var: var_name,
+            iterable: Box::new(iterable),
             body: Box::new(body),
         }
     }

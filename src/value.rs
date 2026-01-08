@@ -9,6 +9,20 @@ pub enum Value
     Nil,
 }
 
+impl Value
+{
+    pub fn inspect(&self) -> String
+    {
+        match self
+        {
+            Value::Integer(i) => i.to_string(),
+            Value::String(s) => format!("{}", s),
+            Value::Boolean(b) => b.to_string(),
+            Value::Nil => "nil".to_string(),
+        }
+    }
+}
+
 impl fmt::Display for Value
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result

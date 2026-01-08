@@ -4,54 +4,153 @@ mod lexer;
 mod parser;
 mod value;
 
-use std::io::{self, Write};
+use rustyline::DefaultEditor;
+use rustyline::error::ReadlineError;
+use std::panic;
 
-fn main()
+fn main() -> rustyline::Result<()>
 {
     // The new identity
-    println!("Kansei v0.1.0");
+    println!("k>");
     println!("The intuitive scripting language. (Ctrl+C to exit)");
 
     let mut interpreter = eval::Interpreter::new();
+    let mut input_buffer = String::new();
+
+    let mut rl = DefaultEditor::new()?;
+    if rl.load_history("history.txt").is_err()
+    {
+        // No history file found
+    }
 
     loop
     {
-        // A distinct prompt, perhaps 'k>' or just '>>'
-        print!("kansei> ");
-        io::stdout().flush().unwrap();
+        // Determine prompt based on buffer status
+        let is_continuation = !input_buffer.is_empty();
+        let prompt = if is_continuation { ".. " } else { "kansei> " };
 
-        let mut input = String::new();
-        match io::stdin().read_line(&mut input)
+        let readline = rl.readline(prompt);
+
+        match readline
         {
-            Ok(_) =>
+            Ok(line) =>
             {
-                let input = input.trim();
-                if input == "exit"
+                let trimmed_line = line.trim();
+
+                // Handle exit command explicitly
+                if trimmed_line == "exit"
                 {
                     break;
                 }
-                if input.is_empty()
+
+                if !trimmed_line.is_empty()
                 {
-                    continue;
+                    rl.add_history_entry(line.as_str())?;
                 }
 
-                let lexer = lexer::Lexer::new(input);
-
-                // We'll wrap this in a basic catch to prevent crashes on syntax errors
-                let mut parser = parser::Parser::new(lexer);
-
-                // Note: Real implementations need Result<Expr, Error>
-                // For now, we assume valid input to keep the prototype clean
-                let ast = parser.parse();
-
-                let result = interpreter.eval(&ast);
-                if !input.starts_with("puts")
+                // If user just hits enter on empty line
+                if trimmed_line.is_empty()
                 {
-                    // The return arrow
-                    println!("=> {}", result);
+                    if !is_continuation
+                    {
+                        continue;
+                    }
+                    // If continuation, we append the newline (keeps formatting)
+                    input_buffer.push('\n');
+                }
+                else
+                {
+                    input_buffer.push_str(&line);
+                    input_buffer.push('\n');
+                }
+
+                // Check if the code block is complete
+                if is_balanced(&input_buffer)
+                {
+                    let source = input_buffer.clone();
+                    input_buffer.clear(); // Clear immediately for next input
+
+                    // 1. Parse
+                    // We use catch_unwind to handle syntax errors (panics in parser)
+                    let parse_result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+                        let lexer = lexer::Lexer::new(&source);
+                        let mut parser = parser::Parser::new(lexer);
+                        parser.parse()
+                    }));
+
+                    match parse_result
+                    {
+                        Ok(ast) =>
+                        {
+                            // 2. Evaluate
+                            // We use catch_unwind to handle runtime errors
+                            let eval_result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+                                interpreter.eval(&ast)
+                            }));
+
+                            match eval_result
+                            {
+                                Ok(result) =>
+                                {
+                                    // Heuristic to suppress output for simple prints
+                                    if !source.trim().starts_with("puts")
+                                    {
+                                        println!("=> {}", result.inspect());
+                                    }
+                                }
+                                Err(_) => println!("Runtime Error"),
+                            }
+                        }
+                        Err(_) => println!("Syntax Error"),
+                    }
                 }
             }
-            Err(error) => println!("Error reading input: {}", error),
+            Err(ReadlineError::Interrupted) =>
+            {
+                println!("CTRL-C");
+                break;
+            }
+            Err(ReadlineError::Eof) =>
+            {
+                println!("CTRL-D");
+                break;
+            }
+            Err(err) =>
+            {
+                println!("Error: {:?}", err);
+                break;
+            }
         }
+    }
+    rl.save_history("history.txt")
+}
+
+// Counts keywords to see if blocks are closed
+fn is_balanced(input: &str) -> bool
+{
+    // We assume Lexer won't panic on valid chars.
+    // If it panics on invalid chars (like '!'), catch_unwind prevents crash.
+    let check = panic::catch_unwind(|| {
+        let mut lexer = lexer::Lexer::new(input);
+        let mut depth = 0;
+        loop
+        {
+            let token = lexer.next_token();
+            match token
+            {
+                lexer::Token::If | lexer::Token::While => depth += 1,
+                lexer::Token::End => depth -= 1,
+                lexer::Token::EOF => break,
+                _ =>
+                {}
+            }
+        }
+        depth
+    });
+
+    match check
+    {
+        Ok(depth) => depth <= 0,
+        Err(_) => true, // If lexer crashed, let parser handle (and crash/report) it
     }
 }

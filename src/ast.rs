@@ -5,6 +5,10 @@ pub enum Op
     Subtract,
     Multiply,
     Divide,
+    Equal,
+    NotEqual,
+    LessThan,
+    GreaterThan,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -14,7 +18,8 @@ pub enum Expr
     Integer(i64),
     Identifier(String),
     String(String), // "hello"
-    Shell(String),  // `ls`
+    Boolean(bool),
+    Shell(String), // `ls`
 
     // Operations
     BinaryOp
@@ -37,4 +42,20 @@ pub enum Expr
         function: String,
         args: Vec<Expr>,
     },
+
+    If
+    {
+        condition: Box<Expr>,
+        then_branch: Box<Expr>, // For now, single expression blocks
+        else_branch: Option<Box<Expr>>,
+    },
+
+    While
+    {
+        condition: Box<Expr>,
+        body: Box<Expr>,
+    },
+
+    // A block of code (so an 'if' can run multiple lines)
+    Block(Vec<Expr>),
 }

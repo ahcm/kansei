@@ -11,6 +11,18 @@ pub enum Token
     StringLiteral(String),  // "hello"
     CommandLiteral(String), // `ls`
     EOF,
+    EqualEqual,
+    BangEqual,
+    Less,
+    Greater,
+    If,
+    Else,
+    Elif,
+    While,
+    End,
+    True,
+    False,
+    Comma,
 }
 
 #[derive(Clone)]
@@ -43,6 +55,11 @@ impl Lexer
 
         match ch
         {
+            '#' =>
+            {
+                self.skip_comment();
+                self.next_token() // Recursively call to get the *actual* next token
+            }
             '"' => self.read_string('"'), // standard strings
             '`' => self.read_string('`'), // shell commands
             '+' =>
@@ -67,17 +84,61 @@ impl Lexer
             }
             '=' =>
             {
+                // Check for '=='
+                if self.peek() == '='
+                {
+                    self.position += 2;
+                    Token::EqualEqual
+                }
+                else
+                {
+                    self.position += 1;
+                    Token::Equals
+                }
+            }
+            '!' =>
+            {
+                if self.peek() == '='
+                {
+                    self.position += 2;
+                    Token::BangEqual
+                }
+                else
+                {
+                    panic!("Unexpected char: !")
+                }
+            }
+            '<' =>
+            {
                 self.position += 1;
-                Token::Equals
+                Token::Less
+            }
+            '>' =>
+            {
+                self.position += 1;
+                Token::Greater
             }
             '0'..='9' => self.read_integer(),
             'a'..='z' | 'A'..='Z' | '_' => self.read_identifier(),
+            ',' =>
+            {
+                self.position += 1;
+                Token::Comma
+            }
             _ =>
             {
                 // Ignore unknown chars for this MVP
                 self.position += 1;
                 self.next_token()
             }
+        }
+    }
+
+    fn skip_comment(&mut self)
+    {
+        while self.position < self.input.len() && self.input[self.position] != '\n'
+        {
+            self.position += 1;
         }
     }
 
@@ -109,7 +170,17 @@ impl Lexer
             self.position += 1;
         }
         let ident: String = self.input[start..self.position].iter().collect();
-        Token::Identifier(ident)
+        match ident.as_str()
+        {
+            "if" => Token::If,
+            "else" => Token::Else,
+            "elif" => Token::Elif,
+            "end" => Token::End,
+            "while" => Token::While,
+            "true" => Token::True,
+            "false" => Token::False,
+            _ => Token::Identifier(ident),
+        }
     }
 
     // read until the closing quote/backtick
@@ -139,5 +210,14 @@ impl Lexer
         {
             Token::StringLiteral(content)
         }
+    }
+
+    fn peek(&self) -> char
+    {
+        if self.position + 1 >= self.input.len()
+        {
+            return '\0';
+        }
+        self.input[self.position + 1]
     }
 }

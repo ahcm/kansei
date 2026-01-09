@@ -38,6 +38,7 @@ fn main() -> rustyline::Result<()>
     let env_val = value::Value::Map(env_map);
 
     let mut program_map = std::collections::HashMap::new();
+    program_map.insert("name".to_string(), value::Value::String(args[0].clone()));
     program_map.insert("args".to_string(), args_val);
     program_map.insert("env".to_string(), env_val);
 

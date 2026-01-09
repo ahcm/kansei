@@ -38,7 +38,10 @@ name = user.name
 ## Program Arguments
 Command-line arguments are available via the global `program` object.
 ```ruby
-# Run with: kansei script.ks arg1 arg2
+# The name of the executable (args[0])
+name = program.name
+
+# The script arguments
 args = program.args
 puts args[0] # "arg1"
 ```

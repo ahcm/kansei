@@ -31,8 +31,15 @@ fn main() -> rustyline::Result<()>
         script_args.iter().map(|s| value::Value::String(s.clone())).collect()
     );
 
+    let mut env_map = std::collections::HashMap::new();
+    for (key, val) in env::vars() {
+        env_map.insert(key, value::Value::String(val));
+    }
+    let env_val = value::Value::Map(env_map);
+
     let mut program_map = std::collections::HashMap::new();
     program_map.insert("args".to_string(), args_val);
+    program_map.insert("env".to_string(), env_val);
 
     interpreter.define_global("program".to_string(), value::Value::Map(program_map));
 

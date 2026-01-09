@@ -43,6 +43,12 @@ args = program.args
 puts args[0] # "arg1"
 ```
 
+### Environment Variables
+Environment variables are available via `program.env`.
+```ruby
+home = program.env.HOME
+```
+
 ## Variables
 Variables are dynamically typed and defined on assignment.
 ```ruby

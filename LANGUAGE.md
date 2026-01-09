@@ -28,6 +28,21 @@ x = 10 # Inline comment
   name = user["name"]
   ```
 
+### Dot Syntax
+Maps can be accessed using dot notation if the key is a valid identifier.
+```ruby
+user = {"name": "Alice"}
+name = user.name
+```
+
+## Program Arguments
+Command-line arguments are available via the global `program` object.
+```ruby
+# Run with: kansei script.ks arg1 arg2
+args = program.args
+puts args[0] # "arg1"
+```
+
 ## Variables
 Variables are dynamically typed and defined on assignment.
 ```ruby

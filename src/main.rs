@@ -16,18 +16,38 @@ fn main() -> rustyline::Result<()>
 {
     let args: Vec<String> = env::args().collect();
 
+    let mut interpreter = eval::Interpreter::new();
+
+    // Prepare program.args
+    // If running file: args[0]=bin, args[1]=file, args[2...]=script args.
+    // If running REPL: args[0]=bin, args[1...]=REPL args? Usually ignore.
+    let script_args = if args.len() > 2 {
+        args[2..].to_vec()
+    } else {
+        Vec::new()
+    };
+
+    let args_val = value::Value::Array(
+        script_args.iter().map(|s| value::Value::String(s.clone())).collect()
+    );
+
+    let mut program_map = std::collections::HashMap::new();
+    program_map.insert("args".to_string(), args_val);
+
+    interpreter.define_global("program".to_string(), value::Value::Map(program_map));
+
     if args.len() > 1
     {
-        run_file(&args[1]);
+        run_file(&args[1], interpreter);
         Ok(())
     }
     else
     {
-        run_repl()
+        run_repl(interpreter)
     }
 }
 
-fn run_file(path: &str)
+fn run_file(path: &str, mut interpreter: eval::Interpreter)
 {
     let source = match fs::read_to_string(path)
     {
@@ -38,8 +58,6 @@ fn run_file(path: &str)
             std::process::exit(1);
         }
     };
-
-    let mut interpreter = eval::Interpreter::new();
 
     // 1. Parse
     let parse_result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
@@ -70,13 +88,12 @@ fn run_file(path: &str)
     }
 }
 
-fn run_repl() -> rustyline::Result<()>
+fn run_repl(mut interpreter: eval::Interpreter) -> rustyline::Result<()>
 {
     // The new identity
     println!("Kansei v0.0.1");
     println!("Have fun!");
 
-    let mut interpreter = eval::Interpreter::new();
     let mut input_buffer = String::new();
 
     let mut rl = DefaultEditor::new()?;
@@ -221,8 +238,16 @@ fn is_balanced(input: &str) -> bool
             let token = lexer.next_token();
             match token
             {
-                lexer::Token::If | lexer::Token::While => depth += 1,
-                lexer::Token::End => depth -= 1,
+                lexer::Token::If | lexer::Token::While | lexer::Token::For | lexer::Token::Fn => depth += 1,
+                lexer::Token::End | lexer::Token::RightBrace => depth -= 1, // Handle { } blocks?
+                // Wait, lexer doesn't count braces in is_balanced?
+                // `is_balanced` uses Lexer. Lexer emits RightBrace.
+                // Block `{ ... }` uses braces.
+                // `fn` uses `End`.
+                // `call { }` uses braces.
+                // So `is_balanced` should count braces too!
+                // Also `Fn` token was added to lexer? Yes.
+                lexer::Token::LeftBrace => depth += 1,
                 lexer::Token::EOF => break,
                 _ =>
                 {}

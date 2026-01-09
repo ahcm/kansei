@@ -146,6 +146,17 @@ impl Parser
                     target: Box::new(expr),
                     index: Box::new(index),
                 };
+            } else if self.current_token == Token::Dot {
+                self.eat(); // .
+                let name = match &self.current_token {
+                    Token::Identifier(n) => n.clone(),
+                    _ => panic!("Expected property name after dot"),
+                };
+                self.eat();
+                expr = Expr::Index {
+                    target: Box::new(expr),
+                    index: Box::new(Expr::String(name)),
+                };
             } else if self.current_token == Token::LeftParen {
                 self.eat(); // (
                 let mut args = Vec::new();

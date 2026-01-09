@@ -22,6 +22,10 @@ impl Interpreter {
         }
     }
 
+    pub fn define_global(&mut self, name: String, val: Value) {
+        self.env.borrow_mut().define(name, val);
+    }
+
     pub fn eval(&mut self, expr: &Expr) -> Value {
         match expr {
             Expr::Integer(i) => Value::Integer(*i),

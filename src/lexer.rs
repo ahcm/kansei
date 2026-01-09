@@ -35,6 +35,7 @@ pub enum Token
     LeftBrace,
     RightBrace,
     Colon,
+    Dot,
 }
 
 #[derive(Clone)]
@@ -171,6 +172,11 @@ impl Lexer
             {
                 self.position += 1;
                 Token::Colon
+            }
+            '.' =>
+            {
+                self.position += 1;
+                Token::Dot
             }
             '|' =>
             {

@@ -52,7 +52,7 @@ impl Interpreter {
             }
             Expr::Assignment { name, value } => {
                 let val = self.eval(value);
-                self.env.borrow_mut().define(name.clone(), val.clone());
+                self.env.borrow_mut().set(name.clone(), val.clone());
                 val
             }
             Expr::FunctionDef { name, params, body } => {
@@ -73,11 +73,19 @@ impl Interpreter {
                      let arg_vals: Vec<Value> = args.iter().map(|a| self.eval(a)).collect();
                      
                      // Create new env for block, parent = saved_env (Lexical Scoping)
-                     let new_env = Rc::new(RefCell::new(Environment::new(Some(saved_env))));
+                     let new_env = Rc::new(RefCell::new(Environment::new(Some(saved_env.clone()))));
                      
                      // Bind params
-                     for (param, val) in closure.params.iter().zip(arg_vals.into_iter()) {
-                         new_env.borrow_mut().define(param.clone(), val);
+                     let mut arg_iter = arg_vals.into_iter();
+                     for (param_name, is_ref) in &closure.params {
+                         if *is_ref {
+                             let ref_val = saved_env.borrow_mut().promote(param_name)
+                                 .expect(&format!("Undefined variable captured: {}", param_name));
+                             new_env.borrow_mut().define(param_name.clone(), ref_val);
+                         } else {
+                             let val = arg_iter.next().unwrap_or(Value::Nil);
+                             new_env.borrow_mut().define(param_name.clone(), val);
+                         }
                      }
                      
                      // Swap env

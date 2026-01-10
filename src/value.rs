@@ -7,7 +7,7 @@ use std::rc::Rc;
 #[derive(Debug, Clone, PartialEq)]
 pub struct Environment {
     pub values: HashMap<String, Value>,
-    pub parent: Option<Rc<RefCell<Environment>>>, 
+    pub parent: Option<Rc<RefCell<Environment>>>,
 }
 
 impl Environment {
@@ -17,7 +17,10 @@ impl Environment {
 
     pub fn get(&self, name: &str) -> Option<Value> {
         if let Some(v) = self.values.get(name) {
-            Some(v.clone())
+             match v {
+                 Value::Reference(r) => Some(r.borrow().clone()),
+                 _ => Some(v.clone()),
+             }
         } else if let Some(parent) = &self.parent {
             parent.borrow().get(name)
         } else {
@@ -29,9 +32,18 @@ impl Environment {
         self.values.insert(name, val);
     }
 
+    // Set variable in current scope. If it's a reference, update referee.
+    pub fn set(&mut self, name: String, val: Value) {
+         if let Some(Value::Reference(r)) = self.values.get(&name) {
+             *r.borrow_mut() = val;
+         } else {
+             self.values.insert(name, val);
+         }
+    }
+
     pub fn assign(&mut self, name: String, val: Value) {
         if self.values.contains_key(&name) {
-            self.values.insert(name, val);
+            self.set(name, val);
             return;
         }
 
@@ -42,12 +54,17 @@ impl Environment {
         }
 
         // Not found anywhere, define local
-        self.values.insert(name, val);
+        self.define(name, val);
     }
 
     fn update_existing(&mut self, name: &str, val: &Value) -> bool {
         if self.values.contains_key(name) {
-            self.values.insert(name.to_string(), val.clone());
+            // Self::set logic inline because of borrowing issues?
+            if let Some(Value::Reference(r)) = self.values.get(name) {
+                *r.borrow_mut() = val.clone();
+            } else {
+                self.values.insert(name.to_string(), val.clone());
+            }
             return true;
         }
         if let Some(parent) = &self.parent {
@@ -55,10 +72,26 @@ impl Environment {
         }
         false
     }
-    
-    // Assign to existing variable in scope chain (or define in global if not found? Python rules: define in local)
-    // Kansei rules so far: set_var sets in local.
-    // So define() is sufficient.
+
+    pub fn promote(&mut self, name: &str) -> Option<Value> {
+         if self.values.contains_key(name) {
+             let val = self.values.get(name).unwrap().clone();
+             if let Value::Reference(_) = val {
+                 return Some(val);
+             }
+             // Promote
+             let r = Rc::new(RefCell::new(val));
+             let new_ref = Value::Reference(r);
+             self.values.insert(name.to_string(), new_ref.clone());
+             return Some(new_ref);
+         }
+         
+         if let Some(parent) = &self.parent {
+             return parent.borrow_mut().promote(name);
+         }
+         
+         None
+    }
 }
 
 #[derive(Clone)]
@@ -75,11 +108,26 @@ pub enum Value
         body: Box<Expr>,
         env: Rc<RefCell<Environment>>,
     },
+    Reference(Rc<RefCell<Value>>),
 }
 
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
+        let left = match self {
+            Value::Reference(r) => &*r.borrow(),
+            _ => self,
+        };
+        let right = match other {
+            Value::Reference(r) => &*r.borrow(),
+            _ => other,
+        };
+        
+        // Handle double reference unwrapping if needed? 
+        // We assume Reference only points to non-Reference.
+        // But if left is Reference pointing to Reference... 
+        // We'll trust the invariant.
+
+        match (left, right) {
             (Value::Integer(a), Value::Integer(b)) => a == b,
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Boolean(a), Value::Boolean(b)) => a == b,
@@ -96,8 +144,6 @@ impl PartialEq for Value {
                 true
             }
             (Value::Nil, Value::Nil) => true,
-            // Functions are equal if they are the same reference? Or structurally?
-            // Usually fn != fn.
             (Value::Function { .. }, Value::Function { .. }) => false,
             _ => false,
         }
@@ -114,6 +160,7 @@ impl fmt::Debug for Value {
             Value::Map(m) => write!(f, "Map({:?})", m),
             Value::Nil => write!(f, "Nil"),
             Value::Function { .. } => write!(f, "Function(...)"),
+            Value::Reference(r) => write!(f, "Reference({:?})", r.borrow()),
         }
     }
 }
@@ -142,6 +189,7 @@ impl Value
             }
             Value::Nil => "nil".to_string(),
             Value::Function { .. } => "<function>".to_string(),
+            Value::Reference(r) => r.borrow().inspect(),
         }
     }
 }
@@ -170,6 +218,7 @@ impl fmt::Display for Value
             }
             Value::Nil => write!(f, "nil"),
             Value::Function { .. } => write!(f, "<function>"),
+            Value::Reference(r) => write!(f, "{}", r.borrow()),
         }
     }
 }

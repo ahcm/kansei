@@ -14,7 +14,7 @@ pub enum Op
 #[derive(Debug, Clone, PartialEq)]
 pub struct Closure
 {
-    pub params: Vec<String>,
+    pub params: Vec<(String, bool)>,
     pub body: Box<Expr>,
 }
 

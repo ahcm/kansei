@@ -131,6 +131,46 @@ repeater(3) { |idx|
 }
 ```
 
+## Variable Scope and References
+
+Kansei enforces strict variable scoping to prevent accidental modification of outer variables.
+
+### Implicit Shadowing
+Assigning to a variable inside a function or block creates a new local variable, shadowing any outer variable of the same name. Implicit access to outer variables for reading is also restricted in many contexts to ensure isolation.
+
+```ruby
+x = 10
+fn f()
+  x = 20 # Defines a local 'x', does not modify outer 'x'
+end
+f()
+# x is still 10
+```
+
+### Reference Capture (`&`)
+To modify an outer variable or pass a variable by reference, you must use the `&` operator in both the parameter definition and the call site (for functions) or capture list (for blocks).
+
+#### Functions
+```ruby
+fn increment(&val)
+  val = val + 1
+end
+
+count = 0
+increment(&count) # Explicit reference passing
+# count is now 1
+```
+
+#### Blocks
+Blocks passed to functions can also capture outer variables by reference.
+
+```ruby
+sum = 0
+[1, 2, 3].each { |val, &sum|
+  sum = sum + val
+}
+```
+
 ## Built-in Functions
 - `puts(val)`: Print value with newline.
 - `print(val)`: Print value without newline.

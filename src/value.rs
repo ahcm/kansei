@@ -144,8 +144,8 @@ pub enum Value
     Integer(i64),
     String(String),
     Boolean(bool),
-    Array(Vec<Value>),
-    Map(HashMap<String, Value>),
+    Array(Rc<RefCell<Vec<Value>>>),
+    Map(Rc<RefCell<HashMap<String, Value>>>),
     Nil,
     Function {
         params: Vec<(String, bool)>,
@@ -171,11 +171,13 @@ impl PartialEq for Value {
             (Value::Integer(a), Value::Integer(b)) => a == b,
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Boolean(a), Value::Boolean(b)) => a == b,
-            (Value::Array(a), Value::Array(b)) => a == b,
+            (Value::Array(a), Value::Array(b)) => a == b, // RefCell PartialEq compares inner values
             (Value::Map(a), Value::Map(b)) => {
-                if a.len() != b.len() { return false; }
-                for (k, v) in a {
-                    if let Some(other_v) = b.get(k) {
+                let map_a = a.borrow();
+                let map_b = b.borrow();
+                if map_a.len() != map_b.len() { return false; }
+                for (k, v) in map_a.iter() {
+                    if let Some(other_v) = map_b.get(k) {
                         if v != other_v { return false; }
                     } else {
                         return false;
@@ -197,8 +199,8 @@ impl fmt::Debug for Value {
             Value::Integer(i) => write!(f, "Integer({})", i),
             Value::String(s) => write!(f, "String({:?})", s),
             Value::Boolean(b) => write!(f, "Boolean({})", b),
-            Value::Array(a) => write!(f, "Array({:?})", a),
-            Value::Map(m) => write!(f, "Map({:?})", m),
+            Value::Array(a) => write!(f, "Array({:?})", a.borrow()),
+            Value::Map(m) => write!(f, "Map({:?})", m.borrow()),
             Value::Nil => write!(f, "Nil"),
             Value::Function { .. } => write!(f, "Function(...)"),
             Value::Reference(r) => write!(f, "Reference({:?})", r.borrow()),
@@ -218,12 +220,12 @@ impl Value
             Value::Boolean(b) => b.to_string(),
             Value::Array(arr) =>
             {
-                let elems: Vec<String> = arr.iter().map(|v| v.inspect()).collect();
+                let elems: Vec<String> = arr.borrow().iter().map(|v| v.inspect()).collect();
                 format!("[{}]", elems.join(", "))
             }
             Value::Map(map) =>
             {
-                let entries: Vec<String> = map
+                let entries: Vec<String> = map.borrow()
                     .iter()
                     .map(|(k, v)| format!("\"{}\": {}\"", k, v.inspect()))
                     .collect();
@@ -251,12 +253,12 @@ impl fmt::Display for Value
             Value::Boolean(b) => write!(f, "{}", b),
             Value::Array(arr) =>
             {
-                let elems: Vec<String> = arr.iter().map(|v| v.inspect()).collect();
+                let elems: Vec<String> = arr.borrow().iter().map(|v| v.inspect()).collect();
                 write!(f, "[{}]", elems.join(", "))
             }
             Value::Map(map) =>
             {
-                let entries: Vec<String> = map
+                let entries: Vec<String> = map.borrow()
                     .iter()
                     .map(|(k, v)| format!("\"{}\": {}\"", k, v.inspect()))
                     .collect();

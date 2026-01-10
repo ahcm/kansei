@@ -42,21 +42,26 @@ impl Parser
 
     fn parse_assignment(&mut self) -> Expr
     {
-        if let Token::Identifier(name) = &self.current_token
-        {
-            let mut temp_lexer = self.lexer.clone();
-            if temp_lexer.next_token() == Token::Equals
-            {
-                let var_name = name.clone();
-                self.eat(); // eat name
-                self.eat(); // eat =
-                return Expr::Assignment {
-                    name: var_name,
-                    value: Box::new(self.parse_expression()),
-                };
-            }
+        let expr = self.parse_expression();
+
+        if self.current_token == Token::Equals {
+            self.eat(); // =
+            let value = self.parse_expression();
+
+            return match expr {
+                Expr::Identifier(name) => Expr::Assignment {
+                    name,
+                    value: Box::new(value),
+                },
+                Expr::Index { target, index } => Expr::IndexAssignment {
+                    target,
+                    index,
+                    value: Box::new(value),
+                },
+                _ => panic!("Invalid assignment target"),
+            };
         }
-        self.parse_expression()
+        expr
     }
 
     fn parse_expression(&mut self) -> Expr

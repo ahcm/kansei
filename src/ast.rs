@@ -44,6 +44,12 @@ pub enum Expr
         name: String,
         value: Box<Expr>,
     },
+    IndexAssignment
+    {
+        target: Box<Expr>,
+        index: Box<Expr>,
+        value: Box<Expr>,
+    },
 
     // Function calls (simplified for scripting)
     Call

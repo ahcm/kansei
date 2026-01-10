@@ -15,6 +15,11 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<String>) {
         Expr::FunctionDef { name, .. } => {
             decls.insert(name.clone());
         }
+        Expr::IndexAssignment { target, index, value } => {
+            collect_declarations(target, decls);
+            collect_declarations(index, decls);
+            collect_declarations(value, decls);
+        }
         Expr::Block(stmts) => {
             for stmt in stmts {
                 collect_declarations(stmt, decls);
@@ -92,6 +97,45 @@ impl Interpreter {
                 self.env.borrow_mut().set(name.clone(), val.clone());
                 val
             }
+            Expr::IndexAssignment { target, index, value } => {
+                let target_val = self.eval(target);
+                let index_val = self.eval(index);
+                let val = self.eval(value);
+
+                match target_val {
+                    Value::Array(arr) => {
+                        if let Value::Integer(idx) = index_val {
+                            let mut vec = arr.borrow_mut();
+                            let i = idx as usize;
+                            if idx >= 0 && i < vec.len() {
+                                vec[i] = val.clone();
+                            } else if idx >= 0 && i == vec.len() {
+                                // Support append? Common in scripting, but maybe too implicit.
+                                // Let's stick to strict bounds for now, but maybe allow extending by 1.
+                                // Python allows `a[i] = x` only if `i < len`.
+                                // Ruby allows extending.
+                                // Let's allow expanding? No, strict bounds for index assignment usually.
+                                // Use `push` method for appending (not implemented yet).
+                                // But `a[0] = 1` implies existing index.
+                                panic!("Array index out of bounds: {}", idx);
+                            } else {
+                                panic!("Array index out of bounds: {}", idx);
+                            }
+                        } else {
+                            panic!("Array index must be an integer");
+                        }
+                    }
+                    Value::Map(map) => {
+                        let key = match index_val {
+                             Value::String(s) => s,
+                             _ => index_val.inspect(),
+                        };
+                        map.borrow_mut().insert(key, val.clone());
+                    }
+                    _ => panic!("Index assignment not supported on this type"),
+                }
+                val
+            }
             Expr::FunctionDef { name, params, body } => {
                 // Capture current env (Closure)
                 let func_env = self.env.clone();
@@ -151,7 +195,7 @@ impl Interpreter {
             }
             Expr::Array(elements) => {
                 let vals = elements.iter().map(|e| self.eval(e)).collect();
-                Value::Array(vals)
+                Value::Array(Rc::new(RefCell::new(vals)))
             }
             Expr::Map(entries) => {
                 let mut map = HashMap::new();
@@ -164,7 +208,7 @@ impl Interpreter {
                     };
                     map.insert(k_str, v_val);
                 }
-                Value::Map(map)
+                Value::Map(Rc::new(RefCell::new(map)))
             }
             Expr::Index { target, index } => {
                 let target_val = self.eval(target);
@@ -174,8 +218,9 @@ impl Interpreter {
                     Value::Array(arr) => {
                         if let Value::Integer(idx) = index_val {
                             let i = idx as usize; 
-                            if idx >= 0 && i < arr.len() {
-                                arr[i].clone()
+                            let vec = arr.borrow();
+                            if idx >= 0 && i < vec.len() {
+                                vec[i].clone()
                             } else {
                                 Value::Nil
                             }
@@ -188,7 +233,7 @@ impl Interpreter {
                              Value::String(s) => s,
                              _ => index_val.inspect(),
                         };
-                        map.get(&key).cloned().unwrap_or(Value::Nil)
+                        map.borrow().get(&key).cloned().unwrap_or(Value::Nil)
                     }
                     _ => panic!("Index operator not supported on this type"),
                 }
@@ -215,8 +260,8 @@ impl Interpreter {
                             let val = self.eval(&args[0]);
                             return match val {
                                 Value::String(s) => Value::Integer(s.len() as i64),
-                                Value::Array(arr) => Value::Integer(arr.len() as i64),
-                                Value::Map(map) => Value::Integer(map.len() as i64),
+                                Value::Array(arr) => Value::Integer(arr.borrow().len() as i64),
+                                Value::Map(map) => Value::Integer(map.borrow().len() as i64),
                                 _ => Value::Integer(0),
                             };
                         }
@@ -402,14 +447,18 @@ impl Interpreter {
 
                 match iter_val {
                     Value::Array(arr) => {
-                        for item in arr {
+                        // We clone the vec to avoid holding a borrow across the loop body execution
+                        // This allows the body to modify the array (if it has access to it) without panicking
+                        let vec = arr.borrow().clone();
+                        for item in vec {
                             self.env.borrow_mut().assign(var.clone(), item);
                             last_val = self.eval(body);
                         }
                     }
                     Value::Map(map) => {
-                        for key in map.keys() {
-                            self.env.borrow_mut().assign(var.clone(), Value::String(key.clone()));
+                        let keys: Vec<String> = map.borrow().keys().cloned().collect();
+                        for key in keys {
+                            self.env.borrow_mut().assign(var.clone(), Value::String(key));
                             last_val = self.eval(body);
                         }
                     }

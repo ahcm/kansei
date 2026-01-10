@@ -1,6 +1,7 @@
 use crate::ast::{Closure, Expr, ExprKind, Op};
 use crate::value::{Environment, Value};
-use std::collections::{HashMap, HashSet};
+use rustc_hash::FxHashMap;
+use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Write};
 use std::process::Command;
@@ -24,7 +25,6 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<String>) {
             decls.insert(name.clone());
         }
         ExprKind::AnonymousFunction { .. } => {
-            // Anonymous functions don't declare a name in the current scope
         }
         ExprKind::IndexAssignment { target, index, value } => {
             collect_declarations(target, decls);
@@ -58,6 +58,85 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<String>) {
             for (k, v) in entries {
                 collect_declarations(k, decls);
                 collect_declarations(v, decls);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn resolve(expr: &mut Expr, slot_map: &FxHashMap<String, usize>) {
+    match &mut expr.kind {
+        ExprKind::Identifier { name, slot } => {
+            if let Some(s) = slot_map.get(name) {
+                *slot = Some(*s);
+            }
+        }
+        ExprKind::Assignment { name, value, slot } => {
+            if let Some(s) = slot_map.get(name) {
+                *slot = Some(*s);
+            }
+            resolve(value, slot_map);
+        }
+        ExprKind::BinaryOp { left, right, .. } => {
+            resolve(left, slot_map);
+            resolve(right, slot_map);
+        }
+        ExprKind::Block(stmts) => {
+            for stmt in stmts {
+                resolve(stmt, slot_map);
+            }
+        }
+        ExprKind::If { condition, then_branch, else_branch } => {
+            resolve(condition, slot_map);
+            resolve(then_branch, slot_map);
+            if let Some(eb) = else_branch {
+                resolve(eb, slot_map);
+            }
+        }
+        ExprKind::While { condition, body } => {
+            resolve(condition, slot_map);
+            resolve(body, slot_map);
+        }
+        ExprKind::For { iterable, body, .. } => {
+            resolve(iterable, slot_map);
+            resolve(body, slot_map);
+        }
+        ExprKind::Call { function, args, block } => {
+            resolve(function, slot_map);
+            for arg in args {
+                resolve(arg, slot_map);
+            }
+            if let Some(c) = block {
+                resolve(&mut c.body, slot_map);
+            }
+        }
+        ExprKind::Array(elements) => {
+            for e in elements {
+                resolve(e, slot_map);
+            }
+        }
+        ExprKind::ArrayGenerator { generator, size } => {
+            resolve(generator, slot_map);
+            resolve(size, slot_map);
+        }
+        ExprKind::Map(entries) => {
+            for (k, v) in entries {
+                resolve(k, slot_map);
+                resolve(v, slot_map);
+            }
+        }
+        ExprKind::Index { target, index } => {
+            resolve(target, slot_map);
+            resolve(index, slot_map);
+        }
+        ExprKind::IndexAssignment { target, index, value } => {
+            resolve(target, slot_map);
+            resolve(index, slot_map);
+            resolve(value, slot_map);
+        }
+        ExprKind::Yield(args) => {
+            for a in args {
+                resolve(a, slot_map);
             }
         }
         _ => {}
@@ -106,7 +185,16 @@ impl Interpreter {
                     Err(_) => Ok(Value::String(Rc::new("".to_string()))),
                 }
             }
-            ExprKind::Identifier(name) => {
+            ExprKind::Identifier { name, slot } => {
+                if let Some(s) = slot {
+                    if let Some(val) = self.env.borrow().get_slot(*s) {
+                        if let Value::Uninitialized = val {
+                            // Fallback to name-based lookup (e.g., for currying)
+                        } else {
+                            return Ok(val);
+                        }
+                    }
+                }
                 let val = self.env.borrow().get(name).ok_or_else(|| RuntimeError {
                     message: format!("Undefined variable: {}", name),
                     line,
@@ -126,9 +214,13 @@ impl Interpreter {
                 })?;
                 Ok(val)
             }
-            ExprKind::Assignment { name, value } => {
+            ExprKind::Assignment { name, value, slot } => {
                 let val = self.eval(value)?;
-                self.env.borrow_mut().set(name.clone(), val.clone());
+                if let Some(s) = slot {
+                    self.env.borrow_mut().set_slot(*s, val.clone());
+                } else {
+                    self.env.borrow_mut().set(name.clone(), val.clone());
+                }
                 Ok(val)
             }
             ExprKind::IndexAssignment { target, index, value } => {
@@ -171,14 +263,33 @@ impl Interpreter {
                 Ok(val)
             }
             ExprKind::FunctionDef { name, params, body } => {
-                // Capture current env (Closure)
                 let func_env = self.env.clone();
                 let mut locals = HashSet::new();
                 collect_declarations(body, &mut locals);
+
+                let mut slot_map = FxHashMap::default();
+                let mut slot_names = Vec::new();
+                for (p, _) in params {
+                    if !slot_map.contains_key(p) {
+                        slot_map.insert(p.clone(), slot_names.len());
+                        slot_names.push(p.clone());
+                    }
+                }
+                for l in locals {
+                    if !slot_map.contains_key(&l) {
+                        slot_map.insert(l.clone(), slot_names.len());
+                        slot_names.push(l);
+                    }
+                }
+
+                let mut resolved_body = body.clone();
+                resolve(&mut resolved_body, &slot_map);
+
                 let func = Value::Function {
                     params: params.clone(),
-                    body: body.clone(),
-                    declarations: Rc::new(locals),
+                    body: resolved_body,
+                    declarations: Rc::new(slot_names),
+                    param_offset: 0,
                     env: func_env,
                 };
                 self.env.borrow_mut().define(name.clone(), func.clone());
@@ -188,10 +299,30 @@ impl Interpreter {
                 let func_env = self.env.clone();
                 let mut locals = HashSet::new();
                 collect_declarations(body, &mut locals);
+
+                let mut slot_map = FxHashMap::default();
+                let mut slot_names = Vec::new();
+                for (p, _) in params {
+                    if !slot_map.contains_key(p) {
+                        slot_map.insert(p.clone(), slot_names.len());
+                        slot_names.push(p.clone());
+                    }
+                }
+                for l in locals {
+                    if !slot_map.contains_key(&l) {
+                        slot_map.insert(l.clone(), slot_names.len());
+                        slot_names.push(l);
+                    }
+                }
+
+                let mut resolved_body = body.clone();
+                resolve(&mut resolved_body, &slot_map);
+
                 Ok(Value::Function {
                     params: params.clone(),
-                    body: body.clone(),
-                    declarations: Rc::new(locals),
+                    body: resolved_body,
+                    declarations: Rc::new(slot_names),
+                    param_offset: 0,
                     env: func_env,
                 })
             }
@@ -204,11 +335,8 @@ impl Interpreter {
                          arg_vals.push(self.eval(a)?);
                      }
                      
-                     // Create new env for block, parent = saved_env.
-                     // Access to non-functions in parent is restricted in Environment::get.
                      let new_env = Rc::new(RefCell::new(Environment::new(Some(saved_env.clone()))));
                      
-                     // Bind params
                      let mut arg_iter = arg_vals.into_iter();
                      for (param_name, is_ref) in &closure.params {
                          if *is_ref {
@@ -224,7 +352,6 @@ impl Interpreter {
                          }
                      }
                      
-                     // Scan for local assignments in block
                      let mut locals = HashSet::new();
                      collect_declarations(&closure.body, &mut locals);
                      for local in locals {
@@ -233,15 +360,10 @@ impl Interpreter {
                          }
                      }
                      
-                     // Swap env
                      let original_env = self.env.clone();
                      self.env = new_env;
-                     
                      let result = self.eval(&closure.body)?;
-                     
-                     // Restore env
                      self.env = original_env;
-                     
                      Ok(result)
                 } else {
                     Err(RuntimeError {
@@ -260,7 +382,6 @@ impl Interpreter {
             ExprKind::ArrayGenerator { generator, size } => {
                 let gen_val = self.eval(generator)?;
                 let size_val = self.eval(size)?;
-                
                 let n = match size_val {
                     Value::Integer(i) if i >= 0 => i as usize,
                     _ => return Err(RuntimeError {
@@ -268,43 +389,29 @@ impl Interpreter {
                         line,
                     }),
                 };
-                
                 let mut vals = Vec::with_capacity(n);
-                
-                if let Value::Function { params, body, declarations: func_decls, env: func_env } = gen_val {
-                    // It's a generator function
+                if let Value::Function { params, body, declarations: func_decls, param_offset, env: func_env } = gen_val {
                     for i in 0..n {
                         let new_env = Rc::new(RefCell::new(Environment::new(Some(func_env.clone()))));
+                        new_env.borrow_mut().slots = vec![Value::Uninitialized; func_decls.len()];
                         if params.len() > 0 {
-                            let (param_name, _) = &params[0];
-                            new_env.borrow_mut().define(param_name.clone(), Value::Integer(i as i64));
+                            new_env.borrow_mut().set_slot(param_offset, Value::Integer(i as i64));
                         }
-                        
-                        // Scan for local assignments
-                        for local in func_decls.iter() {
-                            if new_env.borrow().get_raw_no_deref(local).is_none() {
-                                new_env.borrow_mut().define(local.clone(), Value::Uninitialized);
-                            }
-                        }
-
                         let original_env = self.env.clone();
                         self.env = new_env;
                         let result = self.eval(&body)?;
                         self.env = original_env;
-                        
                         vals.push(result);
                     }
                 } else {
-                    // It's a static value
                     for _ in 0..n {
                         vals.push(gen_val.clone());
                     }
                 }
-                
                 Ok(Value::Array(Rc::new(RefCell::new(vals))))
             }
             ExprKind::Map(entries) => {
-                let mut map = HashMap::new();
+                let mut map = FxHashMap::default();
                 for (k_expr, v_expr) in entries {
                     let k_val = self.eval(k_expr)?;
                     let v_val = self.eval(v_expr)?;
@@ -319,7 +426,6 @@ impl Interpreter {
             ExprKind::Index { target, index } => {
                 let target_val = self.eval(target)?;
                 let index_val = self.eval(index)?;
-
                 match target_val {
                     Value::Array(arr) => {
                         if let Value::Integer(idx) = index_val {
@@ -351,8 +457,7 @@ impl Interpreter {
                 }
             }
             ExprKind::Call { function, args, block } => {
-                // Check for built-ins first (optimization + legacy support)
-                if let ExprKind::Identifier(name) = &function.kind {
+                if let ExprKind::Identifier { name, .. } = &function.kind {
                      match name.as_str() {
                         "puts" | "print" => {
                             let mut last_val = Value::Nil;
@@ -395,16 +500,13 @@ impl Interpreter {
                                 Err(_) => Ok(Value::Boolean(false)),
                             };
                         }
-                        _ => {} // Fall through to variable lookup
+                        _ => {}
                      }
                 }
 
-                // Evaluate function expression (First-Class Functions)
                 let func_val = self.eval(function)?;
-
-                if let Value::Function { params: func_params, body: func_body, declarations: func_decls, env: func_env } = func_val {
+                if let Value::Function { params: func_params, body: func_body, declarations: func_decls, param_offset, env: func_env } = func_val {
                     let mut arg_vals = Vec::new();
-
                     for (i, arg_expr) in args.iter().enumerate() {
                         let val = self.eval(arg_expr)?;
                         if i < func_params.len() {
@@ -427,33 +529,23 @@ impl Interpreter {
                     }
 
                     if arg_vals.len() < func_params.len() {
-                        // CURRYING / PARTIAL APPLICATION
-                        // Create new env extending the function's closure
-                        // Use new_partial so that these parameters are visible to subsequent calls
                         let new_env = Rc::new(RefCell::new(Environment::new_partial(Some(func_env.clone()))));
-                        
-                        // Bind provided args
                         for ((param, _), val) in func_params.iter().zip(arg_vals.iter()) {
                              new_env.borrow_mut().define(param.clone(), val.clone());
                         }
-
-                        // Return new function with remaining params
-                        let remaining_params = func_params[arg_vals.len()..].to_vec();
-                        
+                        let num_bound = arg_vals.len();
+                        let remaining_params = func_params[num_bound..].to_vec();
                         return Ok(Value::Function {
                             params: remaining_params,
                             body: func_body.clone(),
                             declarations: func_decls.clone(),
+                            param_offset: param_offset + num_bound,
                             env: new_env,
                         });
                     } else if arg_vals.len() > func_params.len() {
-                         return Err(RuntimeError {
-                             message: "Too many arguments".to_string(),
-                             line,
-                         });
+                         return Err(RuntimeError { message: "Too many arguments".to_string(), line });
                     }
 
-                    // FULL CALL
                     let block_entry = if let Some(closure) = block {
                         Some((closure.clone(), self.env.clone()))
                     } else {
@@ -462,16 +554,9 @@ impl Interpreter {
                     self.block_stack.push(block_entry);
 
                     let new_env = Rc::new(RefCell::new(Environment::new(Some(func_env.clone()))));
-                    for ((param, _), val) in func_params.iter().zip(arg_vals.into_iter()) {
-                        new_env.borrow_mut().define(param.clone(), val);
-                    }
-                    
-                    // Scan for local assignments (Python-style scoping)
-                    for local in func_decls.iter() {
-                        // Check if it's already defined (as a param in current env OR parent partial envs)
-                        if new_env.borrow().get_raw_no_deref(local).is_none() {
-                            new_env.borrow_mut().define(local.clone(), Value::Uninitialized);
-                        }
+                    new_env.borrow_mut().slots = vec![Value::Uninitialized; func_decls.len()];
+                    for (i, val) in arg_vals.into_iter().enumerate() {
+                        new_env.borrow_mut().set_slot(i + param_offset, val);
                     }
 
                     let original_env = self.env.clone();
@@ -479,13 +564,9 @@ impl Interpreter {
                     let result = self.eval(&func_body)?;
                     self.env = original_env;
                     self.block_stack.pop();
-                    
                     Ok(result)
                 } else {
-                    Err(RuntimeError {
-                        message: format!("Tried to call a non-function value: {}", func_val),
-                        line,
-                    })
+                    Err(RuntimeError { message: format!("Tried to call a non-function value: {}", func_val), line })
                 }
             }
             ExprKind::BinaryOp { left, op, right } => {
@@ -509,7 +590,7 @@ impl Interpreter {
                         Op::Divide => Ok(Value::Float(f1 / f2)),
                         Op::GreaterThan => Ok(Value::Boolean(f1 > f2)),
                         Op::LessThan => Ok(Value::Boolean(f1 < f2)),
-                        Op::Equal => Ok(Value::Boolean(f1 == f2)), // Approx equal? No, exact for now.
+                        Op::Equal => Ok(Value::Boolean(f1 == f2)),
                         Op::NotEqual => Ok(Value::Boolean(f1 != f2)),
                     },
                     (Value::Integer(i), Value::Float(f)) => {
@@ -542,60 +623,32 @@ impl Interpreter {
                         Op::Add => Ok(Value::String(Rc::new(format!("{}{}", s1, s2)))),
                         Op::Equal => Ok(Value::Boolean(s1 == s2)),
                         Op::NotEqual => Ok(Value::Boolean(s1 != s2)),
-                        _ => Err(RuntimeError {
-                            message: "Invalid operation on two strings".to_string(),
-                            line,
-                        }),
+                        _ => Err(RuntimeError { message: "Invalid operation on two strings".to_string(), line }),
                     },
                     (Value::String(s), v2) => match op {
                         Op::Add => Ok(Value::String(Rc::new(format!("{}{}", s, v2.inspect())))),
                         Op::Equal => Ok(Value::Boolean(false)),
                         Op::NotEqual => Ok(Value::Boolean(true)),
-                        _ => Err(RuntimeError {
-                            message: format!("Invalid operation between String and {:?}", v2),
-                            line,
-                        }),
+                        _ => Err(RuntimeError { message: format!("Invalid operation between String and {:?}", v2), line }),
                     },
                     (v1, v2) => match op {
                         Op::Equal => Ok(Value::Boolean(false)),
                         Op::NotEqual => Ok(Value::Boolean(true)),
-                        _ => Err(RuntimeError {
-                            message: format!("Type mismatch: Cannot operate {:?} on {:?} and {:?}", op, v1, v2),
-                            line,
-                        }),
+                        _ => Err(RuntimeError { message: format!("Type mismatch: Cannot operate {:?} on {:?} and {:?}", op, v1, v2), line }),
                     },
                 }
             }
-            ExprKind::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
+            ExprKind::If { condition, then_branch, else_branch } => {
                 let val = self.eval(condition)?;
-                let is_truthy = match val {
-                    Value::Boolean(false) | Value::Nil => false,
-                    _ => true,
-                };
-
-                if is_truthy {
-                    self.eval(then_branch)
-                } else if let Some(else_expr) = else_branch {
-                    self.eval(else_expr)
-                } else {
-                    Ok(Value::Nil)
-                }
+                let is_truthy = match val { Value::Boolean(false) | Value::Nil => false, _ => true };
+                if is_truthy { self.eval(then_branch) } else if let Some(else_expr) = else_branch { self.eval(else_expr) } else { Ok(Value::Nil) }
             }
             ExprKind::While { condition, body } => {
                 let mut last_val = Value::Nil;
                 loop {
                     let cond_val = self.eval(condition)?;
-                    let is_true = match cond_val {
-                        Value::Boolean(false) | Value::Nil => false,
-                        _ => true,
-                    };
-                    if !is_true {
-                        break;
-                    }
+                    let is_true = match cond_val { Value::Boolean(false) | Value::Nil => false, _ => true };
+                    if !is_true { break; }
                     last_val = self.eval(body)?;
                 }
                 Ok(last_val)
@@ -603,7 +656,6 @@ impl Interpreter {
             ExprKind::For { var, iterable, body } => {
                 let iter_val = self.eval(iterable)?;
                 let mut last_val = Value::Nil;
-
                 match iter_val {
                     Value::Array(arr) => {
                         let vec = arr.borrow().clone();
@@ -621,17 +673,12 @@ impl Interpreter {
                         }
                         Ok(last_val)
                     }
-                    _ => Err(RuntimeError {
-                        message: "Type is not iterable".to_string(),
-                        line,
-                    }),
+                    _ => Err(RuntimeError { message: "Type is not iterable".to_string(), line }),
                 }
             }
             ExprKind::Block(statements) => {
                 let mut last = Value::Nil;
-                for stmt in statements {
-                    last = self.eval(stmt)?;
-                }
+                for stmt in statements { last = self.eval(stmt)?; }
                 Ok(last)
             }
         }

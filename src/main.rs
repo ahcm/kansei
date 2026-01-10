@@ -7,6 +7,7 @@ mod value;
 use directories::ProjectDirs;
 use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
+use rustc_hash::FxHashMap;
 use std::env;
 use std::fs;
 use std::panic;
@@ -21,8 +22,6 @@ fn main() -> rustyline::Result<()>
     let mut interpreter = eval::Interpreter::new();
 
     // Prepare program.args
-    // If running file: args[0]=bin, args[1]=file, args[2...]=script args.
-    // If running REPL: args[0]=bin, args[1...]=REPL args? Usually ignore.
     let script_args = if args.len() > 2 {
         args[2..].to_vec()
     } else {
@@ -33,13 +32,13 @@ fn main() -> rustyline::Result<()>
         Rc::new(RefCell::new(script_args.iter().map(|s| value::Value::String(Rc::new(s.clone()))).collect()))
     );
 
-    let mut env_map = std::collections::HashMap::new();
+    let mut env_map = FxHashMap::default();
     for (key, val) in env::vars() {
         env_map.insert(Rc::new(key), value::Value::String(Rc::new(val)));
     }
     let env_val = value::Value::Map(Rc::new(RefCell::new(env_map)));
 
-    let mut program_map = std::collections::HashMap::new();
+    let mut program_map = FxHashMap::default();
     program_map.insert(Rc::new("name".to_string()), value::Value::String(Rc::new(args[0].clone())));
     program_map.insert(Rc::new("args".to_string()), args_val);
     program_map.insert(Rc::new("env".to_string()), env_val);
@@ -112,19 +111,15 @@ fn run_file(path: &str, mut interpreter: eval::Interpreter)
 
 fn run_repl(mut interpreter: eval::Interpreter) -> rustyline::Result<()>
 {
-    // The new identity
     println!("Kansei v0.0.1");
     println!("Have fun!");
 
     let mut input_buffer = String::new();
-
     let mut rl = DefaultEditor::new()?;
 
-    // Determine history file path
     let history_path = if let Some(proj_dirs) = ProjectDirs::from("com", "ahcm", "kansei")
     {
         let data_dir = proj_dirs.data_dir();
-        // Ensure the directory exists
         if let Err(e) = fs::create_dir_all(data_dir)
         {
             eprintln!("Warning: Could not create data directory: {}", e);
@@ -140,17 +135,12 @@ fn run_repl(mut interpreter: eval::Interpreter) -> rustyline::Result<()>
         PathBuf::from("history.txt")
     };
 
-    if rl.load_history(&history_path).is_err()
-    {
-        // No history file found or unable to read
-    }
+    if rl.load_history(&history_path).is_err() {}
 
     loop
     {
-        // Determine prompt based on buffer status
         let is_continuation = !input_buffer.is_empty();
         let prompt = if is_continuation { ".. " } else { "k> " };
-
         let readline = rl.readline(prompt);
 
         match readline
@@ -158,26 +148,11 @@ fn run_repl(mut interpreter: eval::Interpreter) -> rustyline::Result<()>
             Ok(line) =>
             {
                 let trimmed_line = line.trim();
-
-                // Handle exit command explicitly
-                if trimmed_line == "exit"
-                {
-                    break;
-                }
-
-                if !trimmed_line.is_empty()
-                {
-                    rl.add_history_entry(line.as_str())?;
-                }
-
-                // If user just hits enter on empty line
+                if trimmed_line == "exit" { break; }
+                if !trimmed_line.is_empty() { rl.add_history_entry(line.as_str())?; }
                 if trimmed_line.is_empty()
                 {
-                    if !is_continuation
-                    {
-                        continue;
-                    }
-                    // If continuation, we append the newline (keeps formatting)
+                    if !is_continuation { continue; }
                     input_buffer.push('\n');
                 }
                 else
@@ -186,14 +161,11 @@ fn run_repl(mut interpreter: eval::Interpreter) -> rustyline::Result<()>
                     input_buffer.push('\n');
                 }
 
-                // Check if the code block is complete
                 if is_balanced(&input_buffer)
                 {
                     let source = input_buffer.clone();
-                    input_buffer.clear(); // Clear immediately for next input
+                    input_buffer.clear();
 
-                    // 1. Parse
-                    // We use catch_unwind to handle syntax errors (panics in parser)
                     let parse_result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
                         let lexer = lexer::Lexer::new(&source);
                         let mut parser = parser::Parser::new(lexer);
@@ -204,8 +176,6 @@ fn run_repl(mut interpreter: eval::Interpreter) -> rustyline::Result<()>
                     {
                         Ok(ast) =>
                         {
-                            // 2. Evaluate
-                            // We use catch_unwind to handle runtime errors
                             let eval_result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
                                 interpreter.eval(&ast)
                             }));
@@ -214,7 +184,6 @@ fn run_repl(mut interpreter: eval::Interpreter) -> rustyline::Result<()>
                             {
                                 Ok(Ok(result)) =>
                                 {
-                                    // Heuristic to suppress output for simple prints
                                     if !source.trim().starts_with("puts")
                                     {
                                         println!("=> {}", result.inspect());
@@ -236,21 +205,9 @@ fn run_repl(mut interpreter: eval::Interpreter) -> rustyline::Result<()>
                     }
                 }
             }
-            Err(ReadlineError::Interrupted) =>
-            {
-                println!("CTRL-C");
-                break;
-            }
-            Err(ReadlineError::Eof) =>
-            {
-                println!("CTRL-D");
-                break;
-            }
-            Err(err) =>
-            {
-                println!("Error: {:?}", err);
-                break;
-            }
+            Err(ReadlineError::Interrupted) => { println!("CTRL-C"); break; }
+            Err(ReadlineError::Eof) => { println!("CTRL-D"); break; }
+            Err(err) => { println!("Error: {:?}", err); break; }
         }
     }
     rl.save_history(&history_path)

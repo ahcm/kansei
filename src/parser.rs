@@ -54,9 +54,10 @@ impl Parser
             let value = self.parse_expression();
 
             return match expr.kind {
-                ExprKind::Identifier(name) => self.make_expr(ExprKind::Assignment {
+                ExprKind::Identifier { name, .. } => self.make_expr(ExprKind::Assignment {
                     name,
                     value: Box::new(value),
+                    slot: None,
                 }, line),
                 ExprKind::Index { target, index } => self.make_expr(ExprKind::IndexAssignment {
                     target,
@@ -284,12 +285,12 @@ impl Parser
                     }
 
                     return self.make_expr(ExprKind::Call {
-                        function: Box::new(self.make_expr(ExprKind::Identifier(name), line)),
+                        function: Box::new(self.make_expr(ExprKind::Identifier { name, slot: None }, line)),
                         args,
                         block: None,
                     }, line);
                 }
-                self.make_expr(ExprKind::Identifier(name), line)
+                self.make_expr(ExprKind::Identifier { name, slot: None }, line)
             }
             Token::Fn => self.parse_fn(),
             Token::If => self.parse_if(),

@@ -30,7 +30,7 @@ pub enum ExprKind
     // Basic Values
     Integer(i64),
     Float(f64),
-    Identifier(String),
+    Identifier { name: String, slot: Option<usize> },
     Reference(String), // &x
     String(String), // "hello"
     Boolean(bool),
@@ -50,6 +50,7 @@ pub enum ExprKind
     {
         name: String,
         value: Box<Expr>,
+        slot: Option<usize>,
     },
     IndexAssignment
     {

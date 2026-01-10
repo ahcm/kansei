@@ -1,23 +1,35 @@
 use crate::ast::Expr;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
+use rustc_hash::FxHashMap;
 use std::fmt;
 use std::cell::RefCell;
 use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Environment {
-    pub values: HashMap<String, Value>,
+    pub values: FxHashMap<String, Value>,
+    pub slots: Vec<Value>,
     pub parent: Option<Rc<RefCell<Environment>>>,
     pub is_partial: bool, // If true, allow full recursive lookup (used for currying/params)
 }
 
 impl Environment {
     pub fn new(parent: Option<Rc<RefCell<Environment>>>) -> Self {
-        Self { values: HashMap::new(), parent, is_partial: false }
+        Self { values: FxHashMap::default(), slots: Vec::new(), parent, is_partial: false }
     }
 
     pub fn new_partial(parent: Option<Rc<RefCell<Environment>>>) -> Self {
-        Self { values: HashMap::new(), parent, is_partial: true }
+        Self { values: FxHashMap::default(), slots: Vec::new(), parent, is_partial: true }
+    }
+
+    pub fn get_slot(&self, index: usize) -> Option<Value> {
+        self.slots.get(index).cloned()
+    }
+
+    pub fn set_slot(&mut self, index: usize, val: Value) {
+        if index < self.slots.len() {
+            self.slots[index] = val;
+        }
     }
 
     pub fn get(&self, name: &str) -> Option<Value> {
@@ -146,12 +158,13 @@ pub enum Value
     String(Rc<String>),
     Boolean(bool),
     Array(Rc<RefCell<Vec<Value>>>),
-    Map(Rc<RefCell<HashMap<Rc<String>, Value>>>),
+    Map(Rc<RefCell<FxHashMap<Rc<String>, Value>>>),
     Nil,
     Function {
         params: Vec<(String, bool)>,
         body: Box<Expr>,
-        declarations: Rc<HashSet<String>>,
+        declarations: Rc<Vec<String>>,
+        param_offset: usize,
         env: Rc<RefCell<Environment>>,
     },
     Reference(Rc<RefCell<Value>>),

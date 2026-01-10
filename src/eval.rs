@@ -1,11 +1,41 @@
 use crate::ast::{Closure, Expr, Op};
 use crate::value::{Environment, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, Write};
 use std::process::Command;
 use std::rc::Rc;
 use std::cell::RefCell;
+
+fn collect_declarations(expr: &Expr, decls: &mut HashSet<String>) {
+    match expr {
+        Expr::Assignment { name, .. } => {
+            decls.insert(name.clone());
+        }
+        Expr::FunctionDef { name, .. } => {
+            decls.insert(name.clone());
+        }
+        Expr::Block(stmts) => {
+            for stmt in stmts {
+                collect_declarations(stmt, decls);
+            }
+        }
+        Expr::If { then_branch, else_branch, .. } => {
+            collect_declarations(then_branch, decls);
+            if let Some(else_expr) = else_branch {
+                collect_declarations(else_expr, decls);
+            }
+        }
+        Expr::While { body, .. } => {
+            collect_declarations(body, decls);
+        }
+        Expr::For { var, body, .. } => {
+            decls.insert(var.clone());
+            collect_declarations(body, decls);
+        }
+        _ => {}
+    }
+}
 
 pub struct Interpreter {
     // Current environment (scope)
@@ -48,7 +78,14 @@ impl Interpreter {
                 }
             }
             Expr::Identifier(name) => {
-                self.env.borrow().get(name).expect(&format!("Undefined variable: {}", name))
+                let val = self.env.borrow().get(name).expect(&format!("Undefined variable: {}", name));
+                if let Value::Uninitialized = val {
+                    panic!("Variable '{}' used before assignment", name);
+                }
+                val
+            }
+            Expr::Reference(name) => {
+                self.env.borrow_mut().promote(name).expect(&format!("Undefined variable referenced: {}", name))
             }
             Expr::Assignment { name, value } => {
                 let val = self.eval(value);
@@ -85,6 +122,15 @@ impl Interpreter {
                          } else {
                              let val = arg_iter.next().unwrap_or(Value::Nil);
                              new_env.borrow_mut().define(param_name.clone(), val);
+                         }
+                     }
+                     
+                     // Scan for local assignments in block
+                     let mut locals = HashSet::new();
+                     collect_declarations(&closure.body, &mut locals);
+                     for local in locals {
+                         if !new_env.borrow().values.contains_key(&local) {
+                             new_env.borrow_mut().define(local, Value::Uninitialized);
                          }
                      }
                      
@@ -202,22 +248,20 @@ impl Interpreter {
                     let mut arg_vals = Vec::new();
 
                     for (i, arg_expr) in args.iter().enumerate() {
+                        let val = self.eval(arg_expr);
                         if i < func_params.len() {
                             let (_, is_ref) = func_params[i];
                             if is_ref {
-                                if let Expr::Identifier(id_name) = arg_expr {
-                                    let ref_val = self.env.borrow_mut().promote(id_name)
-                                        .expect(&format!("Undefined variable passed as reference: {}", id_name));
-                                    arg_vals.push(ref_val);
+                                if let Value::Reference(_) = val {
+                                    arg_vals.push(val);
                                 } else {
-                                    panic!("Argument #{} must be a variable (identifier) because it is passed by reference", i + 1);
+                                    panic!("Argument #{} expected to be a reference (&var), but got value", i + 1);
                                 }
                             } else {
-                                arg_vals.push(self.eval(arg_expr));
+                                arg_vals.push(val);
                             }
                         } else {
-                            // Too many arguments, but we'll panic below or handle variadics if we supported them
-                            arg_vals.push(self.eval(arg_expr));
+                            arg_vals.push(val);
                         }
                     }
 
@@ -254,6 +298,15 @@ impl Interpreter {
                     let new_env = Rc::new(RefCell::new(Environment::new(Some(func_env.clone()))));
                     for ((param, _), val) in func_params.iter().zip(arg_vals.into_iter()) {
                         new_env.borrow_mut().define(param.clone(), val);
+                    }
+                    
+                    // Scan for local assignments (Python-style scoping)
+                    let mut locals = HashSet::new();
+                    collect_declarations(&func_body, &mut locals);
+                    for local in locals {
+                        if !new_env.borrow().values.contains_key(&local) {
+                            new_env.borrow_mut().define(local, Value::Uninitialized);
+                        }
                     }
 
                     let original_env = self.env.clone();

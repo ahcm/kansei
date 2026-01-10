@@ -109,6 +109,7 @@ pub enum Value
         env: Rc<RefCell<Environment>>,
     },
     Reference(Rc<RefCell<Value>>),
+    Uninitialized,
 }
 
 impl PartialEq for Value {
@@ -145,6 +146,7 @@ impl PartialEq for Value {
             }
             (Value::Nil, Value::Nil) => true,
             (Value::Function { .. }, Value::Function { .. }) => false,
+            (Value::Uninitialized, Value::Uninitialized) => true,
             _ => false,
         }
     }
@@ -161,6 +163,7 @@ impl fmt::Debug for Value {
             Value::Nil => write!(f, "Nil"),
             Value::Function { .. } => write!(f, "Function(...)"),
             Value::Reference(r) => write!(f, "Reference({:?})", r.borrow()),
+            Value::Uninitialized => write!(f, "Uninitialized"),
         }
     }
 }
@@ -193,6 +196,7 @@ impl Value
                 format!("<function({})>", p_str.join(", "))
             },
             Value::Reference(r) => r.borrow().inspect(),
+            Value::Uninitialized => "<uninitialized>".to_string(),
         }
     }
 }
@@ -225,6 +229,7 @@ impl fmt::Display for Value
                 write!(f, "<function({})>", p_str.join(", "))
             },
             Value::Reference(r) => write!(f, "{}", r.borrow()),
+            Value::Uninitialized => write!(f, "<uninitialized>"),
         }
     }
 }

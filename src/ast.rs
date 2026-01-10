@@ -24,6 +24,7 @@ pub enum Expr
     // Basic Values
     Integer(i64),
     Identifier(String),
+    Reference(String), // &x
     String(String), // "hello"
     Boolean(bool),
     Nil,

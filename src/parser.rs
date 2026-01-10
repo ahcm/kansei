@@ -321,6 +321,17 @@ impl Parser
                 }
                 Expr::Yield(args)
             }
+            Token::Ampersand => {
+                self.eat();
+                match &self.current_token {
+                    Token::Identifier(name) => {
+                        let n = name.clone();
+                        self.eat();
+                        Expr::Reference(n)
+                    },
+                    _ => panic!("Expected identifier after &"),
+                }
+            }
             _ => panic!("Unexpected token: {:?}", self.current_token),
         }
     }

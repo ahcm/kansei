@@ -1,5 +1,5 @@
 use crate::ast::Expr;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -143,14 +143,15 @@ pub enum Value
 {
     Integer(i64),
     Float(f64),
-    String(String),
+    String(Rc<String>),
     Boolean(bool),
     Array(Rc<RefCell<Vec<Value>>>),
-    Map(Rc<RefCell<HashMap<String, Value>>>),
+    Map(Rc<RefCell<HashMap<Rc<String>, Value>>>),
     Nil,
     Function {
         params: Vec<(String, bool)>,
         body: Box<Expr>,
+        declarations: Rc<HashSet<String>>,
         env: Rc<RefCell<Environment>>,
     },
     Reference(Rc<RefCell<Value>>),

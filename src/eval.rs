@@ -88,7 +88,7 @@ impl Interpreter {
         match &expr.kind {
             ExprKind::Integer(i) => Ok(Value::Integer(*i)),
             ExprKind::Float(f) => Ok(Value::Float(*f)),
-            ExprKind::String(s) => Ok(Value::String(s.clone())),
+            ExprKind::String(s) => Ok(Value::String(Rc::new(s.clone()))),
             ExprKind::Boolean(b) => Ok(Value::Boolean(*b)),
             ExprKind::Nil => Ok(Value::Nil),
             ExprKind::Shell(cmd_str) => {
@@ -101,9 +101,9 @@ impl Interpreter {
                 match output {
                     Ok(o) => {
                         let res = String::from_utf8_lossy(&o.stdout).to_string();
-                        Ok(Value::String(res.trim().to_string()))
+                        Ok(Value::String(Rc::new(res.trim().to_string())))
                     }
-                    Err(_) => Ok(Value::String("".to_string())),
+                    Err(_) => Ok(Value::String(Rc::new("".to_string()))),
                 }
             }
             ExprKind::Identifier(name) => {
@@ -159,7 +159,7 @@ impl Interpreter {
                     Value::Map(map) => {
                         let key = match index_val {
                              Value::String(s) => s,
-                             _ => index_val.inspect(),
+                             _ => Rc::new(index_val.inspect()),
                         };
                         map.borrow_mut().insert(key, val.clone());
                     }
@@ -173,9 +173,12 @@ impl Interpreter {
             ExprKind::FunctionDef { name, params, body } => {
                 // Capture current env (Closure)
                 let func_env = self.env.clone();
+                let mut locals = HashSet::new();
+                collect_declarations(body, &mut locals);
                 let func = Value::Function {
                     params: params.clone(),
                     body: body.clone(),
+                    declarations: Rc::new(locals),
                     env: func_env,
                 };
                 self.env.borrow_mut().define(name.clone(), func.clone());
@@ -183,9 +186,12 @@ impl Interpreter {
             }
             ExprKind::AnonymousFunction { params, body } => {
                 let func_env = self.env.clone();
+                let mut locals = HashSet::new();
+                collect_declarations(body, &mut locals);
                 Ok(Value::Function {
                     params: params.clone(),
                     body: body.clone(),
+                    declarations: Rc::new(locals),
                     env: func_env,
                 })
             }
@@ -265,7 +271,7 @@ impl Interpreter {
                 
                 let mut vals = Vec::with_capacity(n);
                 
-                if let Value::Function { params, body, env: func_env } = gen_val {
+                if let Value::Function { params, body, declarations: func_decls, env: func_env } = gen_val {
                     // It's a generator function
                     for i in 0..n {
                         let new_env = Rc::new(RefCell::new(Environment::new(Some(func_env.clone()))));
@@ -275,11 +281,9 @@ impl Interpreter {
                         }
                         
                         // Scan for local assignments
-                        let mut locals = HashSet::new();
-                        collect_declarations(&body, &mut locals);
-                        for local in locals {
-                            if new_env.borrow().get_raw_no_deref(&local).is_none() {
-                                new_env.borrow_mut().define(local, Value::Uninitialized);
+                        for local in func_decls.iter() {
+                            if new_env.borrow().get_raw_no_deref(local).is_none() {
+                                new_env.borrow_mut().define(local.clone(), Value::Uninitialized);
                             }
                         }
 
@@ -306,7 +310,7 @@ impl Interpreter {
                     let v_val = self.eval(v_expr)?;
                     let k_str = match k_val {
                         Value::String(s) => s,
-                        _ => k_val.inspect(),
+                        _ => Rc::new(k_val.inspect()),
                     };
                     map.insert(k_str, v_val);
                 }
@@ -336,7 +340,7 @@ impl Interpreter {
                     Value::Map(map) => {
                         let key = match index_val {
                              Value::String(s) => s,
-                             _ => index_val.inspect(),
+                             _ => Rc::new(index_val.inspect()),
                         };
                         Ok(map.borrow().get(&key).cloned().unwrap_or(Value::Nil))
                     }
@@ -376,7 +380,7 @@ impl Interpreter {
                         "read_file" => {
                             let path = self.eval(&args[0])?.to_string();
                             return match fs::read_to_string(&path) {
-                                Ok(content) => Ok(Value::String(content)),
+                                Ok(content) => Ok(Value::String(Rc::new(content))),
                                 Err(_) => Ok(Value::Nil),
                             };
                         }
@@ -398,7 +402,7 @@ impl Interpreter {
                 // Evaluate function expression (First-Class Functions)
                 let func_val = self.eval(function)?;
 
-                if let Value::Function { params: func_params, body: func_body, env: func_env } = func_val {
+                if let Value::Function { params: func_params, body: func_body, declarations: func_decls, env: func_env } = func_val {
                     let mut arg_vals = Vec::new();
 
                     for (i, arg_expr) in args.iter().enumerate() {
@@ -439,6 +443,7 @@ impl Interpreter {
                         return Ok(Value::Function {
                             params: remaining_params,
                             body: func_body.clone(),
+                            declarations: func_decls.clone(),
                             env: new_env,
                         });
                     } else if arg_vals.len() > func_params.len() {
@@ -462,12 +467,10 @@ impl Interpreter {
                     }
                     
                     // Scan for local assignments (Python-style scoping)
-                    let mut locals = HashSet::new();
-                    collect_declarations(&func_body, &mut locals);
-                    for local in locals {
+                    for local in func_decls.iter() {
                         // Check if it's already defined (as a param in current env OR parent partial envs)
-                        if new_env.borrow().get_raw_no_deref(&local).is_none() {
-                            new_env.borrow_mut().define(local, Value::Uninitialized);
+                        if new_env.borrow().get_raw_no_deref(local).is_none() {
+                            new_env.borrow_mut().define(local.clone(), Value::Uninitialized);
                         }
                     }
 
@@ -536,7 +539,7 @@ impl Interpreter {
                         }
                     },
                     (Value::String(s1), Value::String(s2)) => match op {
-                        Op::Add => Ok(Value::String(format!("{}{}", s1, s2))),
+                        Op::Add => Ok(Value::String(Rc::new(format!("{}{}", s1, s2)))),
                         Op::Equal => Ok(Value::Boolean(s1 == s2)),
                         Op::NotEqual => Ok(Value::Boolean(s1 != s2)),
                         _ => Err(RuntimeError {
@@ -545,7 +548,7 @@ impl Interpreter {
                         }),
                     },
                     (Value::String(s), v2) => match op {
-                        Op::Add => Ok(Value::String(format!("{}{}", s, v2.inspect()))),
+                        Op::Add => Ok(Value::String(Rc::new(format!("{}{}", s, v2.inspect())))),
                         Op::Equal => Ok(Value::Boolean(false)),
                         Op::NotEqual => Ok(Value::Boolean(true)),
                         _ => Err(RuntimeError {
@@ -611,7 +614,7 @@ impl Interpreter {
                         Ok(last_val)
                     }
                     Value::Map(map) => {
-                        let keys: Vec<String> = map.borrow().keys().cloned().collect();
+                        let keys: Vec<Rc<String>> = map.borrow().keys().cloned().collect();
                         for key in keys {
                             self.env.borrow_mut().assign(var.clone(), Value::String(key));
                             last_val = self.eval(body)?;

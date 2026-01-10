@@ -1,5 +1,5 @@
 use crate::ast::{Closure, Expr, ExprKind, Op};
-use crate::value::{Environment, Value};
+use crate::value::{Environment, Instruction, Value};
 use rustc_hash::FxHashMap;
 use std::collections::HashSet;
 use std::fs;
@@ -64,6 +64,119 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<String>) {
     }
 }
 
+fn compile_to_instructions(expr: &Expr, code: &mut Vec<Instruction>) -> bool {
+    match &expr.kind {
+        ExprKind::Integer(i) => code.push(Instruction::LoadConst(Value::Integer(*i))),
+        ExprKind::Float(f) => code.push(Instruction::LoadConst(Value::Float(*f))),
+        ExprKind::Identifier { slot: Some(s), .. } => code.push(Instruction::LoadSlot(*s)),
+        ExprKind::BinaryOp { left, op, right } => {
+            if !compile_to_instructions(left, code) { return false; }
+            if !compile_to_instructions(right, code) { return false; }
+            match op {
+                Op::Add => code.push(Instruction::Add),
+                Op::Subtract => code.push(Instruction::Sub),
+                Op::Multiply => code.push(Instruction::Mul),
+                Op::Divide => code.push(Instruction::Div),
+                Op::Equal => code.push(Instruction::Eq),
+                Op::GreaterThan => code.push(Instruction::Gt),
+                Op::LessThan => code.push(Instruction::Lt),
+                _ => return false,
+            }
+        }
+        _ => return false,
+    }
+    true
+}
+
+fn execute_instructions(code: &[Instruction], slots: &[Value]) -> EvalResult {
+    let mut stack = Vec::with_capacity(8);
+    for inst in code {
+        match inst {
+            Instruction::LoadConst(v) => stack.push(v.clone()),
+            Instruction::LoadSlot(s) => stack.push(slots[*s].clone()),
+            _ => {
+                let r = stack.pop().unwrap();
+                let l = stack.pop().unwrap();
+                let res = match (l, r) {
+                    (Value::Integer(i1), Value::Integer(i2)) => match inst {
+                        Instruction::Add => Value::Integer(i1 + i2),
+                        Instruction::Sub => Value::Integer(i1 - i2),
+                        Instruction::Mul => Value::Integer(i1 * i2),
+                        Instruction::Div => Value::Integer(i1 / i2),
+                        Instruction::Eq => Value::Boolean(i1 == i2),
+                        Instruction::Gt => Value::Boolean(i1 > i2),
+                        Instruction::Lt => Value::Boolean(i1 < i2),
+                        _ => unreachable!(),
+                    },
+                    (Value::Float(f1), Value::Float(f2)) => match inst {
+                        Instruction::Add => Value::Float(f1 + f2),
+                        Instruction::Sub => Value::Float(f1 - f2),
+                        Instruction::Mul => Value::Float(f1 * f2),
+                        Instruction::Div => Value::Float(f1 / f2),
+                        Instruction::Eq => Value::Boolean(f1 == f2),
+                        Instruction::Gt => Value::Boolean(f1 > f2),
+                        Instruction::Lt => Value::Boolean(f1 < f2),
+                        _ => unreachable!(),
+                    },
+                    (Value::Integer(i), Value::Float(f)) => {
+                        let f1 = i as f64;
+                        match inst {
+                            Instruction::Add => Value::Float(f1 + f),
+                            Instruction::Sub => Value::Float(f1 - f),
+                            Instruction::Mul => Value::Float(f1 * f),
+                            Instruction::Div => Value::Float(f1 / f),
+                            Instruction::Eq => Value::Boolean(f1 == f),
+                            Instruction::Gt => Value::Boolean(f1 > f),
+                            Instruction::Lt => Value::Boolean(f1 < f),
+                            _ => unreachable!(),
+                        }
+                    },
+                    (Value::Float(f), Value::Integer(i)) => {
+                        let f2 = i as f64;
+                        match inst {
+                            Instruction::Add => Value::Float(f + f2),
+                            Instruction::Sub => Value::Float(f - f2),
+                            Instruction::Mul => Value::Float(f * f2),
+                            Instruction::Div => Value::Float(f / f2),
+                            Instruction::Eq => Value::Boolean(f == f2),
+                            Instruction::Gt => Value::Boolean(f > f2),
+                            Instruction::Lt => Value::Boolean(f < f2),
+                            _ => unreachable!(),
+                        }
+                    },
+                    _ => return Err(RuntimeError { message: "Invalid types for operation".to_string(), line: 0 }),
+                };
+                stack.push(res);
+            }
+        }
+    }
+    Ok(stack.pop().unwrap())
+}
+
+fn is_simple(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Yield(_) | ExprKind::FunctionDef { .. } | ExprKind::AnonymousFunction { .. } => false,
+        ExprKind::Assignment { slot: None, .. } => false,
+        ExprKind::Block(stmts) => stmts.iter().all(is_simple),
+        ExprKind::If { condition, then_branch, else_branch } => {
+            is_simple(condition) && is_simple(then_branch) && else_branch.as_ref().map_or(true, |eb| is_simple(eb))
+        }
+        ExprKind::While { condition, body } => is_simple(condition) && is_simple(body),
+        ExprKind::For { iterable, body, .. } => is_simple(iterable) && is_simple(body),
+        ExprKind::BinaryOp { left, right, .. } => is_simple(left) && is_simple(right),
+        ExprKind::Call { function, args, block, .. } => {
+            if block.is_some() { return false; }
+            is_simple(function) && args.iter().all(is_simple)
+        }
+        ExprKind::Array(elements) => elements.iter().all(is_simple),
+        ExprKind::ArrayGenerator { generator, size } => is_simple(generator) && is_simple(size),
+        ExprKind::Map(entries) => entries.iter().all(|(k, v)| is_simple(k) && is_simple(v)),
+        ExprKind::Index { target, index } => is_simple(target) && is_simple(index),
+        ExprKind::IndexAssignment { target, index, value } => is_simple(target) && is_simple(index) && is_simple(value),
+        _ => true,
+    }
+}
+
 fn resolve(expr: &mut Expr, slot_map: &FxHashMap<String, usize>) {
     match &mut expr.kind {
         ExprKind::Identifier { name, slot } => {
@@ -101,7 +214,7 @@ fn resolve(expr: &mut Expr, slot_map: &FxHashMap<String, usize>) {
             resolve(iterable, slot_map);
             resolve(body, slot_map);
         }
-        ExprKind::Call { function, args, block } => {
+        ExprKind::Call { function, args, block, .. } => {
             resolve(function, slot_map);
             for arg in args {
                 resolve(arg, slot_map);
@@ -148,6 +261,8 @@ pub struct Interpreter {
     env: Rc<RefCell<Environment>>,
     // Stack of blocks passed to currently executing functions.
     block_stack: Vec<Option<(Closure, Rc<RefCell<Environment>>)>>,
+    // Pool of spare environments for reuse
+    env_pool: Vec<Rc<RefCell<Environment>>>,
 }
 
 impl Interpreter {
@@ -155,6 +270,24 @@ impl Interpreter {
         Self {
             env: Rc::new(RefCell::new(Environment::new(None))),
             block_stack: Vec::new(),
+            env_pool: Vec::with_capacity(32),
+        }
+    }
+
+    fn get_env(&mut self, parent: Option<Rc<RefCell<Environment>>>, is_partial: bool) -> Rc<RefCell<Environment>> {
+        if let Some(env_rc) = self.env_pool.pop() {
+            env_rc.borrow_mut().reset(parent, is_partial);
+            env_rc
+        } else {
+            Rc::new(RefCell::new(Environment::new(parent)))
+        }
+    }
+
+    fn recycle_env(&mut self, env_rc: Rc<RefCell<Environment>>) {
+        if Rc::strong_count(&env_rc) == 1 {
+            if self.env_pool.len() < 128 {
+                self.env_pool.push(env_rc);
+            }
         }
     }
 
@@ -162,7 +295,7 @@ impl Interpreter {
         self.env.borrow_mut().define(name, val);
     }
 
-    pub fn eval(&mut self, expr: &Expr) -> EvalResult {
+    pub fn eval(&mut self, expr: &Expr, slots: &mut [Value]) -> EvalResult {
         let line = expr.line;
         match &expr.kind {
             ExprKind::Integer(i) => Ok(Value::Integer(*i)),
@@ -187,11 +320,11 @@ impl Interpreter {
             }
             ExprKind::Identifier { name, slot } => {
                 if let Some(s) = slot {
-                    if let Some(val) = self.env.borrow().get_slot(*s) {
+                    if let Some(val) = slots.get(*s) {
                         if let Value::Uninitialized = val {
                             // Fallback to name-based lookup (e.g., for currying)
                         } else {
-                            return Ok(val);
+                            return Ok(val.clone());
                         }
                     }
                 }
@@ -215,18 +348,20 @@ impl Interpreter {
                 Ok(val)
             }
             ExprKind::Assignment { name, value, slot } => {
-                let val = self.eval(value)?;
+                let val = self.eval(value, slots)?;
                 if let Some(s) = slot {
-                    self.env.borrow_mut().set_slot(*s, val.clone());
+                    if let Some(slot_val) = slots.get_mut(*s) {
+                        *slot_val = val.clone();
+                    }
                 } else {
                     self.env.borrow_mut().set(name.clone(), val.clone());
                 }
                 Ok(val)
             }
             ExprKind::IndexAssignment { target, index, value } => {
-                let target_val = self.eval(target)?;
-                let index_val = self.eval(index)?;
-                let val = self.eval(value)?;
+                let target_val = self.eval(target, slots)?;
+                let index_val = self.eval(index, slots)?;
+                let val = self.eval(value, slots)?;
 
                 match target_val {
                     Value::Array(arr) => {
@@ -284,14 +419,20 @@ impl Interpreter {
 
                 let mut resolved_body = body.clone();
                 resolve(&mut resolved_body, &slot_map);
+                let simple = is_simple(&resolved_body);
+                
+                let mut code = Vec::new();
+                let compiled = if simple { compile_to_instructions(&resolved_body, &mut code) } else { false };
 
-                let func = Value::Function {
+                let func = Value::Function(Rc::new(crate::value::FunctionData {
                     params: params.clone(),
-                    body: resolved_body,
+                    body: *resolved_body,
                     declarations: Rc::new(slot_names),
                     param_offset: 0,
+                    is_simple: simple,
+                    code: if compiled { Some(Rc::new(code)) } else { None },
                     env: func_env,
-                };
+                }));
                 self.env.borrow_mut().define(name.clone(), func.clone());
                 Ok(func)
             }
@@ -317,14 +458,20 @@ impl Interpreter {
 
                 let mut resolved_body = body.clone();
                 resolve(&mut resolved_body, &slot_map);
+                let simple = is_simple(&resolved_body);
+                
+                let mut code = Vec::new();
+                let compiled = if simple { compile_to_instructions(&resolved_body, &mut code) } else { false };
 
-                Ok(Value::Function {
+                Ok(Value::Function(Rc::new(crate::value::FunctionData {
                     params: params.clone(),
-                    body: resolved_body,
+                    body: *resolved_body,
                     declarations: Rc::new(slot_names),
                     param_offset: 0,
+                    is_simple: simple,
+                    code: if compiled { Some(Rc::new(code)) } else { None },
                     env: func_env,
-                })
+                })))
             }
             ExprKind::Yield(args) => {
                 let block_data = self.block_stack.last().cloned();
@@ -332,10 +479,10 @@ impl Interpreter {
                 if let Some(Some((closure, saved_env))) = block_data {
                      let mut arg_vals = Vec::new();
                      for a in args {
-                         arg_vals.push(self.eval(a)?);
+                         arg_vals.push(self.eval(a, slots)?);
                      }
                      
-                     let new_env = Rc::new(RefCell::new(Environment::new(Some(saved_env.clone()))));
+                     let new_env = self.get_env(Some(saved_env.clone()), false);
                      
                      let mut arg_iter = arg_vals.into_iter();
                      for (param_name, is_ref) in &closure.params {
@@ -361,10 +508,11 @@ impl Interpreter {
                      }
                      
                      let original_env = self.env.clone();
-                     self.env = new_env;
-                     let result = self.eval(&closure.body)?;
+                     self.env = new_env.clone();
+                     let result = self.eval(&closure.body, &mut []);
                      self.env = original_env;
-                     Ok(result)
+                     self.recycle_env(new_env);
+                     result
                 } else {
                     Err(RuntimeError {
                         message: "No block given for yield".to_string(),
@@ -375,13 +523,13 @@ impl Interpreter {
             ExprKind::Array(elements) => {
                 let mut vals = Vec::new();
                 for e in elements {
-                    vals.push(self.eval(e)?);
+                    vals.push(self.eval(e, slots)?);
                 }
                 Ok(Value::Array(Rc::new(RefCell::new(vals))))
             }
             ExprKind::ArrayGenerator { generator, size } => {
-                let gen_val = self.eval(generator)?;
-                let size_val = self.eval(size)?;
+                let gen_val = self.eval(generator, slots)?;
+                let size_val = self.eval(size, slots)?;
                 let n = match size_val {
                     Value::Integer(i) if i >= 0 => i as usize,
                     _ => return Err(RuntimeError {
@@ -390,17 +538,24 @@ impl Interpreter {
                     }),
                 };
                 let mut vals = Vec::with_capacity(n);
-                if let Value::Function { params, body, declarations: func_decls, param_offset, env: func_env } = gen_val {
+                if let Value::Function(data) = gen_val {
                     for i in 0..n {
-                        let new_env = Rc::new(RefCell::new(Environment::new(Some(func_env.clone()))));
-                        new_env.borrow_mut().slots = vec![Value::Uninitialized; func_decls.len()];
-                        if params.len() > 0 {
-                            new_env.borrow_mut().set_slot(param_offset, Value::Integer(i as i64));
+                        let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, data.declarations.len());
+                        if data.params.len() > 0 {
+                             new_slots[data.param_offset] = Value::Integer(i as i64);
                         }
-                        let original_env = self.env.clone();
-                        self.env = new_env;
-                        let result = self.eval(&body)?;
-                        self.env = original_env;
+                        
+                        let result = if let Some(code) = &data.code {
+                            execute_instructions(code, &new_slots)?
+                        } else {
+                            let new_env = self.get_env(Some(data.env.clone()), false);
+                            let original_env = self.env.clone();
+                            self.env = new_env.clone();
+                            let result = self.eval(&data.body, &mut new_slots)?;
+                            self.env = original_env;
+                            self.recycle_env(new_env);
+                            result
+                        };
                         vals.push(result);
                     }
                 } else {
@@ -413,8 +568,8 @@ impl Interpreter {
             ExprKind::Map(entries) => {
                 let mut map = FxHashMap::default();
                 for (k_expr, v_expr) in entries {
-                    let k_val = self.eval(k_expr)?;
-                    let v_val = self.eval(v_expr)?;
+                    let k_val = self.eval(k_expr, slots)?;
+                    let v_val = self.eval(v_expr, slots)?;
                     let k_str = match k_val {
                         Value::String(s) => s,
                         _ => Rc::new(k_val.inspect()),
@@ -424,8 +579,8 @@ impl Interpreter {
                 Ok(Value::Map(Rc::new(RefCell::new(map))))
             }
             ExprKind::Index { target, index } => {
-                let target_val = self.eval(target)?;
-                let index_val = self.eval(index)?;
+                let target_val = self.eval(target, slots)?;
+                let index_val = self.eval(index, slots)?;
                 match target_val {
                     Value::Array(arr) => {
                         if let Value::Integer(idx) = index_val {
@@ -456,13 +611,13 @@ impl Interpreter {
                     }),
                 }
             }
-            ExprKind::Call { function, args, block } => {
+            ExprKind::Call { function, args, block, .. } => {
                 if let ExprKind::Identifier { name, .. } = &function.kind {
                      match name.as_str() {
                         "puts" | "print" => {
                             let mut last_val = Value::Nil;
                             for arg in args {
-                                let val = self.eval(arg)?;
+                                let val = self.eval(arg, slots)?;
                                 if name == "puts" {
                                     println!("{}", val);
                                 } else {
@@ -474,7 +629,7 @@ impl Interpreter {
                             return Ok(last_val);
                         }
                         "len" => {
-                            let val = self.eval(&args[0])?;
+                            let val = self.eval(&args[0], slots)?;
                             return match val {
                                 Value::String(s) => Ok(Value::Integer(s.len() as i64)),
                                 Value::Array(arr) => Ok(Value::Integer(arr.borrow().len() as i64)),
@@ -483,15 +638,15 @@ impl Interpreter {
                             };
                         }
                         "read_file" => {
-                            let path = self.eval(&args[0])?.to_string();
+                            let path = self.eval(&args[0], slots)?.to_string();
                             return match fs::read_to_string(&path) {
                                 Ok(content) => Ok(Value::String(Rc::new(content))),
                                 Err(_) => Ok(Value::Nil),
                             };
                         }
                         "write_file" => {
-                            let path = self.eval(&args[0])?.to_string();
-                            let content = self.eval(&args[1])?.to_string();
+                            let path = self.eval(&args[0], slots)?.to_string();
+                            let content = self.eval(&args[1], slots)?.to_string();
                             return match fs::File::create(&path) {
                                 Ok(mut file) => {
                                     write!(file, "{}", content).unwrap();
@@ -504,13 +659,13 @@ impl Interpreter {
                      }
                 }
 
-                let func_val = self.eval(function)?;
-                if let Value::Function { params: func_params, body: func_body, declarations: func_decls, param_offset, env: func_env } = func_val {
+                let func_val = self.eval(function, slots)?;
+                if let Value::Function(data) = func_val {
                     let mut arg_vals = Vec::new();
                     for (i, arg_expr) in args.iter().enumerate() {
-                        let val = self.eval(arg_expr)?;
-                        if i < func_params.len() {
-                            let (_, is_ref) = func_params[i];
+                        let val = self.eval(arg_expr, slots)?;
+                        if i < data.params.len() {
+                            let (_, is_ref) = data.params[i];
                             if is_ref {
                                 if let Value::Reference(_) = val {
                                     arg_vals.push(val);
@@ -528,22 +683,45 @@ impl Interpreter {
                         }
                     }
 
-                    if arg_vals.len() < func_params.len() {
-                        let new_env = Rc::new(RefCell::new(Environment::new_partial(Some(func_env.clone()))));
-                        for ((param, _), val) in func_params.iter().zip(arg_vals.iter()) {
+                    if arg_vals.len() < data.params.len() {
+                        let new_env = self.get_env(Some(data.env.clone()), true);
+                        for ((param, _), val) in data.params.iter().zip(arg_vals.iter()) {
                              new_env.borrow_mut().define(param.clone(), val.clone());
                         }
                         let num_bound = arg_vals.len();
-                        let remaining_params = func_params[num_bound..].to_vec();
-                        return Ok(Value::Function {
+                        let remaining_params = data.params[num_bound..].to_vec();
+                        return Ok(Value::Function(Rc::new(crate::value::FunctionData {
                             params: remaining_params,
-                            body: func_body.clone(),
-                            declarations: func_decls.clone(),
-                            param_offset: param_offset + num_bound,
+                            body: data.body.clone(),
+                            declarations: data.declarations.clone(),
+                            param_offset: data.param_offset + num_bound,
+                            is_simple: data.is_simple,
+                            code: data.code.clone(),
                             env: new_env,
-                        });
-                    } else if arg_vals.len() > func_params.len() {
+                        })));
+                    } else if arg_vals.len() > data.params.len() {
                          return Err(RuntimeError { message: "Too many arguments".to_string(), line });
+                    }
+
+                    // FULL CALL
+                    if let Some(code) = &data.code {
+                        let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, data.declarations.len());
+                        for (i, val) in arg_vals.into_iter().enumerate() {
+                            new_slots[i + data.param_offset] = val;
+                        }
+                        return execute_instructions(code, &new_slots);
+                    }
+
+                    if data.is_simple {
+                        let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, data.declarations.len());
+                        for (i, val) in arg_vals.into_iter().enumerate() {
+                            new_slots[i + data.param_offset] = val;
+                        }
+                        let original_env = self.env.clone();
+                        self.env = data.env.clone();
+                        let result = self.eval(&data.body, &mut new_slots)?;
+                        self.env = original_env;
+                        return Ok(result);
                     }
 
                     let block_entry = if let Some(closure) = block {
@@ -553,25 +731,42 @@ impl Interpreter {
                     };
                     self.block_stack.push(block_entry);
 
-                    let new_env = Rc::new(RefCell::new(Environment::new(Some(func_env.clone()))));
-                    new_env.borrow_mut().slots = vec![Value::Uninitialized; func_decls.len()];
+                    let new_env = self.get_env(Some(data.env.clone()), false);
+                    let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, data.declarations.len());
                     for (i, val) in arg_vals.into_iter().enumerate() {
-                        new_env.borrow_mut().set_slot(i + param_offset, val);
+                        new_slots[i + data.param_offset] = val;
                     }
 
                     let original_env = self.env.clone();
-                    self.env = new_env;
-                    let result = self.eval(&func_body)?;
+                    self.env = new_env.clone();
+                    let result = self.eval(&data.body, &mut new_slots)?;
                     self.env = original_env;
                     self.block_stack.pop();
+                    self.recycle_env(new_env);
                     Ok(result)
                 } else {
                     Err(RuntimeError { message: format!("Tried to call a non-function value: {}", func_val), line })
                 }
             }
             ExprKind::BinaryOp { left, op, right } => {
-                let l = self.eval(left)?;
-                let r = self.eval(right)?;
+                let l = match &left.kind {
+                    ExprKind::Integer(i) => Value::Integer(*i),
+                    ExprKind::Float(f) => Value::Float(*f),
+                    ExprKind::Identifier { slot: Some(s), .. } => {
+                        let v = &slots[*s];
+                        if let Value::Uninitialized = v { self.eval(left, slots)? } else { v.clone() }
+                    }
+                    _ => self.eval(left, slots)?,
+                };
+                let r = match &right.kind {
+                    ExprKind::Integer(i) => Value::Integer(*i),
+                    ExprKind::Float(f) => Value::Float(*f),
+                    ExprKind::Identifier { slot: Some(s), .. } => {
+                        let v = &slots[*s];
+                        if let Value::Uninitialized = v { self.eval(right, slots)? } else { v.clone() }
+                    }
+                    _ => self.eval(right, slots)?,
+                };
                 match (l, r) {
                     (Value::Integer(i1), Value::Integer(i2)) => match op {
                         Op::Add => Ok(Value::Integer(i1 + i2)),
@@ -639,29 +834,29 @@ impl Interpreter {
                 }
             }
             ExprKind::If { condition, then_branch, else_branch } => {
-                let val = self.eval(condition)?;
+                let val = self.eval(condition, slots)?;
                 let is_truthy = match val { Value::Boolean(false) | Value::Nil => false, _ => true };
-                if is_truthy { self.eval(then_branch) } else if let Some(else_expr) = else_branch { self.eval(else_expr) } else { Ok(Value::Nil) }
+                if is_truthy { self.eval(then_branch, slots) } else if let Some(else_expr) = else_branch { self.eval(else_expr, slots) } else { Ok(Value::Nil) }
             }
             ExprKind::While { condition, body } => {
                 let mut last_val = Value::Nil;
                 loop {
-                    let cond_val = self.eval(condition)?;
+                    let cond_val = self.eval(condition, slots)?;
                     let is_true = match cond_val { Value::Boolean(false) | Value::Nil => false, _ => true };
                     if !is_true { break; }
-                    last_val = self.eval(body)?;
+                    last_val = self.eval(body, slots)?;
                 }
                 Ok(last_val)
             }
             ExprKind::For { var, iterable, body } => {
-                let iter_val = self.eval(iterable)?;
+                let iter_val = self.eval(iterable, slots)?;
                 let mut last_val = Value::Nil;
                 match iter_val {
                     Value::Array(arr) => {
                         let vec = arr.borrow().clone();
                         for item in vec {
                             self.env.borrow_mut().assign(var.clone(), item);
-                            last_val = self.eval(body)?;
+                            last_val = self.eval(body, slots)?;
                         }
                         Ok(last_val)
                     }
@@ -669,7 +864,7 @@ impl Interpreter {
                         let keys: Vec<Rc<String>> = map.borrow().keys().cloned().collect();
                         for key in keys {
                             self.env.borrow_mut().assign(var.clone(), Value::String(key));
-                            last_val = self.eval(body)?;
+                            last_val = self.eval(body, slots)?;
                         }
                         Ok(last_val)
                     }
@@ -678,7 +873,7 @@ impl Interpreter {
             }
             ExprKind::Block(statements) => {
                 let mut last = Value::Nil;
-                for stmt in statements { last = self.eval(stmt)?; }
+                for stmt in statements { last = self.eval(stmt, slots)?; }
                 Ok(last)
             }
         }

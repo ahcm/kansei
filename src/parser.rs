@@ -1,5 +1,7 @@
 use crate::ast::{Closure, Expr, ExprKind, Op};
 use crate::lexer::{Lexer, Span, Token};
+use std::rc::Rc;
+use std::cell::RefCell;
 
 pub struct Parser
 {
@@ -225,6 +227,7 @@ impl Parser
                     function: Box::new(expr),
                     args,
                     block,
+                    inlined_body: Rc::new(RefCell::new(None)),
                 }, line);
             } else {
                 break;
@@ -288,6 +291,7 @@ impl Parser
                         function: Box::new(self.make_expr(ExprKind::Identifier { name, slot: None }, line)),
                         args,
                         block: None,
+                        inlined_body: Rc::new(RefCell::new(None)),
                     }, line);
                 }
                 self.make_expr(ExprKind::Identifier { name, slot: None }, line)

@@ -1,3 +1,6 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Op
 {
@@ -65,6 +68,7 @@ pub enum ExprKind
         function: Box<Expr>,
         args: Vec<Expr>,
         block: Option<Closure>,
+        inlined_body: Rc<RefCell<Option<Expr>>>,
     },
 
     Yield(Vec<Expr>),

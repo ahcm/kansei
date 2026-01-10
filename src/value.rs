@@ -5,21 +5,23 @@ use std::fmt;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use smallvec::SmallVec;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Environment {
     pub values: FxHashMap<String, Value>,
-    pub slots: Vec<Value>,
+    pub slots: SmallVec<[Value; 8]>,
     pub parent: Option<Rc<RefCell<Environment>>>,
     pub is_partial: bool, // If true, allow full recursive lookup (used for currying/params)
 }
 
 impl Environment {
     pub fn new(parent: Option<Rc<RefCell<Environment>>>) -> Self {
-        Self { values: FxHashMap::default(), slots: Vec::new(), parent, is_partial: false }
+        Self { values: FxHashMap::default(), slots: SmallVec::new(), parent, is_partial: false }
     }
 
     pub fn new_partial(parent: Option<Rc<RefCell<Environment>>>) -> Self {
-        Self { values: FxHashMap::default(), slots: Vec::new(), parent, is_partial: true }
+        Self { values: FxHashMap::default(), slots: SmallVec::new(), parent, is_partial: true }
     }
 
     pub fn get_slot(&self, index: usize) -> Option<Value> {
@@ -30,6 +32,13 @@ impl Environment {
         if index < self.slots.len() {
             self.slots[index] = val;
         }
+    }
+
+    pub fn reset(&mut self, parent: Option<Rc<RefCell<Environment>>>, is_partial: bool) {
+        self.values.clear();
+        self.slots.clear();
+        self.parent = parent;
+        self.is_partial = is_partial;
     }
 
     pub fn get(&self, name: &str) -> Option<Value> {
@@ -53,7 +62,7 @@ impl Environment {
     pub fn get_recursive(&self, name: &str) -> Option<Value> {
         if let Some(v) = self.values.get(name) {
              match v {
-                 Value::Function { .. } | Value::Reference(_) => {
+                 Value::Function(_) | Value::Reference(_) => {
                      // Dereference if it's a reference
                      if let Value::Reference(r) = v {
                          return Some(r.borrow().clone());
@@ -150,6 +159,31 @@ impl Environment {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum Instruction {
+    LoadSlot(usize),
+    LoadConst(Value),
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Eq,
+    Gt,
+    Lt,
+    // Add more if needed
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionData {
+    pub params: Vec<(String, bool)>,
+    pub body: Expr,
+    pub declarations: Rc<Vec<String>>,
+    pub param_offset: usize,
+    pub is_simple: bool,
+    pub code: Option<Rc<Vec<Instruction>>>,
+    pub env: Rc<RefCell<Environment>>,
+}
+
 #[derive(Clone)]
 pub enum Value
 {
@@ -160,13 +194,7 @@ pub enum Value
     Array(Rc<RefCell<Vec<Value>>>),
     Map(Rc<RefCell<FxHashMap<Rc<String>, Value>>>),
     Nil,
-    Function {
-        params: Vec<(String, bool)>,
-        body: Box<Expr>,
-        declarations: Rc<Vec<String>>,
-        param_offset: usize,
-        env: Rc<RefCell<Environment>>,
-    },
+    Function(Rc<FunctionData>),
     Reference(Rc<RefCell<Value>>),
     Uninitialized,
 }
@@ -202,7 +230,7 @@ impl PartialEq for Value {
                 true
             }
             (Value::Nil, Value::Nil) => true,
-            (Value::Function { .. }, Value::Function { .. }) => false,
+            (Value::Function(a), Value::Function(b)) => Rc::ptr_eq(a, b),
             (Value::Uninitialized, Value::Uninitialized) => true,
             _ => false,
         }
@@ -219,7 +247,7 @@ impl fmt::Debug for Value {
             Value::Array(a) => write!(f, "Array({:?})", a.borrow()),
             Value::Map(m) => write!(f, "Map({:?})", m.borrow()),
             Value::Nil => write!(f, "Nil"),
-            Value::Function { .. } => write!(f, "Function(...)"),
+            Value::Function(_) => write!(f, "Function(...)"),
             Value::Reference(r) => write!(f, "Reference({:?})", r.borrow()),
             Value::Uninitialized => write!(f, "Uninitialized"),
         }
@@ -250,8 +278,8 @@ impl Value
                 format!("{{{}}}", entries.join(", "))
             }
             Value::Nil => "nil".to_string(),
-            Value::Function { params, .. } => {
-                let p_str: Vec<String> = params.iter().map(|(n, r)| if *r { format!("&{}", n) } else { n.clone() }).collect();
+            Value::Function(data) => {
+                let p_str: Vec<String> = data.params.iter().map(|(n, r)| if *r { format!("&{}", n) } else { n.clone() }).collect();
                 format!("<function({})>", p_str.join(", "))
             },
             Value::Reference(r) => r.borrow().inspect(),
@@ -284,8 +312,8 @@ impl fmt::Display for Value
                 write!(f, "{{{}}}", entries.join(", "))
             }
             Value::Nil => write!(f, "nil"),
-            Value::Function { params, .. } => {
-                let p_str: Vec<String> = params.iter().map(|(n, r)| if *r { format!("&{}", n) } else { n.clone() }).collect();
+            Value::Function(data) => {
+                let p_str: Vec<String> = data.params.iter().map(|(n, r)| if *r { format!("&{}", n) } else { n.clone() }).collect();
                 write!(f, "<function({})>", p_str.join(", "))
             },
             Value::Reference(r) => write!(f, "{}", r.borrow()),

@@ -19,7 +19,13 @@ pub struct Closure
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Expr
+pub struct Expr {
+    pub kind: ExprKind,
+    pub line: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExprKind
 {
     // Basic Values
     Integer(i64),

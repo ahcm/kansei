@@ -84,15 +84,27 @@ fn run_file(path: &str, mut interpreter: eval::Interpreter)
             let eval_result =
                 panic::catch_unwind(panic::AssertUnwindSafe(|| interpreter.eval(&ast)));
 
-            if eval_result.is_err()
-            {
-                eprintln!("Runtime Error");
-                std::process::exit(1);
+            match eval_result {
+                Ok(Ok(_)) => {},
+                Ok(Err(e)) => {
+                    eprintln!("Error at line {}: {}", e.line, e.message);
+                    std::process::exit(1);
+                }
+                Err(_) => {
+                    eprintln!("Unexpected Runtime Panic");
+                    std::process::exit(1);
+                }
             }
         }
-        Err(_) =>
+        Err(e) =>
         {
-            eprintln!("Syntax Error");
+            if let Some(s) = e.downcast_ref::<&str>() {
+                eprintln!("Syntax Error: {}", s);
+            } else if let Some(s) = e.downcast_ref::<String>() {
+                eprintln!("Syntax Error: {}", s);
+            } else {
+                eprintln!("Syntax Error");
+            }
             std::process::exit(1);
         }
     }
@@ -200,7 +212,7 @@ fn run_repl(mut interpreter: eval::Interpreter) -> rustyline::Result<()>
 
                             match eval_result
                             {
-                                Ok(result) =>
+                                Ok(Ok(result)) =>
                                 {
                                     // Heuristic to suppress output for simple prints
                                     if !source.trim().starts_with("puts")
@@ -208,10 +220,19 @@ fn run_repl(mut interpreter: eval::Interpreter) -> rustyline::Result<()>
                                         println!("=> {}", result.inspect());
                                     }
                                 }
-                                Err(_) => println!("Runtime Error"),
+                                Ok(Err(e)) => println!("Error at line {}: {}", e.line, e.message),
+                                Err(_) => println!("Unexpected Runtime Panic"),
                             }
                         }
-                        Err(_) => println!("Syntax Error"),
+                        Err(e) => {
+                            if let Some(s) = e.downcast_ref::<&str>() {
+                                println!("Syntax Error: {}", s);
+                            } else if let Some(s) = e.downcast_ref::<String>() {
+                                println!("Syntax Error: {}", s);
+                            } else {
+                                println!("Syntax Error");
+                            }
+                        },
                     }
                 }
             }
@@ -245,8 +266,8 @@ fn is_balanced(input: &str) -> bool
         let mut depth = 0;
         loop
         {
-            let token = lexer.next_token();
-            match token
+            let span = lexer.next_token();
+            match span.token
             {
                 lexer::Token::If | lexer::Token::While | lexer::Token::For | lexer::Token::Fn => depth += 1,
                 lexer::Token::End | lexer::Token::RightBrace => depth -= 1, // Handle { } blocks?

@@ -40,11 +40,18 @@ pub enum Token
     Semicolon,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct Span {
+    pub token: Token,
+    pub line: usize,
+}
+
 #[derive(Clone)]
 pub struct Lexer
 {
     input: Vec<char>,
     position: usize,
+    pub line: usize,
 }
 
 impl Lexer
@@ -54,26 +61,29 @@ impl Lexer
         Self {
             input: input.chars().collect(),
             position: 0,
+            line: 1,
         }
     }
 
-    pub fn next_token(&mut self) -> Token
+    pub fn next_token(&mut self) -> Span
     {
         self.skip_whitespace();
 
+        let start_line = self.line;
+
         if self.position >= self.input.len()
         {
-            return Token::EOF;
+            return Span { token: Token::EOF, line: start_line };
         }
 
         let ch = self.input[self.position];
 
-        match ch
+        let token = match ch
         {
             '#' =>
             {
                 self.skip_comment();
-                self.next_token() // Recursively call to get the *actual* next token
+                return self.next_token(); // Recursively call to get the *actual* next token
             }
             '"' => self.read_string('"'), // standard strings
             '`' => self.read_string('`'), // shell commands
@@ -199,9 +209,11 @@ impl Lexer
             {
                 // Ignore unknown chars for this MVP
                 self.position += 1;
-                self.next_token()
+                return self.next_token();
             }
-        }
+        };
+        
+        Span { token, line: start_line }
     }
 
     fn skip_comment(&mut self)
@@ -216,6 +228,9 @@ impl Lexer
     {
         while self.position < self.input.len() && self.input[self.position].is_whitespace()
         {
+            if self.input[self.position] == '\n' {
+                self.line += 1;
+            }
             self.position += 1;
         }
     }
@@ -265,6 +280,9 @@ impl Lexer
 
         while self.position < self.input.len() && self.input[self.position] != quote_char
         {
+            if self.input[self.position] == '\n' {
+                self.line += 1;
+            }
             self.position += 1;
         }
 

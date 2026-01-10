@@ -77,7 +77,7 @@ pub enum Expr
     FunctionDef
     {
         name: String,
-        params: Vec<String>,
+        params: Vec<(String, bool)>,
         body: Box<Expr>,
     },
 

@@ -104,7 +104,7 @@ pub enum Value
     Map(HashMap<String, Value>),
     Nil,
     Function {
-        params: Vec<String>,
+        params: Vec<(String, bool)>,
         body: Box<Expr>,
         env: Rc<RefCell<Environment>>,
     },
@@ -188,7 +188,10 @@ impl Value
                 format!("{{{}}}", entries.join(", "))
             }
             Value::Nil => "nil".to_string(),
-            Value::Function { .. } => "<function>".to_string(),
+            Value::Function { params, .. } => {
+                let p_str: Vec<String> = params.iter().map(|(n, r)| if *r { format!("&{}", n) } else { n.clone() }).collect();
+                format!("<function({})>", p_str.join(", "))
+            },
             Value::Reference(r) => r.borrow().inspect(),
         }
     }
@@ -217,7 +220,10 @@ impl fmt::Display for Value
                 write!(f, "{{{}}}", entries.join(", "))
             }
             Value::Nil => write!(f, "nil"),
-            Value::Function { .. } => write!(f, "<function>"),
+            Value::Function { params, .. } => {
+                let p_str: Vec<String> = params.iter().map(|(n, r)| if *r { format!("&{}", n) } else { n.clone() }).collect();
+                write!(f, "<function({})>", p_str.join(", "))
+            },
             Value::Reference(r) => write!(f, "{}", r.borrow()),
         }
     }

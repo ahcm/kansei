@@ -199,7 +199,27 @@ impl Interpreter {
                 let func_val = self.eval(function);
 
                 if let Value::Function { params: func_params, body: func_body, env: func_env } = func_val {
-                    let arg_vals: Vec<Value> = args.iter().map(|a| self.eval(a)).collect();
+                    let mut arg_vals = Vec::new();
+
+                    for (i, arg_expr) in args.iter().enumerate() {
+                        if i < func_params.len() {
+                            let (_, is_ref) = func_params[i];
+                            if is_ref {
+                                if let Expr::Identifier(id_name) = arg_expr {
+                                    let ref_val = self.env.borrow_mut().promote(id_name)
+                                        .expect(&format!("Undefined variable passed as reference: {}", id_name));
+                                    arg_vals.push(ref_val);
+                                } else {
+                                    panic!("Argument #{} must be a variable (identifier) because it is passed by reference", i + 1);
+                                }
+                            } else {
+                                arg_vals.push(self.eval(arg_expr));
+                            }
+                        } else {
+                            // Too many arguments, but we'll panic below or handle variadics if we supported them
+                            arg_vals.push(self.eval(arg_expr));
+                        }
+                    }
 
                     if arg_vals.len() < func_params.len() {
                         // CURRYING / PARTIAL APPLICATION
@@ -207,7 +227,7 @@ impl Interpreter {
                         let new_env = Rc::new(RefCell::new(Environment::new(Some(func_env.clone()))));
                         
                         // Bind provided args
-                        for (param, val) in func_params.iter().zip(arg_vals.iter()) {
+                        for ((param, _), val) in func_params.iter().zip(arg_vals.iter()) {
                              new_env.borrow_mut().define(param.clone(), val.clone());
                         }
 
@@ -232,7 +252,7 @@ impl Interpreter {
                     self.block_stack.push(block_entry);
 
                     let new_env = Rc::new(RefCell::new(Environment::new(Some(func_env.clone()))));
-                    for (param, val) in func_params.iter().zip(arg_vals.into_iter()) {
+                    for ((param, _), val) in func_params.iter().zip(arg_vals.into_iter()) {
                         new_env.borrow_mut().define(param.clone(), val);
                     }
 

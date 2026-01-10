@@ -382,9 +382,16 @@ impl Parser
         {
             loop
             {
+                let is_ref = if self.current_token == Token::Ampersand {
+                    self.eat();
+                    true
+                } else {
+                    false
+                };
+
                 match &self.current_token
                 {
-                    Token::Identifier(arg) => params.push(arg.clone()),
+                    Token::Identifier(arg) => params.push((arg.clone(), is_ref)),
                     _ => panic!("Expected parameter name"),
                 }
                 self.eat();

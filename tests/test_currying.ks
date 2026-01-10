@@ -26,13 +26,13 @@ puts "Fact 5: " + fact(5)
 
 fn make_counter()
   count = 0
-  fn counter()
-    # Note: Mutable closures are tricky. Kansei 'assign' attempts to update upvalues.
+  fn counter(&count, _unused)
     count = count + 1
     count
   end
+  counter(&count)
 end
 
 c1 = make_counter()
-puts c1()
-puts c1()
+puts c1(0)
+puts c1(0)

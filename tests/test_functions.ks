@@ -5,12 +5,12 @@ end
 greet("Alice")
 
 x = 10
-fn modify_x()
+fn modify_x(&x)
   x = 20
   puts "Inside: " + x
 end
 
-modify_x()
+modify_x(&x)
 puts "Outside: " + x
 
 fn add(a, b)

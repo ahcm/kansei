@@ -8,11 +8,16 @@ use std::rc::Rc;
 pub struct Environment {
     pub values: HashMap<String, Value>,
     pub parent: Option<Rc<RefCell<Environment>>>,
+    pub is_partial: bool, // If true, allow full recursive lookup (used for currying/params)
 }
 
 impl Environment {
     pub fn new(parent: Option<Rc<RefCell<Environment>>>) -> Self {
-        Self { values: HashMap::new(), parent }
+        Self { values: HashMap::new(), parent, is_partial: false }
+    }
+
+    pub fn new_partial(parent: Option<Rc<RefCell<Environment>>>) -> Self {
+        Self { values: HashMap::new(), parent, is_partial: true }
     }
 
     pub fn get(&self, name: &str) -> Option<Value> {
@@ -22,7 +27,46 @@ impl Environment {
                  _ => Some(v.clone()),
              }
         } else if let Some(parent) = &self.parent {
-            parent.borrow().get(name)
+            if self.is_partial {
+                parent.borrow().get(name)
+            } else {
+                // Strictly controlled recursion for functions/references
+                parent.borrow().get_recursive(name)
+            }
+        } else {
+            None
+        }
+    }
+
+    pub fn get_recursive(&self, name: &str) -> Option<Value> {
+        if let Some(v) = self.values.get(name) {
+             match v {
+                 Value::Function { .. } | Value::Reference(_) => {
+                     // Dereference if it's a reference
+                     if let Value::Reference(r) = v {
+                         return Some(r.borrow().clone());
+                     }
+                     return Some(v.clone());
+                 }
+                 _ => {
+                     if self.is_partial {
+                         return Some(v.clone());
+                     }
+                     return None;
+                 }
+             }
+        } else if let Some(parent) = &self.parent {
+            parent.borrow().get_recursive(name)
+        } else {
+            None
+        }
+    }
+
+    pub fn get_raw_no_deref(&self, name: &str) -> Option<Value> {
+        if let Some(v) = self.values.get(name) {
+            Some(v.clone())
+        } else if let Some(parent) = &self.parent {
+            parent.borrow().get_raw_no_deref(name)
         } else {
             None
         }
@@ -123,11 +167,6 @@ impl PartialEq for Value {
             _ => other,
         };
         
-        // Handle double reference unwrapping if needed? 
-        // We assume Reference only points to non-Reference.
-        // But if left is Reference pointing to Reference... 
-        // We'll trust the invariant.
-
         match (left, right) {
             (Value::Integer(a), Value::Integer(b)) => a == b,
             (Value::String(a), Value::String(b)) => a == b,

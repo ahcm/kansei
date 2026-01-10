@@ -109,7 +109,8 @@ impl Interpreter {
                 if let Some(Some((closure, saved_env))) = block_data {
                      let arg_vals: Vec<Value> = args.iter().map(|a| self.eval(a)).collect();
                      
-                     // Create new env for block, parent = saved_env (Lexical Scoping)
+                     // Create new env for block, parent = saved_env.
+                     // Access to non-functions in parent is restricted in Environment::get.
                      let new_env = Rc::new(RefCell::new(Environment::new(Some(saved_env.clone()))));
                      
                      // Bind params
@@ -268,7 +269,8 @@ impl Interpreter {
                     if arg_vals.len() < func_params.len() {
                         // CURRYING / PARTIAL APPLICATION
                         // Create new env extending the function's closure
-                        let new_env = Rc::new(RefCell::new(Environment::new(Some(func_env.clone()))));
+                        // Use new_partial so that these parameters are visible to subsequent calls
+                        let new_env = Rc::new(RefCell::new(Environment::new_partial(Some(func_env.clone()))));
                         
                         // Bind provided args
                         for ((param, _), val) in func_params.iter().zip(arg_vals.iter()) {
@@ -304,7 +306,8 @@ impl Interpreter {
                     let mut locals = HashSet::new();
                     collect_declarations(&func_body, &mut locals);
                     for local in locals {
-                        if !new_env.borrow().values.contains_key(&local) {
+                        // Check if it's already defined (as a param in current env OR parent partial envs)
+                        if new_env.borrow().get_raw_no_deref(&local).is_none() {
                             new_env.borrow_mut().define(local, Value::Uninitialized);
                         }
                     }

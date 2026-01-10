@@ -15,6 +15,9 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<String>) {
         Expr::FunctionDef { name, .. } => {
             decls.insert(name.clone());
         }
+        Expr::AnonymousFunction { .. } => {
+            // Anonymous functions don't declare a name in the current scope
+        }
         Expr::IndexAssignment { target, index, value } => {
             collect_declarations(target, decls);
             collect_declarations(index, decls);
@@ -34,9 +37,20 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<String>) {
         Expr::While { body, .. } => {
             collect_declarations(body, decls);
         }
-        Expr::For { var, body, .. } => {
-            decls.insert(var.clone());
-            collect_declarations(body, decls);
+        Expr::Array(elements) => {
+            for e in elements {
+                collect_declarations(e, decls);
+            }
+        }
+        Expr::ArrayGenerator { generator, size } => {
+            collect_declarations(generator, decls);
+            collect_declarations(size, decls);
+        }
+        Expr::Map(entries) => {
+            for (k, v) in entries {
+                collect_declarations(k, decls);
+                collect_declarations(v, decls);
+            }
         }
         _ => {}
     }
@@ -147,6 +161,14 @@ impl Interpreter {
                 self.env.borrow_mut().define(name.clone(), func.clone());
                 func
             }
+            Expr::AnonymousFunction { params, body } => {
+                let func_env = self.env.clone();
+                Value::Function {
+                    params: params.clone(),
+                    body: body.clone(),
+                    env: func_env,
+                }
+            }
             Expr::Yield(args) => {
                 let block_data = self.block_stack.last().cloned();
                 
@@ -195,6 +217,51 @@ impl Interpreter {
             }
             Expr::Array(elements) => {
                 let vals = elements.iter().map(|e| self.eval(e)).collect();
+                Value::Array(Rc::new(RefCell::new(vals)))
+            }
+            Expr::ArrayGenerator { generator, size } => {
+                let gen_val = self.eval(generator);
+                let size_val = self.eval(size);
+                
+                let n = match size_val {
+                    Value::Integer(i) if i >= 0 => i as usize,
+                    _ => panic!("Array size must be a non-negative integer"),
+                };
+                
+                let mut vals = Vec::with_capacity(n);
+                
+                if let Value::Function { params, body, env: func_env } = gen_val {
+                    // It's a generator function
+                    for i in 0..n {
+                        let new_env = Rc::new(RefCell::new(Environment::new(Some(func_env.clone()))));
+                        if params.len() > 0 {
+                            let (param_name, _) = &params[0];
+                            new_env.borrow_mut().define(param_name.clone(), Value::Integer(i as i64));
+                        }
+                        
+                        // Scan for local assignments
+                        let mut locals = HashSet::new();
+                        collect_declarations(&body, &mut locals);
+                        for local in locals {
+                            if new_env.borrow().get_raw_no_deref(&local).is_none() {
+                                new_env.borrow_mut().define(local, Value::Uninitialized);
+                            }
+                        }
+
+                        let original_env = self.env.clone();
+                        self.env = new_env;
+                        let result = self.eval(&body);
+                        self.env = original_env;
+                        
+                        vals.push(result);
+                    }
+                } else {
+                    // It's a static value
+                    for _ in 0..n {
+                        vals.push(gen_val.clone());
+                    }
+                }
+                
                 Value::Array(Rc::new(RefCell::new(vals)))
             }
             Expr::Map(entries) => {
@@ -388,14 +455,11 @@ impl Interpreter {
                         Op::NotEqual => Value::Boolean(s1 != s2),
                         _ => panic!("Invalid operation on two strings"),
                     },
-                    (Value::String(s), Value::Integer(i)) => match op {
-                        Op::Add => Value::String(format!("{}{}", s, i)),
-                        _ => panic!("Cannot perform this operation between String and Integer"),
-                    },
-                    (Value::Boolean(b1), Value::Boolean(b2)) => match op {
-                        Op::Equal => Value::Boolean(b1 == b2),
-                        Op::NotEqual => Value::Boolean(b1 != b2),
-                        _ => panic!("Invalid operation on booleans"),
+                    (Value::String(s), v2) => match op {
+                        Op::Add => Value::String(format!("{}{}", s, v2.inspect())),
+                        Op::Equal => Value::Boolean(false),
+                        Op::NotEqual => Value::Boolean(true),
+                        _ => panic!("Invalid operation between String and {:?}", v2),
                     },
                     (v1, v2) => match op {
                         Op::Equal => Value::Boolean(false),

@@ -87,8 +87,18 @@ pub enum Expr
         params: Vec<(String, bool)>,
         body: Box<Expr>,
     },
+    AnonymousFunction
+    {
+        params: Vec<(String, bool)>,
+        body: Box<Expr>,
+    },
 
     Array(Vec<Expr>),
+    ArrayGenerator
+    {
+        generator: Box<Expr>,
+        size: Box<Expr>,
+    },
     Map(Vec<(Expr, Expr)>),
     Index
     {

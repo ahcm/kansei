@@ -346,12 +346,27 @@ impl Parser
         self.eat(); // [
         let mut elements = Vec::new();
         if self.current_token != Token::RightBracket {
-            loop {
-                elements.push(self.parse_expression());
-                if self.current_token == Token::Comma {
-                    self.eat();
-                } else {
-                    break;
+            let first = self.parse_expression();
+            if self.current_token == Token::Semicolon {
+                self.eat(); // ;
+                let size = self.parse_expression();
+                self.expect(Token::RightBracket);
+                return Expr::ArrayGenerator {
+                    generator: Box::new(first),
+                    size: Box::new(size),
+                };
+            }
+            
+            elements.push(first);
+            if self.current_token == Token::Comma {
+                self.eat();
+                loop {
+                    elements.push(self.parse_expression());
+                    if self.current_token == Token::Comma {
+                        self.eat();
+                    } else {
+                        break;
+                    }
                 }
             }
         }
@@ -385,12 +400,13 @@ impl Parser
     {
         self.eat(); // eat 'fn'
 
-        let name = match &self.current_token
-        {
-            Token::Identifier(n) => n.clone(),
-            _ => panic!("Expected function name"),
+        let name = if let Token::Identifier(n) = &self.current_token {
+            let name = n.clone();
+            self.eat();
+            Some(name)
+        } else {
+            None
         };
-        self.eat();
 
         self.expect(Token::LeftParen);
         let mut params = Vec::new();
@@ -426,10 +442,17 @@ impl Parser
         let body = self.parse_block();
         self.expect(Token::End);
 
-        Expr::FunctionDef {
-            name,
-            params,
-            body: Box::new(body),
+        if let Some(name) = name {
+            Expr::FunctionDef {
+                name,
+                params,
+                body: Box::new(body),
+            }
+        } else {
+            Expr::AnonymousFunction {
+                params,
+                body: Box::new(body),
+            }
         }
     }
 

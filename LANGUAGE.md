@@ -17,22 +17,37 @@ x = 10 # Inline comment
 - **Nil**: `nil`
 
 ### Data Structures
+Arrays and Maps are **mutable** and use **reference semantics**. Assigning an array/map to a new variable does not copy it; both variables point to the same data.
+
 - **Array**: Ordered list of values.
   ```ruby
   arr = [1, 2, 3]
   first = arr[0]
+  
+  # Modification
+  arr[0] = 10
+
+  # Initialization with size and value
+  zeros = [0; 10]
+
+  # Initialization with generator function
+  evens = [fn(i) i * 2 end; 5] # [0, 2, 4, 6, 8]
   ```
 - **Map**: Key-value pairs (keys are strings).
   ```ruby
   user = {"name": "Alice", "age": 30}
   name = user["name"]
+  
+  # Modification
+  user["age"] = 31
+  user.age = 32 # Dot syntax works for assignment too
   ```
 
 ### Dot Syntax
-Maps can be accessed using dot notation if the key is a valid identifier.
+Maps can be accessed and modified using dot notation if the key is a valid identifier.
 ```ruby
 user = {"name": "Alice"}
-name = user.name
+user.name = "Bob"
 ```
 
 ## Program Arguments
@@ -105,6 +120,13 @@ end
 ### Calling
 ```ruby
 res = add(1, 2)
+```
+
+### Anonymous Functions
+Functions can be defined without a name and passed as values.
+```ruby
+double = fn(x) x * 2 end
+res = double(5)
 ```
 
 ### Currying

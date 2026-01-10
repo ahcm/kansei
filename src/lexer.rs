@@ -37,6 +37,7 @@ pub enum Token
     Colon,
     Dot,
     Ampersand,
+    Semicolon,
 }
 
 #[derive(Clone)]
@@ -188,6 +189,11 @@ impl Lexer
             {
                 self.position += 1;
                 Token::Ampersand
+            }
+            ';' =>
+            {
+                self.position += 1;
+                Token::Semicolon
             }
             _ =>
             {

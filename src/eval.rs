@@ -64,6 +64,22 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<String>) {
     }
 }
 
+fn uses_environment(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Identifier { slot: None, .. } => true,
+        ExprKind::Identifier { .. } => false,
+        ExprKind::BinaryOp { left, right, .. } => uses_environment(left) || uses_environment(right),
+        ExprKind::If { condition, then_branch, else_branch } => {
+            uses_environment(condition) || uses_environment(then_branch) || else_branch.as_ref().map_or(false, |e| uses_environment(e))
+        }
+        ExprKind::Call { function, args, .. } => uses_environment(function) || args.iter().any(uses_environment),
+        // Simple functions (is_simple) only have these constructs roughly. 
+        // We can be conservative.
+        ExprKind::Integer(_) | ExprKind::Float(_) | ExprKind::String(_) | ExprKind::Boolean(_) | ExprKind::Nil => false,
+        _ => true, // Conservative fallback for blocks, loops, etc. if they slipped into is_simple
+    }
+}
+
 fn compile_to_instructions(expr: &Expr, code: &mut Vec<Instruction>) -> bool {
     match &expr.kind {
         ExprKind::Integer(i) => code.push(Instruction::LoadConst(Value::Integer(*i))),
@@ -86,6 +102,45 @@ fn compile_to_instructions(expr: &Expr, code: &mut Vec<Instruction>) -> bool {
         _ => return false,
     }
     true
+}
+
+fn substitute(expr: &Expr, args: &[Expr]) -> Expr {
+    match &expr.kind {
+        ExprKind::Identifier { slot: Some(s), .. } => {
+            if *s < args.len() {
+                args[*s].clone()
+            } else {
+                expr.clone()
+            }
+        }
+        ExprKind::BinaryOp { left, op, right } => Expr {
+            kind: ExprKind::BinaryOp {
+                left: Box::new(substitute(left, args)),
+                op: op.clone(),
+                right: Box::new(substitute(right, args)),
+            },
+            line: expr.line,
+        },
+        ExprKind::If { condition, then_branch, else_branch } => Expr {
+            kind: ExprKind::If {
+                condition: Box::new(substitute(condition, args)),
+                then_branch: Box::new(substitute(then_branch, args)),
+                else_branch: else_branch.as_ref().map(|e| Box::new(substitute(e, args))),
+            },
+            line: expr.line,
+        },
+        ExprKind::Call { function, args: call_args, block, inlined_body } => Expr {
+            kind: ExprKind::Call {
+                function: Box::new(substitute(function, args)),
+                args: call_args.iter().map(|a| substitute(a, args)).collect(),
+                block: block.clone(), // Blocks shouldn't be here in is_simple, but safe to clone
+                inlined_body: inlined_body.clone(),
+            },
+            line: expr.line,
+        },
+        // Literals
+        _ => expr.clone(),
+    }
 }
 
 fn execute_instructions(code: &[Instruction], slots: &[Value]) -> EvalResult {
@@ -611,7 +666,12 @@ impl Interpreter {
                     }),
                 }
             }
-            ExprKind::Call { function, args, block, .. } => {
+            ExprKind::Call { function, args, block, inlined_body } => {
+                // 1. Check Cached Inlined Body
+                if let Some(inlined) = inlined_body.borrow().as_ref() {
+                    return self.eval(inlined, slots);
+                }
+
                 if let ExprKind::Identifier { name, .. } = &function.kind {
                      match name.as_str() {
                         "puts" | "print" => {
@@ -661,7 +721,22 @@ impl Interpreter {
 
                 let func_val = self.eval(function, slots)?;
                 if let Value::Function(data) = func_val {
-                    let mut arg_vals = Vec::new();
+                    // 2. Attempt JIT Inlining
+                    // Inline if:
+                    // - Function is simple (no locals/assignments).
+                    // - Function does not capture environment (no slot=None identifiers).
+                    // - Args are simple expressions (Identifiers/Literals) to avoid code explosion or side-effect duplication.
+                    if data.is_simple && inlined_body.borrow().is_none() && !uses_environment(&data.body) {
+                        let safe_args = args.iter().all(|a| matches!(a.kind, ExprKind::Identifier{..} | ExprKind::Integer(_) | ExprKind::Float(_) | ExprKind::Boolean(_)));
+                        if safe_args {
+                            let inlined = substitute(&data.body, args);
+                            inlined_body.replace(Some(inlined));
+                            // Run the newly minted inlined body immediately
+                            return self.eval(inlined_body.borrow().as_ref().unwrap(), slots);
+                        }
+                    }
+
+                    let mut arg_vals: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
                     for (i, arg_expr) in args.iter().enumerate() {
                         let val = self.eval(arg_expr, slots)?;
                         if i < data.params.len() {

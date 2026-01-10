@@ -87,6 +87,7 @@ impl Interpreter {
         let line = expr.line;
         match &expr.kind {
             ExprKind::Integer(i) => Ok(Value::Integer(*i)),
+            ExprKind::Float(f) => Ok(Value::Float(*f)),
             ExprKind::String(s) => Ok(Value::String(s.clone())),
             ExprKind::Boolean(b) => Ok(Value::Boolean(*b)),
             ExprKind::Nil => Ok(Value::Nil),
@@ -497,6 +498,42 @@ impl Interpreter {
                         Op::LessThan => Ok(Value::Boolean(i1 < i2)),
                         Op::Equal => Ok(Value::Boolean(i1 == i2)),
                         Op::NotEqual => Ok(Value::Boolean(i1 != i2)),
+                    },
+                    (Value::Float(f1), Value::Float(f2)) => match op {
+                        Op::Add => Ok(Value::Float(f1 + f2)),
+                        Op::Subtract => Ok(Value::Float(f1 - f2)),
+                        Op::Multiply => Ok(Value::Float(f1 * f2)),
+                        Op::Divide => Ok(Value::Float(f1 / f2)),
+                        Op::GreaterThan => Ok(Value::Boolean(f1 > f2)),
+                        Op::LessThan => Ok(Value::Boolean(f1 < f2)),
+                        Op::Equal => Ok(Value::Boolean(f1 == f2)), // Approx equal? No, exact for now.
+                        Op::NotEqual => Ok(Value::Boolean(f1 != f2)),
+                    },
+                    (Value::Integer(i), Value::Float(f)) => {
+                        let f1 = i as f64;
+                        match op {
+                            Op::Add => Ok(Value::Float(f1 + f)),
+                            Op::Subtract => Ok(Value::Float(f1 - f)),
+                            Op::Multiply => Ok(Value::Float(f1 * f)),
+                            Op::Divide => Ok(Value::Float(f1 / f)),
+                            Op::GreaterThan => Ok(Value::Boolean(f1 > f)),
+                            Op::LessThan => Ok(Value::Boolean(f1 < f)),
+                            Op::Equal => Ok(Value::Boolean(f1 == f)),
+                            Op::NotEqual => Ok(Value::Boolean(f1 != f)),
+                        }
+                    },
+                    (Value::Float(f), Value::Integer(i)) => {
+                        let f2 = i as f64;
+                        match op {
+                            Op::Add => Ok(Value::Float(f + f2)),
+                            Op::Subtract => Ok(Value::Float(f - f2)),
+                            Op::Multiply => Ok(Value::Float(f * f2)),
+                            Op::Divide => Ok(Value::Float(f / f2)),
+                            Op::GreaterThan => Ok(Value::Boolean(f > f2)),
+                            Op::LessThan => Ok(Value::Boolean(f < f2)),
+                            Op::Equal => Ok(Value::Boolean(f == f2)),
+                            Op::NotEqual => Ok(Value::Boolean(f != f2)),
+                        }
                     },
                     (Value::String(s1), Value::String(s2)) => match op {
                         Op::Add => Ok(Value::String(format!("{}{}", s1, s2))),

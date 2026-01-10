@@ -242,6 +242,11 @@ impl Parser
                 self.eat();
                 self.make_expr(ExprKind::Integer(i), line)
             }
+            Token::Float(f) =>
+            {
+                self.eat();
+                self.make_expr(ExprKind::Float(f), line)
+            }
             Token::StringLiteral(s) =>
             {
                 self.eat();

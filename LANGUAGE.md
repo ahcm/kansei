@@ -12,6 +12,7 @@ x = 10 # Inline comment
 
 ### Primitives
 - **Integer**: `1`, `42`, `-10`
+- **Float**: `1.0`, `3.14`, `-0.01`
 - **String**: `"Hello"`, `"World"`
 - **Boolean**: `true`, `false`
 - **Nil**: `nil`

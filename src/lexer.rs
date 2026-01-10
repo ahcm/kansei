@@ -2,6 +2,7 @@
 pub enum Token
 {
     Integer(i64),
+    Float(f64),
     Identifier(String),
     Plus,
     Minus,
@@ -143,7 +144,7 @@ impl Lexer
                 self.position += 1;
                 Token::Greater
             }
-            '0'..='9' => self.read_integer(),
+            '0'..='9' => self.read_number(),
             'a'..='z' | 'A'..='Z' | '_' => self.read_identifier(),
             ',' =>
             {
@@ -235,13 +236,29 @@ impl Lexer
         }
     }
 
-    fn read_integer(&mut self) -> Token
+    fn read_number(&mut self) -> Token
     {
         let start = self.position;
         while self.position < self.input.len() && self.input[self.position].is_digit(10)
         {
             self.position += 1;
         }
+
+        if self.position < self.input.len() && self.input[self.position] == '.' {
+            // Check if it's a property access or method call (next char is start of identifier?)
+            // Or just allow 1. method? Ruby allows `1.to_s`. 
+            // But if it's digit after dot, it's a float.
+            // If we peek next char and it is digit, we consume dot.
+            if self.position + 1 < self.input.len() && self.input[self.position + 1].is_digit(10) {
+                self.position += 1; // Consume dot
+                while self.position < self.input.len() && self.input[self.position].is_digit(10) {
+                    self.position += 1;
+                }
+                let num_str: String = self.input[start..self.position].iter().collect();
+                return Token::Float(num_str.parse().unwrap_or(0.0));
+            }
+        }
+
         let num_str: String = self.input[start..self.position].iter().collect();
         Token::Integer(num_str.parse().unwrap_or(0))
     }

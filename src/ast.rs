@@ -29,6 +29,7 @@ pub enum ExprKind
 {
     // Basic Values
     Integer(i64),
+    Float(f64),
     Identifier(String),
     Reference(String), // &x
     String(String), // "hello"

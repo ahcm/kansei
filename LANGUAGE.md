@@ -125,7 +125,12 @@ res = add(1, 2)
 ### Anonymous Functions
 Functions can be defined without a name and passed as values.
 ```ruby
+# Using 'fn' keyword
 double = fn(x) x * 2 end
+
+# Using block syntax (Closure literal)
+triple = {|x| x * 3}
+
 res = double(5)
 ```
 

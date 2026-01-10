@@ -280,7 +280,14 @@ impl Parser
             Token::While => self.parse_while(),
             Token::For => self.parse_for(),
             Token::LeftBracket => self.parse_array(),
-            Token::LeftBrace => self.parse_map(),
+            Token::LeftBrace => {
+                let mut temp_lexer = self.lexer.clone();
+                if temp_lexer.next_token() == Token::Pipe {
+                    self.parse_closure_literal()
+                } else {
+                    self.parse_map()
+                }
+            },
             Token::LeftParen => {
                 self.eat();
                 if self.current_token == Token::RightParen {
@@ -528,6 +535,36 @@ impl Parser
             iterable: Box::new(iterable),
             body: Box::new(body),
         }
+    }
+
+    fn parse_closure_literal(&mut self) -> Expr {
+        self.eat(); // {
+        let mut params = Vec::new();
+        if self.current_token == Token::Pipe {
+            self.eat(); // |
+            loop {
+                let is_ref = if self.current_token == Token::Ampersand {
+                    self.eat();
+                    true
+                } else {
+                    false
+                };
+                match &self.current_token {
+                    Token::Identifier(p) => params.push((p.clone(), is_ref)),
+                    _ => panic!("Expected param name"),
+                }
+                self.eat();
+                if self.current_token == Token::Comma {
+                    self.eat();
+                } else {
+                    break;
+                }
+            }
+            self.expect(Token::Pipe);
+        }
+        let body = self.parse_block();
+        self.expect(Token::RightBrace);
+        Expr::AnonymousFunction { params, body: Box::new(body) }
     }
 
     fn parse_block(&mut self) -> Expr

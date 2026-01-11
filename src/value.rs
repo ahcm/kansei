@@ -152,6 +152,7 @@ pub enum Instruction {
     IndexAssign,
     ArrayGen,
     Dup,
+    F64Axpy { dst_slot: usize, dst_index_slot: usize, src_slot: usize, src_index_slot: usize },
     Add,
     Sub,
     Mul,

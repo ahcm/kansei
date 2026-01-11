@@ -287,6 +287,61 @@ fn is_pure_expr(expr: &Expr) -> bool {
     }
 }
 
+fn match_f64_index(expr: &Expr) -> Option<(usize, usize)> {
+    match &expr.kind {
+        ExprKind::Index { target, index } => {
+            let target_slot = match &target.kind {
+                ExprKind::Identifier { slot: Some(s), .. } => *s,
+                _ => return None,
+            };
+            let index_slot = match &index.kind {
+                ExprKind::Identifier { slot: Some(s), .. } => *s,
+                _ => return None,
+            };
+            Some((target_slot, index_slot))
+        }
+        _ => None,
+    }
+}
+
+fn match_f64_mul(expr: &Expr) -> Option<(Expr, usize, usize)> {
+    match &expr.kind {
+        ExprKind::BinaryOp { left, op: Op::Multiply, right } => {
+            if let Some((src_slot, src_index_slot)) = match_f64_index(left) {
+                return Some(((*right.as_ref()).clone(), src_slot, src_index_slot));
+            }
+            if let Some((src_slot, src_index_slot)) = match_f64_index(right) {
+                return Some(((*left.as_ref()).clone(), src_slot, src_index_slot));
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn match_f64_axpy(target: &Expr, value: &Expr) -> Option<(usize, usize, usize, usize, Expr)> {
+    let (dst_slot, dst_index_slot) = match_f64_index(target)?;
+    let (add_left, add_right) = match &value.kind {
+        ExprKind::BinaryOp { left, op: Op::Add, right } => (left.as_ref(), right.as_ref()),
+        _ => return None,
+    };
+    if let Some((slot, idx)) = match_f64_index(add_left) {
+        if slot == dst_slot && idx == dst_index_slot {
+            if let Some((scalar, src_slot, src_index_slot)) = match_f64_mul(add_right) {
+                return Some((dst_slot, dst_index_slot, src_slot, src_index_slot, scalar));
+            }
+        }
+    }
+    if let Some((slot, idx)) = match_f64_index(add_right) {
+        if slot == dst_slot && idx == dst_index_slot {
+            if let Some((scalar, src_slot, src_index_slot)) = match_f64_mul(add_left) {
+                return Some((dst_slot, dst_index_slot, src_slot, src_index_slot, scalar));
+            }
+        }
+    }
+    None
+}
+
 fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value>, want_value: bool) -> bool {
     match &expr.kind {
         ExprKind::Integer(i) => {
@@ -359,10 +414,17 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
             }
         }
         ExprKind::IndexAssignment { target, index, value } => {
-            if !compile_expr(target, code, consts, true) { return false; }
-            if !compile_expr(index, code, consts, true) { return false; }
-            if !compile_expr(value, code, consts, true) { return false; }
-            code.push(Instruction::IndexAssign);
+            if let Some((dst_slot, dst_index_slot, src_slot, src_index_slot, scalar)) =
+                match_f64_axpy(target, value)
+            {
+                if !compile_expr(&scalar, code, consts, true) { return false; }
+                code.push(Instruction::F64Axpy { dst_slot, dst_index_slot, src_slot, src_index_slot });
+            } else {
+                if !compile_expr(target, code, consts, true) { return false; }
+                if !compile_expr(index, code, consts, true) { return false; }
+                if !compile_expr(value, code, consts, true) { return false; }
+                code.push(Instruction::IndexAssign);
+            }
             if !want_value {
                 code.push(Instruction::Pop);
             }
@@ -955,6 +1017,43 @@ fn execute_instructions(
                 } else {
                     stack.push(Value::Array(Rc::new(RefCell::new(vals))));
                 }
+            }
+            Instruction::F64Axpy { dst_slot, dst_index_slot, src_slot, src_index_slot } => {
+                let scalar_val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing scalar for F64Axpy".to_string(),
+                    line: 0,
+                })?;
+                let scalar = match scalar_val {
+                    Value::Float(f) => f,
+                    Value::Integer(i) => i as f64,
+                    _ => return Err(RuntimeError { message: "F64Axpy requires numeric scalar".to_string(), line: 0 }),
+                };
+                let dst_idx = match slots.get(*dst_index_slot) {
+                    Some(Value::Integer(i)) => *i as usize,
+                    Some(Value::Float(f)) => *f as usize,
+                    _ => return Err(RuntimeError { message: "F64Axpy dst index must be numeric".to_string(), line: 0 }),
+                };
+                let src_idx = match slots.get(*src_index_slot) {
+                    Some(Value::Integer(i)) => *i as usize,
+                    Some(Value::Float(f)) => *f as usize,
+                    _ => return Err(RuntimeError { message: "F64Axpy src index must be numeric".to_string(), line: 0 }),
+                };
+                let dst = match slots.get_mut(*dst_slot) {
+                    Some(Value::F64Array(arr)) => arr.clone(),
+                    _ => return Err(RuntimeError { message: "F64Axpy requires F64Array dst".to_string(), line: 0 }),
+                };
+                let src = match slots.get(*src_slot) {
+                    Some(Value::F64Array(arr)) => arr.clone(),
+                    _ => return Err(RuntimeError { message: "F64Axpy requires F64Array src".to_string(), line: 0 }),
+                };
+                let mut dst_vec = dst.borrow_mut();
+                let src_vec = src.borrow();
+                if dst_idx >= dst_vec.len() || src_idx >= src_vec.len() {
+                    return Err(RuntimeError { message: "F64Axpy index out of bounds".to_string(), line: 0 });
+                }
+                let result = dst_vec[dst_idx] + scalar * src_vec[src_idx];
+                dst_vec[dst_idx] = result;
+                stack.push(Value::Float(result));
             }
             inst => {
                 let r = stack.pop().unwrap();

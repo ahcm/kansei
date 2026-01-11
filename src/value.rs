@@ -163,6 +163,7 @@ pub enum Instruction {
     LoadSlot(usize),
     StoreSlot(usize),
     LoadConst(Value),
+    LoadConstIdx(usize),
     Pop,
     JumpIfFalse(usize),
     Jump(usize),
@@ -202,6 +203,7 @@ pub struct FunctionData {
     pub is_simple: bool,
     pub uses_env: bool,
     pub code: Option<Rc<Vec<Instruction>>>,
+    pub const_pool: Rc<Vec<Value>>,
     pub env: Rc<RefCell<Environment>>,
 }
 

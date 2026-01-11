@@ -238,6 +238,11 @@ fn compile_to_instructions(expr: &Expr, code: &mut Vec<Instruction>) -> bool {
             }
             code.push(Instruction::CallValue(args.len()));
         }
+        ExprKind::Index { target, index } => {
+            if !compile_to_instructions(target, code) { return false; }
+            if !compile_to_instructions(index, code) { return false; }
+            code.push(Instruction::Index);
+        }
         ExprKind::BinaryOp { left, op, right } => {
             if !compile_to_instructions(left, code) { return false; }
             if !compile_to_instructions(right, code) { return false; }
@@ -299,6 +304,19 @@ fn compile_to_instructions(expr: &Expr, code: &mut Vec<Instruction>) -> bool {
             let mut body_code = Vec::new();
             if !compile_to_instructions(body, &mut body_code) { return false; }
             code.push(Instruction::ForEach { var_slot: *var_slot, body: Rc::new(body_code) });
+        }
+        ExprKind::Array(elements) => {
+            for e in elements {
+                if !compile_to_instructions(e, code) { return false; }
+            }
+            code.push(Instruction::MakeArray(elements.len()));
+        }
+        ExprKind::Map(entries) => {
+            for (k, v) in entries {
+                if !compile_to_instructions(k, code) { return false; }
+                if !compile_to_instructions(v, code) { return false; }
+            }
+            code.push(Instruction::MakeMap(entries.len()));
         }
         _ => return false,
     }
@@ -434,6 +452,73 @@ fn execute_instructions(interpreter: &mut Interpreter, code: &[Instruction], slo
                 }
                 stack.push(last);
             }
+            Instruction::MakeArray(count) => {
+                if *count > stack.len() {
+                    return Err(RuntimeError { message: "Invalid array length".to_string(), line: 0 });
+                }
+                let mut elems = Vec::with_capacity(*count);
+                for _ in 0..*count {
+                    elems.push(stack.pop().unwrap());
+                }
+                elems.reverse();
+                stack.push(Value::Array(Rc::new(RefCell::new(elems))));
+            }
+            Instruction::MakeMap(count) => {
+                let pair_count = count.saturating_mul(2);
+                if pair_count > stack.len() {
+                    return Err(RuntimeError { message: "Invalid map length".to_string(), line: 0 });
+                }
+                let mut entries = Vec::with_capacity(*count);
+                for _ in 0..*count {
+                    let val = stack.pop().unwrap();
+                    let key_val = stack.pop().unwrap();
+                    entries.push((key_val, val));
+                }
+                entries.reverse();
+                let mut map = FxHashMap::default();
+                for (k_val, v_val) in entries {
+                    let key = match k_val {
+                        Value::String(s) => s,
+                        _ => intern::intern_owned(k_val.inspect()),
+                    };
+                    map.insert(key, v_val);
+                }
+                stack.push(Value::Map(Rc::new(RefCell::new(map))));
+            }
+            Instruction::Index => {
+                let index_val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing index for index expression".to_string(),
+                    line: 0,
+                })?;
+                let target_val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing target for index expression".to_string(),
+                    line: 0,
+                })?;
+                let result = match target_val {
+                    Value::Array(arr) => {
+                        if let Value::Integer(idx) = index_val {
+                            let i = idx as usize;
+                            let vec = arr.borrow();
+                            if idx >= 0 && i < vec.len() {
+                                vec[i].clone()
+                            } else {
+                                Value::Nil
+                            }
+                        } else {
+                            return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
+                        }
+                    }
+                    Value::Map(map) => {
+                        let key = match index_val {
+                             Value::String(s) => s,
+                             _ => intern::intern_owned(index_val.inspect()),
+                        };
+                        map.borrow().get(&key).cloned().unwrap_or(Value::Nil)
+                    }
+                    _ => return Err(RuntimeError { message: "Index operator not supported on this type".to_string(), line: 0 }),
+                };
+                stack.push(result);
+            }
             inst => {
                 let r = stack.pop().unwrap();
                 let l = stack.pop().unwrap();
@@ -483,6 +568,22 @@ fn execute_instructions(interpreter: &mut Interpreter, code: &[Instruction], slo
                             Instruction::Lt => Value::Boolean(f < f2),
                             _ => unreachable!(),
                         }
+                    },
+                    (Value::String(s1), Value::String(s2)) => match inst {
+                        Instruction::Add => {
+                            let mut out = s1.clone();
+                            Rc::make_mut(&mut out).push_str(&s2);
+                            Value::String(out)
+                        }
+                        _ => return Err(RuntimeError { message: "Invalid types for operation".to_string(), line: 0 }),
+                    },
+                    (Value::String(s), v2) => match inst {
+                        Instruction::Add => {
+                            let mut out = s.clone();
+                            Rc::make_mut(&mut out).push_str(&v2.inspect());
+                            Value::String(out)
+                        }
+                        _ => return Err(RuntimeError { message: "Invalid types for operation".to_string(), line: 0 }),
                     },
                     _ => return Err(RuntimeError { message: "Invalid types for operation".to_string(), line: 0 }),
                 };

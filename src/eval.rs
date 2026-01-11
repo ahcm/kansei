@@ -519,7 +519,9 @@ fn execute_instructions(
                         }
                     }
                     Value::Map(map) => {
-                        let keys: Vec<Rc<String>> = map.borrow().keys().cloned().collect();
+                        let map_ref = map.borrow();
+                        let mut keys = Vec::with_capacity(map_ref.len());
+                        keys.extend(map_ref.keys().cloned());
                         for key in keys {
                             if let Some(slot) = slots.get_mut(*var_slot) {
                                 *slot = Value::String(key);
@@ -1570,7 +1572,9 @@ impl Interpreter {
                         Ok(last_val)
                     }
                     Value::Map(map) => {
-                        let keys: Vec<Rc<String>> = map.borrow().keys().cloned().collect();
+                        let map_ref = map.borrow();
+                        let mut keys = Vec::with_capacity(map_ref.len());
+                        keys.extend(map_ref.keys().cloned());
                         for key in keys {
                             self.env.borrow_mut().assign(var.clone(), Value::String(key));
                             last_val = self.eval(body, slots)?;

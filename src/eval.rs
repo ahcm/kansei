@@ -406,7 +406,6 @@ fn execute_instructions(
     let mut ip = 0;
     while ip < code.len() {
         match &code[ip] {
-            Instruction::LoadConst(v) => stack.push(v.clone()),
             Instruction::LoadConstIdx(idx) => {
                 let val = const_pool.get(*idx).cloned().unwrap_or(Value::Nil);
                 stack.push(val);

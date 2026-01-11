@@ -19,20 +19,6 @@ impl Environment {
         Self { values: FxHashMap::default(), slots: SmallVec::new(), parent, is_partial: false }
     }
 
-    pub fn new_partial(parent: Option<Rc<RefCell<Environment>>>) -> Self {
-        Self { values: FxHashMap::default(), slots: SmallVec::new(), parent, is_partial: true }
-    }
-
-    pub fn get_slot(&self, index: usize) -> Option<Value> {
-        self.slots.get(index).cloned()
-    }
-
-    pub fn set_slot(&mut self, index: usize, val: Value) {
-        if index < self.slots.len() {
-            self.slots[index] = val;
-        }
-    }
-
     pub fn reset(&mut self, parent: Option<Rc<RefCell<Environment>>>, is_partial: bool) {
         self.values.clear();
         self.slots.clear();
@@ -77,16 +63,6 @@ impl Environment {
              }
         } else if let Some(parent) = &self.parent {
             parent.borrow().get_recursive(name)
-        } else {
-            None
-        }
-    }
-
-    pub fn get_raw_no_deref(&self, name: &Rc<String>) -> Option<Value> {
-        if let Some(v) = self.values.get(name) {
-            Some(v.clone())
-        } else if let Some(parent) = &self.parent {
-            parent.borrow().get_raw_no_deref(name)
         } else {
             None
         }
@@ -162,7 +138,6 @@ impl Environment {
 pub enum Instruction {
     LoadSlot(usize),
     StoreSlot(usize),
-    LoadConst(Value),
     LoadConstIdx(usize),
     Pop,
     JumpIfFalse(usize),

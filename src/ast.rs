@@ -161,5 +161,10 @@ pub enum ExprKind
 #[derive(Debug, Clone, PartialEq)]
 pub enum FormatPart {
     Literal(Rc<String>),
-    Expr(Box<Expr>),
+    Expr { expr: Box<Expr>, spec: Option<FormatSpec> },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormatSpec {
+    pub precision: Option<usize>,
 }

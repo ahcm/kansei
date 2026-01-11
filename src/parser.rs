@@ -1,4 +1,4 @@
-use crate::ast::{Closure, Expr, ExprKind, FormatPart, Op};
+use crate::ast::{Closure, Expr, ExprKind, FormatPart, FormatSpec, Op};
 use crate::intern;
 use crate::lexer::{Lexer, Span, Token};
 use std::rc::Rc;
@@ -720,14 +720,15 @@ impl Parser
                 if end >= chars.len() {
                     panic!("Unclosed format string expression at line {}", line);
                 }
-                let expr_str: String = chars[start..end].iter().collect();
+                let expr_slice: String = chars[start..end].iter().collect();
+                let (expr_str, spec) = self.split_format_expr(&expr_slice, line);
                 if expr_str.trim().is_empty() {
                     panic!("Empty format string expression at line {}", line);
                 }
                 let lexer = Lexer::new(&expr_str);
                 let mut parser = Parser::new(lexer);
                 let expr = parser.parse();
-                parts.push(FormatPart::Expr(Box::new(expr)));
+                parts.push(FormatPart::Expr { expr: Box::new(expr), spec });
                 i = end + 1;
             } else if ch == '}' {
                 if i + 1 < chars.len() && chars[i + 1] == '}' {
@@ -745,5 +746,64 @@ impl Parser
             parts.push(FormatPart::Literal(intern::intern_owned(literal)));
         }
         self.make_expr(ExprKind::FormatString(parts), line)
+    }
+
+    fn split_format_expr(&self, input: &str, line: usize) -> (String, Option<FormatSpec>) {
+        let mut depth_paren = 0usize;
+        let mut depth_brack = 0usize;
+        let mut depth_brace = 0usize;
+        let mut in_string = false;
+        let mut string_delim = '\0';
+        let mut split_at: Option<usize> = None;
+        for (idx, ch) in input.chars().enumerate() {
+            if in_string {
+                if ch == string_delim {
+                    in_string = false;
+                }
+                continue;
+            }
+            match ch {
+                '"' | '`' => {
+                    in_string = true;
+                    string_delim = ch;
+                }
+                '(' => depth_paren += 1,
+                ')' => depth_paren = depth_paren.saturating_sub(1),
+                '[' => depth_brack += 1,
+                ']' => depth_brack = depth_brack.saturating_sub(1),
+                '{' => depth_brace += 1,
+                '}' => depth_brace = depth_brace.saturating_sub(1),
+                ':' if depth_paren == 0 && depth_brack == 0 && depth_brace == 0 => {
+                    split_at = Some(idx);
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(idx) = split_at {
+            let expr = input[..idx].trim().to_string();
+            let spec_str = input[idx + 1..].trim();
+            if spec_str.is_empty() {
+                panic!("Empty format specifier at line {}", line);
+            }
+            let spec = self.parse_format_spec(spec_str, line);
+            (expr, Some(spec))
+        } else {
+            (input.trim().to_string(), None)
+        }
+    }
+
+    fn parse_format_spec(&self, spec: &str, line: usize) -> FormatSpec {
+        if let Some(rest) = spec.strip_prefix('.') {
+            if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_digit()) {
+                panic!("Invalid format precision at line {}", line);
+            }
+            let precision = rest.parse::<usize>().unwrap_or_else(|_| {
+                panic!("Invalid format precision at line {}", line)
+            });
+            return FormatSpec { precision: Some(precision) };
+        }
+        panic!("Unsupported format specifier at line {}", line);
     }
 }

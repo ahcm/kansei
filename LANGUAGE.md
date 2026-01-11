@@ -261,10 +261,12 @@ Prefix a string with `f` to interpolate expressions, similar to Rust formatting.
 ```ruby
 name = "Ada"
 count = 3
+pi = 3.14159
 msg = f"{name} has {count} items"
+short_pi = f"{pi:.2}"
 ```
 
-Use `{{` and `}}` to include literal braces.
+Use `{{` and `}}` to include literal braces. Precision formatting uses `{expr:.N}`.
 
 ## Shell Commands
 Backticks execute shell commands and capture stdout (trimmed).

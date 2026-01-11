@@ -405,7 +405,7 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<SymbolId>) {
         }
         ExprKind::FormatString(parts) => {
             for part in parts {
-                if let crate::ast::FormatPart::Expr(expr) = part {
+                if let crate::ast::FormatPart::Expr { expr, .. } = part {
                     collect_declarations(expr, decls);
                 }
             }
@@ -522,7 +522,7 @@ fn resolve_functions(expr: &mut Expr) {
         }
         ExprKind::FormatString(parts) => {
             for part in parts {
-                if let crate::ast::FormatPart::Expr(expr) = part {
+                if let crate::ast::FormatPart::Expr { expr, .. } = part {
                     resolve_functions(expr);
                 }
             }
@@ -548,7 +548,7 @@ fn uses_environment(expr: &Expr) -> bool {
         ExprKind::Call { function, args, .. } => uses_environment(function) || args.iter().any(uses_environment),
         ExprKind::Use(_) => true,
         ExprKind::FormatString(parts) => parts.iter().any(|part| {
-            if let crate::ast::FormatPart::Expr(expr) = part {
+            if let crate::ast::FormatPart::Expr { expr, .. } = part {
                 uses_environment(expr)
             } else {
                 false
@@ -1191,7 +1191,10 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr {
             kind: ExprKind::FormatString(parts.iter().map(|part| {
                 match part {
                     crate::ast::FormatPart::Literal(s) => crate::ast::FormatPart::Literal(s.clone()),
-                    crate::ast::FormatPart::Expr(e) => crate::ast::FormatPart::Expr(Box::new(substitute(e, args))),
+                    crate::ast::FormatPart::Expr { expr, spec } => crate::ast::FormatPart::Expr {
+                        expr: Box::new(substitute(expr, args)),
+                        spec: spec.clone(),
+                    },
                 }
             }).collect()),
             line: expr.line,
@@ -1220,8 +1223,8 @@ fn expr_size(expr: &Expr) -> usize {
         ExprKind::Yield(args) => 1 + args.iter().map(expr_size).sum::<usize>(),
         ExprKind::Block(stmts) => 1 + stmts.iter().map(expr_size).sum::<usize>(),
         ExprKind::FormatString(parts) => 1 + parts.iter().map(|part| {
-            if let crate::ast::FormatPart::Expr(e) = part {
-                expr_size(e)
+            if let crate::ast::FormatPart::Expr { expr, .. } = part {
+                expr_size(expr)
             } else {
                 1
             }
@@ -1237,8 +1240,8 @@ fn is_inline_safe_arg(expr: &Expr) -> bool {
         ExprKind::BinaryOp { left, right, .. } => is_inline_safe_arg(left) && is_inline_safe_arg(right),
         ExprKind::Index { target, index } => is_inline_safe_arg(target) && is_inline_safe_arg(index),
         ExprKind::FormatString(parts) => parts.iter().all(|part| {
-            if let crate::ast::FormatPart::Expr(e) = part {
-                is_inline_safe_arg(e)
+            if let crate::ast::FormatPart::Expr { expr, .. } = part {
+                is_inline_safe_arg(expr)
             } else {
                 true
             }
@@ -1966,7 +1969,7 @@ fn is_simple(expr: &Expr) -> bool {
         ExprKind::Assignment { slot: None, .. } => false,
         ExprKind::Block(stmts) => stmts.iter().all(is_simple),
         ExprKind::FormatString(parts) => parts.iter().all(|part| {
-            if let crate::ast::FormatPart::Expr(expr) = part {
+            if let crate::ast::FormatPart::Expr { expr, .. } = part {
                 is_simple(expr)
             } else {
                 true
@@ -2076,7 +2079,7 @@ fn resolve(expr: &mut Expr, slot_map: &FxHashMap<SymbolId, usize>) {
         }
         ExprKind::FormatString(parts) => {
             for part in parts {
-                if let crate::ast::FormatPart::Expr(expr) = part {
+                if let crate::ast::FormatPart::Expr { expr, .. } = part {
                     resolve(expr, slot_map);
                 }
             }
@@ -2395,8 +2398,22 @@ impl Interpreter {
                 for part in parts {
                     match part {
                         crate::ast::FormatPart::Literal(s) => out.push_str(s.as_str()),
-                        crate::ast::FormatPart::Expr(expr) => {
+                        crate::ast::FormatPart::Expr { expr, spec } => {
                             let val = self.eval(expr, slots)?;
+                            if let Some(spec) = spec {
+                                if let Some(precision) = spec.precision {
+                                    let formatted = match &val {
+                                        Value::Float { value, .. } => format!("{:.p$}", value, p = precision),
+                                        v if int_value_as_f64(v).is_some() => {
+                                            let num = int_value_as_f64(v).unwrap_or(0.0);
+                                            format!("{:.p$}", num, p = precision)
+                                        }
+                                        _ => val.to_string(),
+                                    };
+                                    out.push_str(&formatted);
+                                    continue;
+                                }
+                            }
                             out.push_str(&val.to_string());
                         }
                     }

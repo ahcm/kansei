@@ -20,6 +20,29 @@ pub struct RuntimeError {
 
 pub type EvalResult = Result<Value, RuntimeError>;
 
+fn native_int64_parse(args: &[Value]) -> Result<Value, String> {
+    let arg = args.get(0).ok_or_else(|| "Int64.parse expects 1 argument".to_string())?;
+    match arg {
+        Value::String(s) => s.parse::<i64>()
+            .map(Value::Integer)
+            .map_err(|_| "Int64.parse failed to parse string".to_string()),
+        _ => Err("Int64.parse expects a string argument".to_string()),
+    }
+}
+
+fn build_int64_module() -> Value {
+    let mut int64_map = FxHashMap::default();
+    int64_map.insert(intern::intern("parse"), Value::NativeFunction(native_int64_parse));
+    Value::Map(Rc::new(RefCell::new(int64_map)))
+}
+
+fn build_std_module() -> Value {
+    let int64_val = build_int64_module();
+    let mut std_map = FxHashMap::default();
+    std_map.insert(intern::intern("Int64"), int64_val);
+    Value::Map(Rc::new(RefCell::new(std_map)))
+}
+
 fn collect_declarations(expr: &Expr, decls: &mut HashSet<SymbolId>) {
         match &expr.kind {
             ExprKind::Assignment { name, .. } => {
@@ -186,6 +209,7 @@ fn resolve_functions(expr: &mut Expr) {
             resolve_functions(target);
             resolve_functions(index);
         }
+        ExprKind::Use(_) => {}
         ExprKind::Yield(args) => {
             for a in args {
                 resolve_functions(a);
@@ -204,6 +228,7 @@ fn uses_environment(expr: &Expr) -> bool {
             uses_environment(condition) || uses_environment(then_branch) || else_branch.as_ref().map_or(false, |e| uses_environment(e))
         }
         ExprKind::Call { function, args, .. } => uses_environment(function) || args.iter().any(uses_environment),
+        ExprKind::Use(_) => true,
         // Simple functions (is_simple) only have these constructs roughly. 
         // We can be conservative.
         ExprKind::Integer(_) | ExprKind::Float(_) | ExprKind::String(_) | ExprKind::Boolean(_) | ExprKind::Nil => false,
@@ -509,6 +534,9 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
             if !want_value {
                 code.push(Instruction::Pop);
             }
+        }
+        ExprKind::Use(_) => {
+            return false;
         }
         ExprKind::BinaryOp { left, op, right } => {
             let mut handled = false;
@@ -1503,7 +1531,7 @@ fn execute_instructions(
 
 fn is_simple(expr: &Expr) -> bool {
     match &expr.kind {
-        ExprKind::Yield(_) | ExprKind::FunctionDef { .. } | ExprKind::AnonymousFunction { .. } => false,
+        ExprKind::Yield(_) | ExprKind::FunctionDef { .. } | ExprKind::AnonymousFunction { .. } | ExprKind::Use(_) => false,
         ExprKind::Assignment { slot: None, .. } => false,
         ExprKind::Block(stmts) => stmts.iter().all(is_simple),
         ExprKind::If { condition, then_branch, else_branch } => {
@@ -1608,6 +1636,7 @@ fn resolve(expr: &mut Expr, slot_map: &FxHashMap<SymbolId, usize>) {
             resolve(index, slot_map);
             resolve(value, slot_map);
         }
+        ExprKind::Use(_) => {}
         ExprKind::Yield(args) => {
             for a in args {
                 resolve(a, slot_map);
@@ -1654,6 +1683,68 @@ impl Interpreter {
 
     pub fn define_global(&mut self, name: SymbolId, val: Value) {
         self.env.borrow_mut().define(name, val);
+    }
+
+    fn ensure_std_module(&mut self) {
+        let std_sym = intern::intern_symbol("std");
+        let existing = { self.env.borrow().get(std_sym) };
+        match existing {
+            Some(Value::Map(map)) => {
+                let mut map_mut = map.borrow_mut();
+                if !map_mut.contains_key(&intern::intern("Int64")) {
+                    map_mut.insert(intern::intern("Int64"), build_int64_module());
+                }
+            }
+            Some(_) | None => {
+                self.define_global(std_sym, build_std_module());
+            }
+        }
+    }
+
+    fn import_path(&mut self, path: &[SymbolId], line: usize) -> EvalResult {
+        if path.is_empty() {
+            return Err(RuntimeError { message: "use requires a module path".to_string(), line });
+        }
+
+        let std_sym = intern::intern_symbol("std");
+        if path[0] == std_sym {
+            self.ensure_std_module();
+        }
+
+        let mut current = self.env.borrow().get(path[0]).ok_or_else(|| RuntimeError {
+            message: format!("Module '{}' not found", symbol_name(path[0]).as_str()),
+            line,
+        })?;
+        let mut current_name = symbol_name(path[0]);
+
+        for segment in &path[1..] {
+            let seg_name = symbol_name(*segment);
+            match current {
+                Value::Map(map) => {
+                    if let Some(next) = map.borrow().get(&seg_name).cloned() {
+                        current = next;
+                        current_name = seg_name;
+                    } else {
+                        return Err(RuntimeError {
+                            message: format!(
+                                "Module '{}' has no member '{}'",
+                                current_name.as_str(),
+                                seg_name.as_str()
+                            ),
+                            line,
+                        });
+                    }
+                }
+                _ => {
+                    return Err(RuntimeError {
+                        message: format!("'{}' is not a module", current_name.as_str()),
+                        line,
+                    });
+                }
+            }
+        }
+
+        Ok(Value::Nil)
     }
 
     fn call_builtin(&mut self, builtin: &Builtin, args: &[Value]) -> EvalResult {
@@ -1713,10 +1804,15 @@ impl Interpreter {
         line: usize,
         block: Option<Closure>,
     ) -> EvalResult {
-        if let Value::Function(data) = func_val {
-            self.invoke_function(data, arg_vals, line, block)
-        } else {
-            Err(RuntimeError { message: format!("Tried to call a non-function value: {}", func_val), line })
+        match func_val {
+            Value::Function(data) => self.invoke_function(data, arg_vals, line, block),
+            Value::NativeFunction(func) => {
+                if block.is_some() {
+                    return Err(RuntimeError { message: "Native function does not accept a block".to_string(), line });
+                }
+                func(&arg_vals).map_err(|message| RuntimeError { message, line })
+            }
+            _ => Err(RuntimeError { message: format!("Tried to call a non-function value: {}", func_val), line }),
         }
     }
 
@@ -1808,6 +1904,10 @@ impl Interpreter {
             ExprKind::String(s) => Ok(Value::String(s.clone())),
             ExprKind::Boolean(b) => Ok(Value::Boolean(*b)),
             ExprKind::Nil => Ok(Value::Nil),
+            ExprKind::Use(path) => {
+                self.import_path(path, line)?;
+                Ok(Value::Nil)
+            }
             ExprKind::Shell(cmd_str) => {
                 let output = if cfg!(target_os = "windows") {
                     Command::new("cmd").args(&["/C", cmd_str.as_str()]).output()
@@ -2253,48 +2353,62 @@ impl Interpreter {
                 }
 
                 let func_val = self.eval(function, slots)?;
-                if let Value::Function(data) = func_val {
-                    // 2. Attempt JIT Inlining
-                    // Inline if:
-                    // - Function is simple (no locals/assignments).
-                    // - Function does not capture environment (no slot=None identifiers).
-                    // - Args are simple expressions (Identifiers/Literals) to avoid code explosion or side-effect duplication.
-                    if data.is_simple && inlined_body.borrow().is_none() && !data.uses_env {
-                        let small_body = expr_size(&data.body) <= 40;
-                        let safe_args = args.iter().all(is_inline_safe_arg);
-                        if safe_args && small_body {
-                            let inlined = substitute(&data.body, args);
-                            inlined_body.replace(Some(inlined));
-                            // Run the newly minted inlined body immediately
-                            return self.eval(inlined_body.borrow().as_ref().unwrap(), slots);
+                match func_val {
+                    Value::Function(data) => {
+                        // 2. Attempt JIT Inlining
+                        // Inline if:
+                        // - Function is simple (no locals/assignments).
+                        // - Function does not capture environment (no slot=None identifiers).
+                        // - Args are simple expressions (Identifiers/Literals) to avoid code explosion or side-effect duplication.
+                        if data.is_simple && inlined_body.borrow().is_none() && !data.uses_env {
+                            let small_body = expr_size(&data.body) <= 40;
+                            let safe_args = args.iter().all(is_inline_safe_arg);
+                            if safe_args && small_body {
+                                let inlined = substitute(&data.body, args);
+                                inlined_body.replace(Some(inlined));
+                                // Run the newly minted inlined body immediately
+                                return self.eval(inlined_body.borrow().as_ref().unwrap(), slots);
+                            }
                         }
-                    }
 
-                    let mut arg_vals: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
-                    for (i, arg_expr) in args.iter().enumerate() {
-                        let val = self.eval(arg_expr, slots)?;
-                        if i < data.params.len() {
-                            let (_, is_ref) = data.params[i];
-                            if is_ref {
-                                if let Value::Reference(_) = val {
-                                    arg_vals.push(val);
+                        let mut arg_vals: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
+                        for (i, arg_expr) in args.iter().enumerate() {
+                            let val = self.eval(arg_expr, slots)?;
+                            if i < data.params.len() {
+                                let (_, is_ref) = data.params[i];
+                                if is_ref {
+                                    if let Value::Reference(_) = val {
+                                        arg_vals.push(val);
+                                    } else {
+                                        return Err(RuntimeError {
+                                            message: format!("Argument #{} expected to be a reference (&var), but got value", i + 1),
+                                            line,
+                                        });
+                                    }
                                 } else {
-                                    return Err(RuntimeError {
-                                        message: format!("Argument #{} expected to be a reference (&var), but got value", i + 1),
-                                        line,
-                                    });
+                                    arg_vals.push(val);
                                 }
                             } else {
                                 arg_vals.push(val);
                             }
-                        } else {
-                            arg_vals.push(val);
                         }
-                    }
 
-                    self.invoke_function(data, arg_vals, line, block.clone())
-                } else {
-                    Err(RuntimeError { message: format!("Tried to call a non-function value: {}", func_val), line })
+                        self.invoke_function(data, arg_vals, line, block.clone())
+                    }
+                    Value::NativeFunction(func) => {
+                        if block.is_some() {
+                            return Err(RuntimeError {
+                                message: "Native function does not accept a block".to_string(),
+                                line,
+                            });
+                        }
+                        let mut arg_vals: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
+                        for arg_expr in args {
+                            arg_vals.push(self.eval(arg_expr, slots)?);
+                        }
+                        func(&arg_vals).map_err(|message| RuntimeError { message, line })
+                    }
+                    _ => Err(RuntimeError { message: format!("Tried to call a non-function value: {}", func_val), line }),
                 }
             }
             ExprKind::BinaryOp { left, op, right } => {

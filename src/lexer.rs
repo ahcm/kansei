@@ -22,6 +22,7 @@ pub enum Token
     While,
     For,
     Loop,
+    Use,
     In,
     Yield,
     Pipe,
@@ -37,6 +38,7 @@ pub enum Token
     LeftBrace,
     RightBrace,
     Colon,
+    ColonColon,
     Dot,
     Ampersand,
     Semicolon,
@@ -186,8 +188,13 @@ impl Lexer
             }
             ':' =>
             {
-                self.position += 1;
-                Token::Colon
+                if self.peek() == ':' {
+                    self.position += 2;
+                    Token::ColonColon
+                } else {
+                    self.position += 1;
+                    Token::Colon
+                }
             }
             '.' =>
             {
@@ -298,6 +305,7 @@ impl Lexer
             "while" => Token::While,
             "for" => Token::For,
             "loop" => Token::Loop,
+            "use" => Token::Use,
             "in" => Token::In,
             "yield" => Token::Yield,
             "true" => Token::True,

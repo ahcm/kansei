@@ -68,6 +68,18 @@ Environment variables are available via `program.env`.
 home = program.env.HOME
 ```
 
+## Modules and `use`
+Kansei exposes native modules via the `std` namespace. The `use` keyword validates that a module path exists but does not create local bindings. Use assignment to alias.
+
+```ruby
+use std::Int64
+
+Int64 = std::Int64
+value = Int64.parse("42")
+```
+
+The `::` operator accesses module members, similar to map dot access.
+
 ## Variables
 Variables are dynamically typed and defined on assignment.
 ```ruby

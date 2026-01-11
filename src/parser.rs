@@ -164,8 +164,8 @@ impl Parser
                     target: Box::new(expr),
                     index: Box::new(index),
                 }, line);
-            } else if self.current_token.token == Token::Dot {
-                self.eat(); // .
+            } else if self.current_token.token == Token::Dot || self.current_token.token == Token::ColonColon {
+                self.eat(); // . or ::
                 let name = match &self.current_token.token {
                     Token::Identifier(n) => intern::intern_owned(n.clone()),
                     _ => panic!("Expected property name after dot at line {}", self.current_token.line),
@@ -304,6 +304,7 @@ impl Parser
             Token::While => self.parse_while(),
             Token::For => self.parse_for(),
             Token::Loop => self.parse_loop(),
+            Token::Use => self.parse_use(),
             Token::LeftBracket => self.parse_array(),
             Token::LeftBrace => {
                 let mut temp_lexer = self.lexer.clone();
@@ -428,6 +429,33 @@ impl Parser
         }
         self.expect(Token::RightBrace);
         self.make_expr(ExprKind::Map(entries), line)
+    }
+
+    fn parse_use(&mut self) -> Expr {
+        let line = self.current_token.line;
+        self.eat(); // eat 'use'
+
+        let mut path = Vec::new();
+        match &self.current_token.token {
+            Token::Identifier(n) => {
+                path.push(intern::intern_symbol_owned(n.clone()));
+                self.eat();
+            }
+            _ => panic!("Expected module name after use at line {}", self.current_token.line),
+        }
+
+        while self.current_token.token == Token::ColonColon {
+            self.eat(); // ::
+            match &self.current_token.token {
+                Token::Identifier(n) => {
+                    path.push(intern::intern_symbol_owned(n.clone()));
+                    self.eat();
+                }
+                _ => panic!("Expected module name after :: at line {}", self.current_token.line),
+            }
+        }
+
+        self.make_expr(ExprKind::Use(path), line)
     }
 
     fn parse_fn(&mut self) -> Expr

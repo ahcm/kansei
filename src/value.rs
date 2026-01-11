@@ -7,6 +7,8 @@ use std::rc::Rc;
 
 use smallvec::SmallVec;
 
+pub type NativeFunction = fn(&[Value]) -> Result<Value, String>;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Environment {
     pub values: Vec<Value>,
@@ -230,6 +232,7 @@ pub enum Value
     Map(Rc<RefCell<FxHashMap<Rc<String>, Value>>>),
     Nil,
     Function(Rc<FunctionData>),
+    NativeFunction(NativeFunction),
     Reference(Rc<RefCell<Value>>),
     Uninitialized,
 }
@@ -267,6 +270,7 @@ impl PartialEq for Value {
             }
             (Value::Nil, Value::Nil) => true,
             (Value::Function(a), Value::Function(b)) => Rc::ptr_eq(a, b),
+            (Value::NativeFunction(a), Value::NativeFunction(b)) => std::ptr::fn_addr_eq(*a, *b),
             (Value::Uninitialized, Value::Uninitialized) => true,
             _ => false,
         }
@@ -285,6 +289,7 @@ impl fmt::Debug for Value {
             Value::Map(m) => write!(f, "Map({:?})", m.borrow()),
             Value::Nil => write!(f, "Nil"),
             Value::Function(_) => write!(f, "Function(...)"),
+            Value::NativeFunction(_) => write!(f, "NativeFunction(...)"),
             Value::Reference(r) => write!(f, "Reference({:?})", r.borrow()),
             Value::Uninitialized => write!(f, "Uninitialized"),
         }
@@ -329,6 +334,7 @@ impl Value
                     .collect();
                 format!("<function({})>", p_str.join(", "))
             },
+            Value::NativeFunction(_) => "<native function>".to_string(),
             Value::Reference(r) => r.borrow().inspect(),
             Value::Uninitialized => "<uninitialized>".to_string(),
         }
@@ -373,6 +379,7 @@ impl fmt::Display for Value
                     .collect();
                 write!(f, "<function({})>", p_str.join(", "))
             },
+            Value::NativeFunction(_) => write!(f, "<native function>"),
             Value::Reference(r) => write!(f, "{}", r.borrow()),
             Value::Uninitialized => write!(f, "<uninitialized>"),
         }

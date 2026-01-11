@@ -128,6 +128,7 @@ pub enum ExprKind
         target: Box<Expr>,
         index: Box<Expr>,
     },
+    Use(Vec<SymbolId>),
 
     // A block of code (so an 'if' can run multiple lines)
     Block(Vec<Expr>),

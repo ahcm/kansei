@@ -1,5 +1,6 @@
 use crate::ast::{Closure, Expr, ExprKind, Op};
 use crate::intern;
+use crate::intern::{SymbolId, symbol_name};
 use crate::value::{Builtin, Environment, Instruction, RangeEnd, Value};
 use rustc_hash::FxHashMap;
 use std::collections::HashSet;
@@ -17,7 +18,7 @@ pub struct RuntimeError {
 
 pub type EvalResult = Result<Value, RuntimeError>;
 
-fn collect_declarations(expr: &Expr, decls: &mut HashSet<Rc<String>>) {
+fn collect_declarations(expr: &Expr, decls: &mut HashSet<SymbolId>) {
         match &expr.kind {
             ExprKind::Assignment { name, .. } => {
                 decls.insert(name.clone());
@@ -77,19 +78,19 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<Rc<String>>) {
     }
 }
 
-fn build_slot_map(params: &[(Rc<String>, bool)], locals: HashSet<Rc<String>>) -> (FxHashMap<Rc<String>, usize>, Vec<Rc<String>>) {
+fn build_slot_map(params: &[(SymbolId, bool)], locals: HashSet<SymbolId>) -> (FxHashMap<SymbolId, usize>, Vec<Rc<String>>) {
     let mut slot_map = FxHashMap::default();
     let mut slot_names = Vec::new();
     for (p, _) in params {
         if !slot_map.contains_key(p) {
             slot_map.insert(p.clone(), slot_names.len());
-            slot_names.push(p.clone());
+            slot_names.push(symbol_name(*p));
         }
     }
     for l in locals {
         if !slot_map.contains_key(&l) {
             slot_map.insert(l.clone(), slot_names.len());
-            slot_names.push(l);
+            slot_names.push(symbol_name(l));
         }
     }
     (slot_map, slot_names)
@@ -208,8 +209,8 @@ fn uses_environment(expr: &Expr) -> bool {
     }
 }
 
-fn builtin_from_name(name: &Rc<String>) -> Option<Builtin> {
-    match name.as_str() {
+fn builtin_from_symbol(name: SymbolId) -> Option<Builtin> {
+    match symbol_name(name).as_str() {
         "puts" => Some(Builtin::Puts),
         "print" => Some(Builtin::Print),
         "len" => Some(Builtin::Len),
@@ -411,7 +412,7 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
                 return false;
             }
             if let ExprKind::Identifier { name, .. } = &function.kind {
-                if let Some(builtin) = builtin_from_name(name) {
+                if let Some(builtin) = builtin_from_symbol(*name) {
                     for arg in args {
                         if !compile_expr(arg, code, consts, true) { return false; }
                     }
@@ -1306,12 +1307,12 @@ fn is_simple(expr: &Expr) -> bool {
     }
 }
 
-fn resolve(expr: &mut Expr, slot_map: &FxHashMap<Rc<String>, usize>) {
+fn resolve(expr: &mut Expr, slot_map: &FxHashMap<SymbolId, usize>) {
     match &mut expr.kind {
         ExprKind::Identifier { name, slot } => {
-            if let Some(s) = slot_map.get(name) {
-                *slot = Some(*s);
-            }
+                if let Some(s) = slot_map.get(name) {
+                    *slot = Some(*s);
+                }
         }
         ExprKind::Assignment { name, value, slot } => {
             if let Some(s) = slot_map.get(name) {
@@ -1432,7 +1433,7 @@ impl Interpreter {
         }
     }
 
-    pub fn define_global(&mut self, name: Rc<String>, val: Value) {
+    pub fn define_global(&mut self, name: SymbolId, val: Value) {
         self.env.borrow_mut().define(name, val);
     }
 
@@ -1509,9 +1510,9 @@ impl Interpreter {
     ) -> EvalResult {
         if arg_vals.len() < data.params.len() {
             let new_env = self.get_env(Some(data.env.clone()), true);
-            for ((param, _), val) in data.params.iter().zip(arg_vals.iter()) {
-                 new_env.borrow_mut().define(param.clone(), val.clone());
-            }
+                        for ((param, _), val) in data.params.iter().zip(arg_vals.iter()) {
+                             new_env.borrow_mut().define(*param, val.clone());
+                        }
             let num_bound = arg_vals.len();
             let remaining_params = data.params[num_bound..].to_vec();
                         return Ok(Value::Function(Rc::new(crate::value::FunctionData {
@@ -1613,21 +1614,21 @@ impl Interpreter {
                         }
                     }
                 }
-                let val = self.env.borrow().get(name).ok_or_else(|| RuntimeError {
-                    message: format!("Undefined variable: {}", name.as_str()),
+                let val = self.env.borrow().get(*name).ok_or_else(|| RuntimeError {
+                    message: format!("Undefined variable: {}", symbol_name(*name).as_str()),
                     line,
                 })?;
                 if let Value::Uninitialized = val {
                     return Err(RuntimeError {
-                        message: format!("Variable '{}' used before assignment", name.as_str()),
+                        message: format!("Variable '{}' used before assignment", symbol_name(*name).as_str()),
                         line,
                     });
                 }
                 Ok(val)
             }
             ExprKind::Reference(name) => {
-                let val = self.env.borrow_mut().promote(name).ok_or_else(|| RuntimeError {
-                    message: format!("Undefined variable referenced: {}", name.as_str()),
+                let val = self.env.borrow_mut().promote(*name).ok_or_else(|| RuntimeError {
+                    message: format!("Undefined variable referenced: {}", symbol_name(*name).as_str()),
                     line,
                 })?;
                 Ok(val)
@@ -1639,7 +1640,7 @@ impl Interpreter {
                         *slot_val = val.clone();
                     }
                 } else {
-                    self.env.borrow_mut().set(name.clone(), val.clone());
+                    self.env.borrow_mut().set(*name, val.clone());
                 }
                 Ok(val)
             }
@@ -1738,7 +1739,7 @@ impl Interpreter {
                 const_pool: Rc::new(const_pool),
                 env: func_env,
             }));
-                self.env.borrow_mut().define(name.clone(), func.clone());
+                self.env.borrow_mut().define(*name, func.clone());
                 Ok(func)
             }
         ExprKind::AnonymousFunction { params, body, slots } => {
@@ -1786,15 +1787,15 @@ impl Interpreter {
                      let mut arg_iter = arg_vals.into_iter();
                      for (param_name, is_ref) in &closure.params {
                          if *is_ref {
-                             let ref_val = saved_env.borrow_mut().promote(param_name)
+                             let ref_val = saved_env.borrow_mut().promote(*param_name)
                                  .ok_or_else(|| RuntimeError {
-                                     message: format!("Undefined variable captured: {}", param_name),
+                                     message: format!("Undefined variable captured: {}", symbol_name(*param_name).as_str()),
                                      line,
                                  })?;
-                             new_env.borrow_mut().define(param_name.clone(), ref_val);
+                             new_env.borrow_mut().define(*param_name, ref_val);
                          } else {
                              let val = arg_iter.next().unwrap_or(Value::Nil);
-                             new_env.borrow_mut().define(param_name.clone(), val);
+                             new_env.borrow_mut().define(*param_name, val);
                          }
                      }
                      
@@ -1984,12 +1985,12 @@ impl Interpreter {
                 }
 
                 if let ExprKind::Identifier { name, .. } = &function.kind {
-                     match name.as_str() {
+                     match symbol_name(*name).as_str() {
                         "puts" | "print" => {
                             let mut last_val = Value::Nil;
                             for arg in args {
                                 let val = self.eval(arg, slots)?;
-                                if name.as_str() == "puts" {
+                                if symbol_name(*name).as_str() == "puts" {
                                     println!("{}", val);
                                 } else {
                                     print!("{}", val);
@@ -2195,7 +2196,7 @@ impl Interpreter {
                                 let vec = arr.borrow();
                                 vec[idx].clone()
                             };
-                            self.env.borrow_mut().assign(var.clone(), item);
+                            self.env.borrow_mut().assign(*var, item);
                             last_val = self.eval(body, slots)?;
                         }
                         Ok(last_val)
@@ -2207,7 +2208,7 @@ impl Interpreter {
                                 let vec = arr.borrow();
                                 Value::Float(vec[idx])
                             };
-                            self.env.borrow_mut().assign(var.clone(), item);
+                            self.env.borrow_mut().assign(*var, item);
                             last_val = self.eval(body, slots)?;
                         }
                         Ok(last_val)
@@ -2217,7 +2218,7 @@ impl Interpreter {
                         let mut keys = Vec::with_capacity(map_ref.len());
                         keys.extend(map_ref.keys().cloned());
                         for key in keys {
-                            self.env.borrow_mut().assign(var.clone(), Value::String(key));
+                            self.env.borrow_mut().assign(*var, Value::String(key));
                             last_val = self.eval(body, slots)?;
                         }
                         Ok(last_val)
@@ -2242,7 +2243,7 @@ impl Interpreter {
                             *slot_val = Value::Integer(idx as i64);
                         }
                     } else if let Some(name) = var {
-                        self.env.borrow_mut().assign(name.clone(), Value::Integer(idx as i64));
+                        self.env.borrow_mut().assign(*name, Value::Integer(idx as i64));
                     }
                     last_val = self.eval(body, slots)?;
                 }

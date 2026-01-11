@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use crate::intern::SymbolId;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Op
@@ -17,7 +18,7 @@ pub enum Op
 #[derive(Debug, Clone, PartialEq)]
 pub struct Closure
 {
-    pub params: Vec<(Rc<String>, bool)>,
+    pub params: Vec<(SymbolId, bool)>,
     pub body: Box<Expr>,
 }
 
@@ -33,8 +34,8 @@ pub enum ExprKind
     // Basic Values
     Integer(i64),
     Float(f64),
-    Identifier { name: Rc<String>, slot: Option<usize> },
-    Reference(Rc<String>), // &x
+    Identifier { name: SymbolId, slot: Option<usize> },
+    Reference(SymbolId), // &x
     String(Rc<String>), // "hello"
     Boolean(bool),
     Nil,
@@ -51,7 +52,7 @@ pub enum ExprKind
     // Assignment: x = 10
     Assignment
     {
-        name: Rc<String>,
+        name: SymbolId,
         value: Box<Expr>,
         slot: Option<usize>,
     },
@@ -88,7 +89,7 @@ pub enum ExprKind
 
     For
     {
-        var: Rc<String>,
+        var: SymbolId,
         var_slot: Option<usize>,
         iterable: Box<Expr>,
         body: Box<Expr>,
@@ -96,21 +97,21 @@ pub enum ExprKind
     Loop
     {
         count: Box<Expr>,
-        var: Option<Rc<String>>,
+        var: Option<SymbolId>,
         var_slot: Option<usize>,
         body: Box<Expr>,
     },
 
     FunctionDef
     {
-        name: Rc<String>,
-        params: Vec<(Rc<String>, bool)>,
+        name: SymbolId,
+        params: Vec<(SymbolId, bool)>,
         body: Box<Expr>,
         slots: Option<Rc<Vec<Rc<String>>>>,
     },
     AnonymousFunction
     {
-        params: Vec<(Rc<String>, bool)>,
+        params: Vec<(SymbolId, bool)>,
         body: Box<Expr>,
         slots: Option<Rc<Vec<Rc<String>>>>,
     },

@@ -46,7 +46,7 @@ fn main() -> rustyline::Result<()>
     program_map.insert(intern::intern("args"), args_val);
     program_map.insert(intern::intern("env"), env_val);
 
-    interpreter.define_global(intern::intern("program"), value::Value::Map(Rc::new(RefCell::new(program_map))));
+    interpreter.define_global(intern::intern_symbol("program"), value::Value::Map(Rc::new(RefCell::new(program_map))));
 
     if args.len() > 1
     {

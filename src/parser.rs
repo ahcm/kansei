@@ -205,7 +205,7 @@ impl Parser
                                 false
                             };
                             match &self.current_token.token {
-                                Token::Identifier(p) => params.push((intern::intern_owned(p.clone()), is_ref)),
+                                Token::Identifier(p) => params.push((intern::intern_symbol_owned(p.clone()), is_ref)),
                                 _ => panic!("Expected param name at line {}", self.current_token.line),
                             }
                             self.eat();
@@ -274,11 +274,12 @@ impl Parser
             }
             Token::Identifier(name) =>
             {
-                let name = intern::intern_owned(name);
+                let name = intern::intern_symbol_owned(name);
                 self.eat();
 
                 // Legacy built-in support
-                if name.as_str() == "puts" || name.as_str() == "print" || name.as_str() == "write_file" || name.as_str() == "read_file" || name.as_str() == "len"
+                let name_str = intern::symbol_name(name);
+                if name_str.as_str() == "puts" || name_str.as_str() == "print" || name_str.as_str() == "write_file" || name_str.as_str() == "read_file" || name_str.as_str() == "len"
                 {
                     let mut args = Vec::new();
                     args.push(self.parse_expression());
@@ -361,7 +362,7 @@ impl Parser
                 self.eat();
                 match &self.current_token.token {
                     Token::Identifier(name) => {
-                        let n = intern::intern_owned(name.clone());
+                        let n = intern::intern_symbol_owned(name.clone());
                         self.eat();
                         self.make_expr(ExprKind::Reference(n), line)
                     },
@@ -435,7 +436,7 @@ impl Parser
         self.eat(); // eat 'fn'
 
         let name = if let Token::Identifier(n) = &self.current_token.token {
-            let name = intern::intern_owned(n.clone());
+            let name = intern::intern_symbol_owned(n.clone());
             self.eat();
             Some(name)
         } else {
@@ -457,7 +458,7 @@ impl Parser
 
                 match &self.current_token.token
                 {
-                    Token::Identifier(arg) => params.push((intern::intern_owned(arg.clone()), is_ref)),
+                    Token::Identifier(arg) => params.push((intern::intern_symbol_owned(arg.clone()), is_ref)),
                     _ => panic!("Expected parameter name at line {}", self.current_token.line),
                 }
                 self.eat();
@@ -550,7 +551,7 @@ impl Parser
 
         // Expect variable name
         let var_name = match &self.current_token.token {
-            Token::Identifier(name) => intern::intern_owned(name.clone()),
+            Token::Identifier(name) => intern::intern_symbol_owned(name.clone()),
             _ => panic!("Expected identifier after 'for' at line {}", self.current_token.line),
         };
         self.eat();
@@ -580,7 +581,7 @@ impl Parser
         let var = if self.current_token.token == Token::Pipe {
             self.eat(); // |
             let name = match &self.current_token.token {
-                Token::Identifier(n) => intern::intern_owned(n.clone()),
+                Token::Identifier(n) => intern::intern_symbol_owned(n.clone()),
                 _ => panic!("Expected loop variable name at line {}", self.current_token.line),
             };
             self.eat();
@@ -639,7 +640,7 @@ impl Parser
                     false
                 };
                 match &self.current_token.token {
-                    Token::Identifier(p) => params.push((intern::intern_owned(p.clone()), is_ref)),
+                    Token::Identifier(p) => params.push((intern::intern_symbol_owned(p.clone()), is_ref)),
                     _ => panic!("Expected param name at line {}", self.current_token.line),
                 }
                 self.eat();

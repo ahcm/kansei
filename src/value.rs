@@ -1,4 +1,5 @@
 use crate::ast::Expr;
+use crate::intern::SymbolId;
 use rustc_hash::FxHashMap;
 use std::fmt;
 use std::cell::RefCell;
@@ -8,7 +9,7 @@ use smallvec::SmallVec;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Environment {
-    pub values: FxHashMap<Rc<String>, Value>,
+    pub values: FxHashMap<SymbolId, Value>,
     pub slots: SmallVec<[Value; 8]>,
     pub parent: Option<Rc<RefCell<Environment>>>,
     pub is_partial: bool, // If true, allow full recursive lookup (used for currying/params)
@@ -26,8 +27,8 @@ impl Environment {
         self.is_partial = is_partial;
     }
 
-    pub fn get(&self, name: &Rc<String>) -> Option<Value> {
-        if let Some(v) = self.values.get(name) {
+    pub fn get(&self, name: SymbolId) -> Option<Value> {
+        if let Some(v) = self.values.get(&name) {
              match v {
                  Value::Reference(r) => Some(r.borrow().clone()),
                  _ => Some(v.clone()),
@@ -44,8 +45,8 @@ impl Environment {
         }
     }
 
-    pub fn get_recursive(&self, name: &Rc<String>) -> Option<Value> {
-        if let Some(v) = self.values.get(name) {
+    pub fn get_recursive(&self, name: SymbolId) -> Option<Value> {
+        if let Some(v) = self.values.get(&name) {
              match v {
                  Value::Function(_) | Value::Reference(_) => {
                      // Dereference if it's a reference
@@ -68,12 +69,12 @@ impl Environment {
         }
     }
 
-    pub fn define(&mut self, name: Rc<String>, val: Value) {
+    pub fn define(&mut self, name: SymbolId, val: Value) {
         self.values.insert(name, val);
     }
 
     // Set variable in current scope. If it's a reference, update referee.
-    pub fn set(&mut self, name: Rc<String>, val: Value) {
+    pub fn set(&mut self, name: SymbolId, val: Value) {
          if let Some(Value::Reference(r)) = self.values.get(&name) {
              *r.borrow_mut() = val;
          } else {
@@ -81,14 +82,14 @@ impl Environment {
          }
     }
 
-    pub fn assign(&mut self, name: Rc<String>, val: Value) {
+    pub fn assign(&mut self, name: SymbolId, val: Value) {
         if self.values.contains_key(&name) {
             self.set(name, val);
             return;
         }
 
         if let Some(parent) = &self.parent {
-            if parent.borrow_mut().update_existing(&name, &val) {
+            if parent.borrow_mut().update_existing(name, &val) {
                 return;
             }
         }
@@ -97,13 +98,13 @@ impl Environment {
         self.define(name, val);
     }
 
-    fn update_existing(&mut self, name: &Rc<String>, val: &Value) -> bool {
-        if self.values.contains_key(name) {
+    fn update_existing(&mut self, name: SymbolId, val: &Value) -> bool {
+        if self.values.contains_key(&name) {
             // Self::set logic inline because of borrowing issues?
-            if let Some(Value::Reference(r)) = self.values.get(name) {
+            if let Some(Value::Reference(r)) = self.values.get(&name) {
                 *r.borrow_mut() = val.clone();
             } else {
-                self.values.insert(name.clone(), val.clone());
+                self.values.insert(name, val.clone());
             }
             return true;
         }
@@ -113,17 +114,17 @@ impl Environment {
         false
     }
 
-    pub fn promote(&mut self, name: &Rc<String>) -> Option<Value> {
-         if self.values.contains_key(name) {
-             let val = self.values.get(name).unwrap().clone();
+    pub fn promote(&mut self, name: SymbolId) -> Option<Value> {
+         if self.values.contains_key(&name) {
+             let val = self.values.get(&name).unwrap().clone();
              if let Value::Reference(_) = val {
                  return Some(val);
              }
              // Promote
-             let r = Rc::new(RefCell::new(val));
-             let new_ref = Value::Reference(r);
-             self.values.insert(name.clone(), new_ref.clone());
-             return Some(new_ref);
+            let r = Rc::new(RefCell::new(val));
+            let new_ref = Value::Reference(r);
+            self.values.insert(name, new_ref.clone());
+            return Some(new_ref);
          }
          
          if let Some(parent) = &self.parent {
@@ -180,7 +181,7 @@ pub enum Builtin {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionData {
-    pub params: Vec<(Rc<String>, bool)>,
+    pub params: Vec<(SymbolId, bool)>,
     pub body: Expr,
     pub declarations: Rc<Vec<Rc<String>>>,
     pub param_offset: usize,
@@ -295,7 +296,10 @@ impl Value
             Value::Nil => "nil".to_string(),
             Value::Function(data) => {
                 let p_str: Vec<String> = data.params.iter()
-                    .map(|(n, r)| if *r { format!("&{}", n.as_str()) } else { n.as_str().to_string() })
+                    .map(|(n, r)| {
+                        let name = crate::intern::symbol_name(*n);
+                        if *r { format!("&{}", name.as_str()) } else { name.as_str().to_string() }
+                    })
                     .collect();
                 format!("<function({})>", p_str.join(", "))
             },
@@ -336,7 +340,10 @@ impl fmt::Display for Value
             Value::Nil => write!(f, "nil"),
             Value::Function(data) => {
                 let p_str: Vec<String> = data.params.iter()
-                    .map(|(n, r)| if *r { format!("&{}", n.as_str()) } else { n.as_str().to_string() })
+                    .map(|(n, r)| {
+                        let name = crate::intern::symbol_name(*n);
+                        if *r { format!("&{}", name.as_str()) } else { name.as_str().to_string() }
+                    })
                     .collect();
                 write!(f, "<function({})>", p_str.join(", "))
             },

@@ -190,6 +190,7 @@ pub enum Value
     String(Rc<String>),
     Boolean(bool),
     Array(Rc<RefCell<Vec<Value>>>),
+    F64Array(Rc<RefCell<Vec<f64>>>),
     Map(Rc<RefCell<FxHashMap<Rc<String>, Value>>>),
     Nil,
     Function(Rc<FunctionData>),
@@ -214,6 +215,7 @@ impl PartialEq for Value {
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Boolean(a), Value::Boolean(b)) => a == b,
             (Value::Array(a), Value::Array(b)) => a == b, // RefCell PartialEq compares inner values
+            (Value::F64Array(a), Value::F64Array(b)) => a == b,
             (Value::Map(a), Value::Map(b)) => {
                 let map_a = a.borrow();
                 let map_b = b.borrow();
@@ -243,6 +245,7 @@ impl fmt::Debug for Value {
             Value::String(s) => write!(f, "String({:?})", s),
             Value::Boolean(b) => write!(f, "Boolean({})", b),
             Value::Array(a) => write!(f, "Array({:?})", a.borrow()),
+            Value::F64Array(a) => write!(f, "F64Array({:?})", a.borrow()),
             Value::Map(m) => write!(f, "Map({:?})", m.borrow()),
             Value::Nil => write!(f, "Nil"),
             Value::Function(_) => write!(f, "Function(...)"),
@@ -265,6 +268,11 @@ impl Value
             Value::Array(arr) =>
             {
                 let elems: Vec<String> = arr.borrow().iter().map(|v| v.inspect()).collect();
+                format!("[{}]", elems.join(", "))
+            }
+            Value::F64Array(arr) =>
+            {
+                let elems: Vec<String> = arr.borrow().iter().map(|v| v.to_string()).collect();
                 format!("[{}]", elems.join(", "))
             }
             Value::Map(map) =>
@@ -301,6 +309,11 @@ impl fmt::Display for Value
             Value::Array(arr) =>
             {
                 let elems: Vec<String> = arr.borrow().iter().map(|v| v.inspect()).collect();
+                write!(f, "[{}]", elems.join(", "))
+            }
+            Value::F64Array(arr) =>
+            {
+                let elems: Vec<String> = arr.borrow().iter().map(|v| v.to_string()).collect();
                 write!(f, "[{}]", elems.join(", "))
             }
             Value::Map(map) =>

@@ -18,11 +18,11 @@ pub struct RuntimeError {
 pub type EvalResult = Result<Value, RuntimeError>;
 
 fn collect_declarations(expr: &Expr, decls: &mut HashSet<Rc<String>>) {
-    match &expr.kind {
-        ExprKind::Assignment { name, .. } => {
-            decls.insert(name.clone());
-        }
-        ExprKind::FunctionDef { name, .. } => {
+        match &expr.kind {
+            ExprKind::Assignment { name, .. } => {
+                decls.insert(name.clone());
+            }
+            ExprKind::FunctionDef { name, .. } => {
             decls.insert(name.clone());
         }
         ExprKind::AnonymousFunction { .. } => {
@@ -43,9 +43,9 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<Rc<String>>) {
                 collect_declarations(else_expr, decls);
             }
         }
-        ExprKind::While { body, .. } => {
-            collect_declarations(body, decls);
-        }
+            ExprKind::While { body, .. } => {
+                collect_declarations(body, decls);
+            }
         ExprKind::For { var, iterable, body, .. } => {
             decls.insert(var.clone());
             collect_declarations(iterable, decls);
@@ -518,6 +518,19 @@ fn execute_instructions(
                             last = execute_instructions(interpreter, body, const_pool, slots)?;
                         }
                     }
+                    Value::F64Array(arr) => {
+                        let len = arr.borrow().len();
+                        for idx in 0..len {
+                            let item = {
+                                let vec = arr.borrow();
+                                Value::Float(vec[idx])
+                            };
+                            if let Some(slot) = slots.get_mut(*var_slot) {
+                                *slot = item;
+                            }
+                            last = execute_instructions(interpreter, body, const_pool, slots)?;
+                        }
+                    }
                     Value::Map(map) => {
                         let map_ref = map.borrow();
                         let mut keys = Vec::with_capacity(map_ref.len());
@@ -538,11 +551,31 @@ fn execute_instructions(
                     return Err(RuntimeError { message: "Invalid array length".to_string(), line: 0 });
                 }
                 let mut elems = Vec::with_capacity(*count);
+                let mut f64_vals: Vec<f64> = Vec::new();
+                let mut all_f64 = true;
                 for _ in 0..*count {
-                    elems.push(stack.pop().unwrap());
+                    let v = stack.pop().unwrap();
+                    if all_f64 {
+                        match v {
+                            Value::Float(f) => f64_vals.push(f),
+                            Value::Integer(i) => f64_vals.push(i as f64),
+                            _ => {
+                                all_f64 = false;
+                                elems.extend(f64_vals.drain(..).map(Value::Float));
+                                elems.push(v);
+                            }
+                        }
+                    } else {
+                        elems.push(v);
+                    }
                 }
-                elems.reverse();
-                stack.push(Value::Array(Rc::new(RefCell::new(elems))));
+                if all_f64 {
+                    f64_vals.reverse();
+                    stack.push(Value::F64Array(Rc::new(RefCell::new(f64_vals))));
+                } else {
+                    elems.reverse();
+                    stack.push(Value::Array(Rc::new(RefCell::new(elems))));
+                }
             }
             Instruction::MakeMap(count) => {
                 let pair_count = count.saturating_mul(2);
@@ -589,6 +622,19 @@ fn execute_instructions(
                             return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
                         }
                     }
+                    Value::F64Array(arr) => {
+                        if let Value::Integer(idx) = index_val {
+                            let i = idx as usize;
+                            let vec = arr.borrow();
+                            if idx >= 0 && i < vec.len() {
+                                Value::Float(vec[i])
+                            } else {
+                                Value::Nil
+                            }
+                        } else {
+                            return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
+                        }
+                    }
                     Value::Map(map) => {
                         let key = match index_val {
                              Value::String(s) => s,
@@ -627,6 +673,32 @@ fn execute_instructions(
                             return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
                         }
                     }
+                    Value::F64Array(arr) => {
+                        if let Value::Integer(idx) = index_val {
+                            let mut vec = arr.borrow_mut();
+                            let i = idx as usize;
+                            if idx >= 0 && i < vec.len() {
+                                match value {
+                                    Value::Float(f) => vec[i] = f,
+                                    Value::Integer(int_val) => vec[i] = int_val as f64,
+                                    _ => return Err(RuntimeError {
+                                        message: "F64Array assignment requires a number".to_string(),
+                                        line: 0,
+                                    }),
+                                }
+                            } else {
+                                return Err(RuntimeError {
+                                    message: format!("Array index out of bounds: {}", idx),
+                                    line: 0,
+                                });
+                            }
+                        } else {
+                            return Err(RuntimeError {
+                                message: "Array index must be an integer".to_string(),
+                                line: 0,
+                            });
+                        }
+                    }
                     Value::Map(map) => {
                         let key = match index_val {
                              Value::String(s) => s,
@@ -651,7 +723,9 @@ fn execute_instructions(
                     Value::Integer(i) if i >= 0 => i as usize,
                     _ => return Err(RuntimeError { message: "Array size must be a non-negative integer".to_string(), line: 0 }),
                 };
-                let mut vals = Vec::with_capacity(n);
+                let mut vals: Vec<Value> = Vec::new();
+                let mut f64_vals: Vec<f64> = Vec::new();
+                let mut all_f64 = true;
                 if let Value::Function(data) = gen_val {
                     for i in 0..n {
                         let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, data.declarations.len());
@@ -671,14 +745,42 @@ fn execute_instructions(
                         } else {
                             interpreter.eval(&data.body, &mut new_slots)?
                         };
-                        vals.push(result);
+                        if all_f64 {
+                            match result {
+                                Value::Float(f) => f64_vals.push(f),
+                                Value::Integer(i) => f64_vals.push(i as f64),
+                                _ => {
+                                    all_f64 = false;
+                                    vals.extend(f64_vals.drain(..).map(Value::Float));
+                                    vals.push(result);
+                                }
+                            }
+                        } else {
+                            vals.push(result);
+                        }
                     }
                 } else {
                     for _ in 0..n {
-                        vals.push(gen_val.clone());
+                        if all_f64 {
+                            match gen_val {
+                                Value::Float(f) => f64_vals.push(f),
+                                Value::Integer(i) => f64_vals.push(i as f64),
+                                _ => {
+                                    all_f64 = false;
+                                    vals.extend(f64_vals.drain(..).map(Value::Float));
+                                    vals.push(gen_val.clone());
+                                }
+                            }
+                        } else {
+                            vals.push(gen_val.clone());
+                        }
                     }
                 }
-                stack.push(Value::Array(Rc::new(RefCell::new(vals))));
+                if all_f64 {
+                    stack.push(Value::F64Array(Rc::new(RefCell::new(f64_vals))));
+                } else {
+                    stack.push(Value::Array(Rc::new(RefCell::new(vals))));
+                }
             }
             inst => {
                 let r = stack.pop().unwrap();
@@ -925,6 +1027,7 @@ impl Interpreter {
                 match val {
                     Value::String(s) => Ok(Value::Integer(s.len() as i64)),
                     Value::Array(arr) => Ok(Value::Integer(arr.borrow().len() as i64)),
+                    Value::F64Array(arr) => Ok(Value::Integer(arr.borrow().len() as i64)),
                     Value::Map(map) => Ok(Value::Integer(map.borrow().len() as i64)),
                     _ => Ok(Value::Integer(0)),
                 }
@@ -1132,6 +1235,32 @@ impl Interpreter {
                             });
                         }
                     }
+                    Value::F64Array(arr) => {
+                        if let Value::Integer(idx) = index_val {
+                            let mut vec = arr.borrow_mut();
+                            let i = idx as usize;
+                            if idx >= 0 && i < vec.len() {
+                                match val {
+                                    Value::Float(f) => vec[i] = f,
+                                    Value::Integer(int_val) => vec[i] = int_val as f64,
+                                    _ => return Err(RuntimeError {
+                                        message: "F64Array assignment requires a number".to_string(),
+                                        line,
+                                    }),
+                                }
+                            } else {
+                                return Err(RuntimeError {
+                                    message: format!("Array index out of bounds: {}", idx),
+                                    line,
+                                });
+                            }
+                        } else {
+                            return Err(RuntimeError {
+                                message: "Array index must be an integer".to_string(),
+                                line,
+                            });
+                        }
+                    }
                     Value::Map(map) => {
                         let key = match index_val {
                              Value::String(s) => s,
@@ -1259,10 +1388,29 @@ impl Interpreter {
             }
             ExprKind::Array(elements) => {
                 let mut vals = Vec::new();
+                let mut f64_vals: Vec<f64> = Vec::new();
+                let mut all_f64 = true;
                 for e in elements {
-                    vals.push(self.eval(e, slots)?);
+                    let v = self.eval(e, slots)?;
+                    if all_f64 {
+                        match v {
+                            Value::Float(f) => f64_vals.push(f),
+                            Value::Integer(i) => f64_vals.push(i as f64),
+                            _ => {
+                                all_f64 = false;
+                                vals.extend(f64_vals.drain(..).map(Value::Float));
+                                vals.push(v);
+                            }
+                        }
+                    } else {
+                        vals.push(v);
+                    }
                 }
-                Ok(Value::Array(Rc::new(RefCell::new(vals))))
+                if all_f64 {
+                    Ok(Value::F64Array(Rc::new(RefCell::new(f64_vals))))
+                } else {
+                    Ok(Value::Array(Rc::new(RefCell::new(vals))))
+                }
             }
             ExprKind::ArrayGenerator { generator, size } => {
                 let gen_val = self.eval(generator, slots)?;
@@ -1274,7 +1422,9 @@ impl Interpreter {
                         line,
                     }),
                 };
-                let mut vals = Vec::with_capacity(n);
+                let mut vals: Vec<Value> = Vec::new();
+                let mut f64_vals: Vec<f64> = Vec::new();
+                let mut all_f64 = true;
                 if let Value::Function(data) = gen_val {
                     for i in 0..n {
                         let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, data.declarations.len());
@@ -1295,14 +1445,42 @@ impl Interpreter {
                         } else {
                             self.eval(&data.body, &mut new_slots)?
                         };
-                        vals.push(result);
+                        if all_f64 {
+                            match result {
+                                Value::Float(f) => f64_vals.push(f),
+                                Value::Integer(i) => f64_vals.push(i as f64),
+                                _ => {
+                                    all_f64 = false;
+                                    vals.extend(f64_vals.drain(..).map(Value::Float));
+                                    vals.push(result);
+                                }
+                            }
+                        } else {
+                            vals.push(result);
+                        }
                     }
                 } else {
                     for _ in 0..n {
-                        vals.push(gen_val.clone());
+                        if all_f64 {
+                            match gen_val {
+                                Value::Float(f) => f64_vals.push(f),
+                                Value::Integer(i) => f64_vals.push(i as f64),
+                                _ => {
+                                    all_f64 = false;
+                                    vals.extend(f64_vals.drain(..).map(Value::Float));
+                                    vals.push(gen_val.clone());
+                                }
+                            }
+                        } else {
+                            vals.push(gen_val.clone());
+                        }
                     }
                 }
-                Ok(Value::Array(Rc::new(RefCell::new(vals))))
+                if all_f64 {
+                    Ok(Value::F64Array(Rc::new(RefCell::new(f64_vals))))
+                } else {
+                    Ok(Value::Array(Rc::new(RefCell::new(vals))))
+                }
             }
             ExprKind::Map(entries) => {
                 let mut map = FxHashMap::default();
@@ -1327,6 +1505,22 @@ impl Interpreter {
                             let vec = arr.borrow();
                             if idx >= 0 && i < vec.len() {
                                 Ok(vec[i].clone())
+                            } else {
+                                Ok(Value::Nil)
+                            }
+                        } else {
+                            Err(RuntimeError {
+                                message: "Array index must be an integer".to_string(),
+                                line,
+                            })
+                        }
+                    }
+                    Value::F64Array(arr) => {
+                        if let Value::Integer(idx) = index_val {
+                            let i = idx as usize;
+                            let vec = arr.borrow();
+                            if idx >= 0 && i < vec.len() {
+                                Ok(Value::Float(vec[i]))
                             } else {
                                 Ok(Value::Nil)
                             }
@@ -1377,6 +1571,7 @@ impl Interpreter {
                             return match val {
                                 Value::String(s) => Ok(Value::Integer(s.len() as i64)),
                                 Value::Array(arr) => Ok(Value::Integer(arr.borrow().len() as i64)),
+                                Value::F64Array(arr) => Ok(Value::Integer(arr.borrow().len() as i64)),
                                 Value::Map(map) => Ok(Value::Integer(map.borrow().len() as i64)),
                                 _ => Ok(Value::Integer(0)),
                             };
@@ -1565,6 +1760,18 @@ impl Interpreter {
                             let item = {
                                 let vec = arr.borrow();
                                 vec[idx].clone()
+                            };
+                            self.env.borrow_mut().assign(var.clone(), item);
+                            last_val = self.eval(body, slots)?;
+                        }
+                        Ok(last_val)
+                    }
+                    Value::F64Array(arr) => {
+                        let len = arr.borrow().len();
+                        for idx in 0..len {
+                            let item = {
+                                let vec = arr.borrow();
+                                Value::Float(vec[idx])
                             };
                             self.env.borrow_mut().assign(var.clone(), item);
                             last_val = self.eval(body, slots)?;

@@ -166,6 +166,9 @@ pub enum Instruction {
     Pop,
     JumpIfFalse(usize),
     Jump(usize),
+    CallBuiltin(Builtin, usize),
+    CallValue(usize),
+    ForEach { var_slot: usize, body: Rc<Vec<Instruction>> },
     Add,
     Sub,
     Mul,
@@ -174,6 +177,15 @@ pub enum Instruction {
     Gt,
     Lt,
     // Add more if needed
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Builtin {
+    Puts,
+    Print,
+    Len,
+    ReadFile,
+    WriteFile,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -89,6 +89,7 @@ pub enum ExprKind
     For
     {
         var: Rc<String>,
+        var_slot: Option<usize>,
         iterable: Box<Expr>,
         body: Box<Expr>,
     },

@@ -1,6 +1,6 @@
 use crate::ast::{Closure, Expr, ExprKind, Op};
 use crate::intern;
-use crate::value::{Environment, Instruction, Value};
+use crate::value::{Builtin, Environment, Instruction, Value};
 use rustc_hash::FxHashMap;
 use std::collections::HashSet;
 use std::fs;
@@ -44,6 +44,11 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<Rc<String>>) {
             }
         }
         ExprKind::While { body, .. } => {
+            collect_declarations(body, decls);
+        }
+        ExprKind::For { var, iterable, body, .. } => {
+            decls.insert(var.clone());
+            collect_declarations(iterable, decls);
             collect_declarations(body, decls);
         }
         ExprKind::Array(elements) => {
@@ -192,6 +197,17 @@ fn uses_environment(expr: &Expr) -> bool {
     }
 }
 
+fn builtin_from_name(name: &Rc<String>) -> Option<Builtin> {
+    match name.as_str() {
+        "puts" => Some(Builtin::Puts),
+        "print" => Some(Builtin::Print),
+        "len" => Some(Builtin::Len),
+        "read_file" => Some(Builtin::ReadFile),
+        "write_file" => Some(Builtin::WriteFile),
+        _ => None,
+    }
+}
+
 fn compile_to_instructions(expr: &Expr, code: &mut Vec<Instruction>) -> bool {
     match &expr.kind {
         ExprKind::Integer(i) => code.push(Instruction::LoadConst(Value::Integer(*i))),
@@ -202,6 +218,25 @@ fn compile_to_instructions(expr: &Expr, code: &mut Vec<Instruction>) -> bool {
         ExprKind::Assignment { value, slot: Some(s), .. } => {
             if !compile_to_instructions(value, code) { return false; }
             code.push(Instruction::StoreSlot(*s));
+        }
+        ExprKind::Call { function, args, block, .. } => {
+            if block.is_some() {
+                return false;
+            }
+            if let ExprKind::Identifier { name, .. } = &function.kind {
+                if let Some(builtin) = builtin_from_name(name) {
+                    for arg in args {
+                        if !compile_to_instructions(arg, code) { return false; }
+                    }
+                    code.push(Instruction::CallBuiltin(builtin, args.len()));
+                    return true;
+                }
+            }
+            if !compile_to_instructions(function, code) { return false; }
+            for arg in args {
+                if !compile_to_instructions(arg, code) { return false; }
+            }
+            code.push(Instruction::CallValue(args.len()));
         }
         ExprKind::BinaryOp { left, op, right } => {
             if !compile_to_instructions(left, code) { return false; }
@@ -259,6 +294,12 @@ fn compile_to_instructions(expr: &Expr, code: &mut Vec<Instruction>) -> bool {
             let loop_end = code.len();
             code[jump_if_false_idx] = Instruction::JumpIfFalse(loop_end);
         }
+        ExprKind::For { var_slot: Some(var_slot), iterable, body, .. } => {
+            if !compile_to_instructions(iterable, code) { return false; }
+            let mut body_code = Vec::new();
+            if !compile_to_instructions(body, &mut body_code) { return false; }
+            code.push(Instruction::ForEach { var_slot: *var_slot, body: Rc::new(body_code) });
+        }
         _ => return false,
     }
     true
@@ -303,7 +344,7 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr {
     }
 }
 
-fn execute_instructions(code: &[Instruction], slots: &mut [Value]) -> EvalResult {
+fn execute_instructions(interpreter: &mut Interpreter, code: &[Instruction], slots: &mut [Value]) -> EvalResult {
     let mut stack = Vec::with_capacity(8);
     let mut ip = 0;
     while ip < code.len() {
@@ -331,6 +372,67 @@ fn execute_instructions(code: &[Instruction], slots: &mut [Value]) -> EvalResult
             Instruction::Jump(target) => {
                 ip = *target;
                 continue;
+            }
+            Instruction::CallBuiltin(builtin, argc) => {
+                if *argc > stack.len() {
+                    return Err(RuntimeError { message: "Invalid argument count".to_string(), line: 0 });
+                }
+                let mut args = Vec::with_capacity(*argc);
+                for _ in 0..*argc {
+                    args.push(stack.pop().unwrap());
+                }
+                args.reverse();
+                let result = interpreter.call_builtin(builtin, &args)?;
+                stack.push(result);
+            }
+            Instruction::CallValue(argc) => {
+                if *argc > stack.len() {
+                    return Err(RuntimeError { message: "Invalid argument count".to_string(), line: 0 });
+                }
+                let mut args = smallvec::SmallVec::<[Value; 8]>::with_capacity(*argc);
+                for _ in 0..*argc {
+                    args.push(stack.pop().unwrap());
+                }
+                args.reverse();
+                let func_val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing function value for call".to_string(),
+                    line: 0,
+                })?;
+                let result = interpreter.call_value(func_val, args, 0, None)?;
+                stack.push(result);
+            }
+            Instruction::ForEach { var_slot, body } => {
+                let iter_val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing iterable for for-loop".to_string(),
+                    line: 0,
+                })?;
+                let mut last = Value::Nil;
+                match iter_val {
+                    Value::Array(arr) => {
+                        let len = arr.borrow().len();
+                        for idx in 0..len {
+                            let item = {
+                                let vec = arr.borrow();
+                                vec[idx].clone()
+                            };
+                            if let Some(slot) = slots.get_mut(*var_slot) {
+                                *slot = item;
+                            }
+                            last = execute_instructions(interpreter, body, slots)?;
+                        }
+                    }
+                    Value::Map(map) => {
+                        let keys: Vec<Rc<String>> = map.borrow().keys().cloned().collect();
+                        for key in keys {
+                            if let Some(slot) = slots.get_mut(*var_slot) {
+                                *slot = Value::String(key);
+                            }
+                            last = execute_instructions(interpreter, body, slots)?;
+                        }
+                    }
+                    _ => return Err(RuntimeError { message: "Type is not iterable".to_string(), line: 0 }),
+                }
+                stack.push(last);
             }
             inst => {
                 let r = stack.pop().unwrap();
@@ -449,7 +551,10 @@ fn resolve(expr: &mut Expr, slot_map: &FxHashMap<Rc<String>, usize>) {
             resolve(condition, slot_map);
             resolve(body, slot_map);
         }
-        ExprKind::For { iterable, body, .. } => {
+        ExprKind::For { var, var_slot, iterable, body, .. } => {
+            if let Some(s) = slot_map.get(var) {
+                *var_slot = Some(*s);
+            }
             resolve(iterable, slot_map);
             resolve(body, slot_map);
         }
@@ -532,6 +637,148 @@ impl Interpreter {
 
     pub fn define_global(&mut self, name: Rc<String>, val: Value) {
         self.env.borrow_mut().define(name, val);
+    }
+
+    fn call_builtin(&mut self, builtin: &Builtin, args: &[Value]) -> EvalResult {
+        match builtin {
+            Builtin::Puts => {
+                let mut last = Value::Nil;
+                for arg in args {
+                    println!("{}", arg);
+                    last = arg.clone();
+                }
+                Ok(last)
+            }
+            Builtin::Print => {
+                let mut last = Value::Nil;
+                for arg in args {
+                    print!("{}", arg);
+                    io::stdout().flush().unwrap();
+                    last = arg.clone();
+                }
+                Ok(last)
+            }
+            Builtin::Len => {
+                let val = args.get(0).cloned().unwrap_or(Value::Nil);
+                match val {
+                    Value::String(s) => Ok(Value::Integer(s.len() as i64)),
+                    Value::Array(arr) => Ok(Value::Integer(arr.borrow().len() as i64)),
+                    Value::Map(map) => Ok(Value::Integer(map.borrow().len() as i64)),
+                    _ => Ok(Value::Integer(0)),
+                }
+            }
+            Builtin::ReadFile => {
+                let path = args.get(0).cloned().unwrap_or(Value::Nil).to_string();
+                match fs::read_to_string(&path) {
+                    Ok(content) => Ok(Value::String(intern::intern_owned(content))),
+                    Err(_) => Ok(Value::Nil),
+                }
+            }
+            Builtin::WriteFile => {
+                let path = args.get(0).cloned().unwrap_or(Value::Nil).to_string();
+                let content = args.get(1).cloned().unwrap_or(Value::Nil).to_string();
+                match fs::File::create(&path) {
+                    Ok(mut file) => {
+                        write!(file, "{}", content).unwrap();
+                        Ok(Value::Boolean(true))
+                    }
+                    Err(_) => Ok(Value::Boolean(false)),
+                }
+            }
+        }
+    }
+
+    fn call_value(
+        &mut self,
+        func_val: Value,
+        arg_vals: smallvec::SmallVec<[Value; 8]>,
+        line: usize,
+        block: Option<Closure>,
+    ) -> EvalResult {
+        if let Value::Function(data) = func_val {
+            self.invoke_function(data, arg_vals, line, block)
+        } else {
+            Err(RuntimeError { message: format!("Tried to call a non-function value: {}", func_val), line })
+        }
+    }
+
+    fn invoke_function(
+        &mut self,
+        data: Rc<crate::value::FunctionData>,
+        arg_vals: smallvec::SmallVec<[Value; 8]>,
+        line: usize,
+        block: Option<Closure>,
+    ) -> EvalResult {
+        if arg_vals.len() < data.params.len() {
+            let new_env = self.get_env(Some(data.env.clone()), true);
+            for ((param, _), val) in data.params.iter().zip(arg_vals.iter()) {
+                 new_env.borrow_mut().define(param.clone(), val.clone());
+            }
+            let num_bound = arg_vals.len();
+            let remaining_params = data.params[num_bound..].to_vec();
+            return Ok(Value::Function(Rc::new(crate::value::FunctionData {
+                params: remaining_params,
+                body: data.body.clone(),
+                declarations: data.declarations.clone(),
+                param_offset: data.param_offset + num_bound,
+                is_simple: data.is_simple,
+                uses_env: data.uses_env,
+                code: data.code.clone(),
+                env: new_env,
+            })));
+        } else if arg_vals.len() > data.params.len() {
+             return Err(RuntimeError { message: "Too many arguments".to_string(), line });
+        }
+
+        // FULL CALL
+        if let Some(code) = &data.code {
+            let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, data.declarations.len());
+            for (i, val) in arg_vals.into_iter().enumerate() {
+                new_slots[i + data.param_offset] = val;
+            }
+            return execute_instructions(self, code, &mut new_slots);
+        }
+
+        if data.is_simple {
+            let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, data.declarations.len());
+            for (i, val) in arg_vals.into_iter().enumerate() {
+                new_slots[i + data.param_offset] = val;
+            }
+            if data.uses_env {
+                let original_env = self.env.clone();
+                self.env = data.env.clone();
+                let result = self.eval(&data.body, &mut new_slots)?;
+                self.env = original_env;
+                return Ok(result);
+            }
+            return self.eval(&data.body, &mut new_slots);
+        }
+
+        let block_entry = if let Some(closure) = block {
+            Some((closure, self.env.clone()))
+        } else {
+            None
+        };
+        self.block_stack.push(block_entry);
+
+        let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, data.declarations.len());
+        for (i, val) in arg_vals.into_iter().enumerate() {
+            new_slots[i + data.param_offset] = val;
+        }
+
+        let result = if data.uses_env {
+            let new_env = self.get_env(Some(data.env.clone()), false);
+            let original_env = self.env.clone();
+            self.env = new_env.clone();
+            let result = self.eval(&data.body, &mut new_slots)?;
+            self.env = original_env;
+            self.recycle_env(new_env);
+            result
+        } else {
+            self.eval(&data.body, &mut new_slots)?
+        };
+        self.block_stack.pop();
+        Ok(result)
     }
 
     pub fn eval(&mut self, expr: &Expr, slots: &mut [Value]) -> EvalResult {
@@ -769,7 +1016,7 @@ impl Interpreter {
                         }
                         
                         let result = if let Some(code) = &data.code {
-                            execute_instructions(code, &mut new_slots)?
+                            execute_instructions(self, code, &mut new_slots)?
                         } else if data.uses_env {
                             let new_env = self.get_env(Some(data.env.clone()), false);
                             let original_env = self.env.clone();
@@ -928,76 +1175,7 @@ impl Interpreter {
                         }
                     }
 
-                    if arg_vals.len() < data.params.len() {
-                        let new_env = self.get_env(Some(data.env.clone()), true);
-                        for ((param, _), val) in data.params.iter().zip(arg_vals.iter()) {
-                             new_env.borrow_mut().define(param.clone(), val.clone());
-                        }
-                        let num_bound = arg_vals.len();
-                        let remaining_params = data.params[num_bound..].to_vec();
-                        return Ok(Value::Function(Rc::new(crate::value::FunctionData {
-                            params: remaining_params,
-                            body: data.body.clone(),
-                            declarations: data.declarations.clone(),
-                            param_offset: data.param_offset + num_bound,
-                            is_simple: data.is_simple,
-                            uses_env: data.uses_env,
-                            code: data.code.clone(),
-                            env: new_env,
-                        })));
-                    } else if arg_vals.len() > data.params.len() {
-                         return Err(RuntimeError { message: "Too many arguments".to_string(), line });
-                    }
-
-                    // FULL CALL
-                    if let Some(code) = &data.code {
-                        let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, data.declarations.len());
-                        for (i, val) in arg_vals.into_iter().enumerate() {
-                            new_slots[i + data.param_offset] = val;
-                        }
-                        return execute_instructions(code, &mut new_slots);
-                    }
-
-                    if data.is_simple {
-                        let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, data.declarations.len());
-                        for (i, val) in arg_vals.into_iter().enumerate() {
-                            new_slots[i + data.param_offset] = val;
-                        }
-                        if data.uses_env {
-                            let original_env = self.env.clone();
-                            self.env = data.env.clone();
-                            let result = self.eval(&data.body, &mut new_slots)?;
-                            self.env = original_env;
-                            return Ok(result);
-                        }
-                        return self.eval(&data.body, &mut new_slots);
-                    }
-
-                    let block_entry = if let Some(closure) = block {
-                        Some((closure.clone(), self.env.clone()))
-                    } else {
-                        None
-                    };
-                    self.block_stack.push(block_entry);
-
-                    let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, data.declarations.len());
-                    for (i, val) in arg_vals.into_iter().enumerate() {
-                        new_slots[i + data.param_offset] = val;
-                    }
-
-                    let result = if data.uses_env {
-                        let new_env = self.get_env(Some(data.env.clone()), false);
-                        let original_env = self.env.clone();
-                        self.env = new_env.clone();
-                        let result = self.eval(&data.body, &mut new_slots)?;
-                        self.env = original_env;
-                        self.recycle_env(new_env);
-                        result
-                    } else {
-                        self.eval(&data.body, &mut new_slots)?
-                    };
-                    self.block_stack.pop();
-                    Ok(result)
+                    self.invoke_function(data, arg_vals, line, block.clone())
                 } else {
                     Err(RuntimeError { message: format!("Tried to call a non-function value: {}", func_val), line })
                 }
@@ -1110,7 +1288,7 @@ impl Interpreter {
                 }
                 Ok(last_val)
             }
-            ExprKind::For { var, iterable, body } => {
+            ExprKind::For { var, iterable, body, .. } => {
                 let iter_val = self.eval(iterable, slots)?;
                 let mut last_val = Value::Nil;
                 match iter_val {

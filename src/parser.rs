@@ -563,6 +563,7 @@ impl Parser
 
         self.make_expr(ExprKind::For {
             var: var_name,
+            var_slot: None,
             iterable: Box::new(iterable),
             body: Box::new(body),
         }, line)

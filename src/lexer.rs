@@ -68,24 +68,26 @@ impl Lexer
 
     pub fn next_token(&mut self) -> Span
     {
-        self.skip_whitespace();
+        loop {
+            self.skip_whitespace();
 
-        let start_line = self.line;
+            let start_line = self.line;
 
-        if self.position >= self.input.len()
-        {
-            return Span { token: Token::EOF, line: start_line };
-        }
+            if self.position >= self.input.len()
+            {
+                return Span { token: Token::EOF, line: start_line };
+            }
 
-        let ch = self.input[self.position];
+            let ch = self.input[self.position];
 
-        let token = match ch
-        {
-            '#' =>
+            if ch == '#'
             {
                 self.skip_comment();
-                return self.next_token(); // Recursively call to get the *actual* next token
+                continue;
             }
+
+            let token = match ch
+            {
             '"' => self.read_string('"'), // standard strings
             '`' => self.read_string('`'), // shell commands
             '+' =>
@@ -210,11 +212,12 @@ impl Lexer
             {
                 // Ignore unknown chars for this MVP
                 self.position += 1;
-                return self.next_token();
+                continue;
             }
-        };
-        
-        Span { token, line: start_line }
+            };
+
+            return Span { token, line: start_line };
+        }
     }
 
     fn skip_comment(&mut self)

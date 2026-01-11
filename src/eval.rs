@@ -403,6 +403,13 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<SymbolId>) {
                 collect_declarations(v, decls);
             }
         }
+        ExprKind::FormatString(parts) => {
+            for part in parts {
+                if let crate::ast::FormatPart::Expr(expr) = part {
+                    collect_declarations(expr, decls);
+                }
+            }
+        }
         _ => {}
     }
 }
@@ -513,6 +520,13 @@ fn resolve_functions(expr: &mut Expr) {
             resolve_functions(target);
             resolve_functions(index);
         }
+        ExprKind::FormatString(parts) => {
+            for part in parts {
+                if let crate::ast::FormatPart::Expr(expr) = part {
+                    resolve_functions(expr);
+                }
+            }
+        }
         ExprKind::Use(_) => {}
         ExprKind::Yield(args) => {
             for a in args {
@@ -533,6 +547,13 @@ fn uses_environment(expr: &Expr) -> bool {
         }
         ExprKind::Call { function, args, .. } => uses_environment(function) || args.iter().any(uses_environment),
         ExprKind::Use(_) => true,
+        ExprKind::FormatString(parts) => parts.iter().any(|part| {
+            if let crate::ast::FormatPart::Expr(expr) = part {
+                uses_environment(expr)
+            } else {
+                false
+            }
+        }),
         // Simple functions (is_simple) only have these constructs roughly. 
         // We can be conservative.
         ExprKind::Integer { .. } | ExprKind::Unsigned { .. } | ExprKind::Float { .. } | ExprKind::String(_) | ExprKind::Boolean(_) | ExprKind::Nil => false,
@@ -856,6 +877,9 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
         ExprKind::Use(_) => {
             return false;
         }
+        ExprKind::FormatString(_) => {
+            return false;
+        }
         ExprKind::BinaryOp { left, op, right } => {
             let mut handled = false;
             if *op == Op::Multiply {
@@ -1163,6 +1187,15 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr {
             kind: ExprKind::Block(stmts.iter().map(|s| substitute(s, args)).collect()),
             line: expr.line,
         },
+        ExprKind::FormatString(parts) => Expr {
+            kind: ExprKind::FormatString(parts.iter().map(|part| {
+                match part {
+                    crate::ast::FormatPart::Literal(s) => crate::ast::FormatPart::Literal(s.clone()),
+                    crate::ast::FormatPart::Expr(e) => crate::ast::FormatPart::Expr(Box::new(substitute(e, args))),
+                }
+            }).collect()),
+            line: expr.line,
+        },
         // Literals
         _ => expr.clone(),
     }
@@ -1186,6 +1219,13 @@ fn expr_size(expr: &Expr) -> usize {
         ExprKind::Index { target, index } => 1 + expr_size(target) + expr_size(index),
         ExprKind::Yield(args) => 1 + args.iter().map(expr_size).sum::<usize>(),
         ExprKind::Block(stmts) => 1 + stmts.iter().map(expr_size).sum::<usize>(),
+        ExprKind::FormatString(parts) => 1 + parts.iter().map(|part| {
+            if let crate::ast::FormatPart::Expr(e) = part {
+                expr_size(e)
+            } else {
+                1
+            }
+        }).sum::<usize>(),
         _ => 1,
     }
 }
@@ -1196,6 +1236,13 @@ fn is_inline_safe_arg(expr: &Expr) -> bool {
         ExprKind::Identifier { .. } => true,
         ExprKind::BinaryOp { left, right, .. } => is_inline_safe_arg(left) && is_inline_safe_arg(right),
         ExprKind::Index { target, index } => is_inline_safe_arg(target) && is_inline_safe_arg(index),
+        ExprKind::FormatString(parts) => parts.iter().all(|part| {
+            if let crate::ast::FormatPart::Expr(e) = part {
+                is_inline_safe_arg(e)
+            } else {
+                true
+            }
+        }),
         _ => false,
     }
 }
@@ -1918,6 +1965,13 @@ fn is_simple(expr: &Expr) -> bool {
         ExprKind::Yield(_) | ExprKind::FunctionDef { .. } | ExprKind::AnonymousFunction { .. } | ExprKind::Use(_) => false,
         ExprKind::Assignment { slot: None, .. } => false,
         ExprKind::Block(stmts) => stmts.iter().all(is_simple),
+        ExprKind::FormatString(parts) => parts.iter().all(|part| {
+            if let crate::ast::FormatPart::Expr(expr) = part {
+                is_simple(expr)
+            } else {
+                true
+            }
+        }),
         ExprKind::If { condition, then_branch, else_branch } => {
             is_simple(condition) && is_simple(then_branch) && else_branch.as_ref().map_or(true, |eb| is_simple(eb))
         }
@@ -2019,6 +2073,13 @@ fn resolve(expr: &mut Expr, slot_map: &FxHashMap<SymbolId, usize>) {
             resolve(target, slot_map);
             resolve(index, slot_map);
             resolve(value, slot_map);
+        }
+        ExprKind::FormatString(parts) => {
+            for part in parts {
+                if let crate::ast::FormatPart::Expr(expr) = part {
+                    resolve(expr, slot_map);
+                }
+            }
         }
         ExprKind::Use(_) => {}
         ExprKind::Yield(args) => {
@@ -2328,6 +2389,19 @@ impl Interpreter {
             ExprKind::Use(path) => {
                 self.import_path(path, line)?;
                 Ok(Value::Nil)
+            }
+            ExprKind::FormatString(parts) => {
+                let mut out = String::new();
+                for part in parts {
+                    match part {
+                        crate::ast::FormatPart::Literal(s) => out.push_str(s.as_str()),
+                        crate::ast::FormatPart::Expr(expr) => {
+                            let val = self.eval(expr, slots)?;
+                            out.push_str(&val.to_string());
+                        }
+                    }
+                }
+                Ok(Value::String(intern::intern_owned(out)))
             }
             ExprKind::Shell(cmd_str) => {
                 let output = if cfg!(target_os = "windows") {

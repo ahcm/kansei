@@ -7,6 +7,7 @@ pub enum Token
     Unsigned { value: u128, kind: IntKind },
     Float { value: f64, kind: FloatKind },
     Identifier(String),
+    FormatString(String),
     Plus,
     Minus,
     Star,
@@ -153,7 +154,18 @@ impl Lexer
                 Token::Greater
             }
             '0'..='9' => self.read_number(),
-            'a'..='z' | 'A'..='Z' | '_' => self.read_identifier(),
+            'a'..='z' | 'A'..='Z' | '_' => {
+                if ch == 'f' && self.peek() == '"' {
+                    self.position += 1; // consume 'f'
+                    let token = self.read_string('"');
+                    match token {
+                        Token::StringLiteral(s) => Token::FormatString(s),
+                        _ => token,
+                    }
+                } else {
+                    self.read_identifier()
+                }
+            }
             ',' =>
             {
                 self.position += 1;

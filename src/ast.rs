@@ -154,4 +154,12 @@ pub enum ExprKind
 
     // A block of code (so an 'if' can run multiple lines)
     Block(Vec<Expr>),
+
+    FormatString(Vec<FormatPart>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FormatPart {
+    Literal(Rc<String>),
+    Expr(Box<Expr>),
 }

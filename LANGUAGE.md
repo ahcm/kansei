@@ -136,6 +136,19 @@ while x > 0
 end
 ```
 
+### Loop
+`loop` repeats a fixed number of times. You can optionally name the index variable.
+
+```ruby
+loop 3
+  puts "hi"
+end
+
+loop 10 |i|
+  puts i
+end
+```
+
 ### For Loop
 Iterates over Arrays (values) or Maps (keys).
 ```ruby
@@ -241,6 +254,17 @@ sum = 0
 - `len(obj)`: Return length of String, Array, or Map.
 - `read_file(path)`: Read file content as string.
 - `write_file(path, content)`: Write string to file.
+
+## Format Strings
+Prefix a string with `f` to interpolate expressions, similar to Rust formatting.
+
+```ruby
+name = "Ada"
+count = 3
+msg = f"{name} has {count} items"
+```
+
+Use `{{` and `}}` to include literal braces.
 
 ## Shell Commands
 Backticks execute shell commands and capture stdout (trimmed).

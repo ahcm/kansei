@@ -1,4 +1,4 @@
-use crate::ast::{Closure, Expr, ExprKind, Op};
+use crate::ast::{Closure, Expr, ExprKind, FormatPart, Op};
 use crate::intern;
 use crate::lexer::{Lexer, Span, Token};
 use std::rc::Rc;
@@ -261,6 +261,11 @@ impl Parser
             {
                 self.eat();
                 self.make_expr(ExprKind::String(intern::intern_owned(s)), line)
+            }
+            Token::FormatString(s) =>
+            {
+                self.eat();
+                self.parse_format_string(s, line)
             }
             Token::CommandLiteral(c) =>
             {
@@ -688,5 +693,57 @@ impl Parser
         let body = self.parse_block();
         self.expect(Token::RightBrace);
         self.make_expr(ExprKind::AnonymousFunction { params, body: Box::new(body), slots: None }, line)
+    }
+
+    fn parse_format_string(&mut self, content: String, line: usize) -> Expr {
+        let mut parts: Vec<FormatPart> = Vec::new();
+        let mut literal = String::new();
+        let chars: Vec<char> = content.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            let ch = chars[i];
+            if ch == '{' {
+                if i + 1 < chars.len() && chars[i + 1] == '{' {
+                    literal.push('{');
+                    i += 2;
+                    continue;
+                }
+                if !literal.is_empty() {
+                    parts.push(FormatPart::Literal(intern::intern_owned(literal.clone())));
+                    literal.clear();
+                }
+                let start = i + 1;
+                let mut end = start;
+                while end < chars.len() && chars[end] != '}' {
+                    end += 1;
+                }
+                if end >= chars.len() {
+                    panic!("Unclosed format string expression at line {}", line);
+                }
+                let expr_str: String = chars[start..end].iter().collect();
+                if expr_str.trim().is_empty() {
+                    panic!("Empty format string expression at line {}", line);
+                }
+                let lexer = Lexer::new(&expr_str);
+                let mut parser = Parser::new(lexer);
+                let expr = parser.parse();
+                parts.push(FormatPart::Expr(Box::new(expr)));
+                i = end + 1;
+            } else if ch == '}' {
+                if i + 1 < chars.len() && chars[i + 1] == '}' {
+                    literal.push('}');
+                    i += 2;
+                } else {
+                    panic!("Unmatched '}}' in format string at line {}", line);
+                }
+            } else {
+                literal.push(ch);
+                i += 1;
+            }
+        }
+        if !literal.is_empty() {
+            parts.push(FormatPart::Literal(intern::intern_owned(literal)));
+        }
+        self.make_expr(ExprKind::FormatString(parts), line)
     }
 }

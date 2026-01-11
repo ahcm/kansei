@@ -292,11 +292,7 @@ fn match_for_range(condition: &Expr, body: &Expr, consts: &mut Vec<Value>) -> Op
     Some((index_slot, end, body_expr))
 }
 
-fn match_dot_range_body(body: &Expr, index_slot: usize) -> Option<(usize, usize, usize)> {
-    let stmt = match &body.kind {
-        ExprKind::Block(stmts) if stmts.len() == 1 => &stmts[0],
-        _ => body,
-    };
+fn match_dot_assign(stmt: &Expr, index_slot: usize) -> Option<(usize, usize, usize)> {
     let (acc_slot, value) = match &stmt.kind {
         ExprKind::Assignment { slot: Some(s), value, .. } => (*s, value.as_ref()),
         _ => return None,
@@ -325,6 +321,27 @@ fn match_dot_range_body(body: &Expr, index_slot: usize) -> Option<(usize, usize,
         _ => return None,
     };
     Some((acc_slot, a_slot, b_slot))
+}
+
+fn match_dot_range_body(body: &Expr, index_slot: usize) -> Option<(usize, usize, usize)> {
+    let stmt = match &body.kind {
+        ExprKind::Block(stmts) if stmts.len() == 1 => &stmts[0],
+        _ => body,
+    };
+    match_dot_assign(stmt, index_slot)
+}
+
+fn match_dot2_range_body(body: &Expr, index_slot: usize) -> Option<(usize, usize, usize, usize, usize, usize)> {
+    let stmts = match &body.kind {
+        ExprKind::Block(stmts) if stmts.len() == 2 => stmts,
+        _ => return None,
+    };
+    let (acc1, a1, b1) = match_dot_assign(&stmts[0], index_slot)?;
+    let (acc2, a2, b2) = match_dot_assign(&stmts[1], index_slot)?;
+    if acc1 == acc2 {
+        return None;
+    }
+    Some((acc1, a1, b1, acc2, a2, b2))
 }
 
 fn match_range_end(expr: &Expr, consts: &mut Vec<Value>) -> Option<RangeEnd> {
@@ -589,13 +606,28 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
         ExprKind::While { condition, body } => {
             if !want_value {
                 if let Some((index_slot, end, body_expr)) = match_for_range(condition, body, consts) {
-                    if let Some((acc_slot, a_slot, b_slot)) = match_dot_range_body(&body_expr, index_slot) {
+                    if let Some((acc1, a1, b1, acc2, a2, b2)) = match_dot2_range_body(&body_expr, index_slot) {
+                        code.push(Instruction::F64Dot2Range {
+                            acc1_slot: acc1,
+                            a1_slot: a1,
+                            b1_slot: b1,
+                            acc2_slot: acc2,
+                            a2_slot: a2,
+                            b2_slot: b2,
+                            index_slot,
+                            end,
+                        });
+                        code.push(Instruction::Pop);
+                        return true;
+                    } else if let Some((acc_slot, a_slot, b_slot)) = match_dot_range_body(&body_expr, index_slot) {
                         code.push(Instruction::F64DotRange { acc_slot, a_slot, b_slot, index_slot, end });
+                        code.push(Instruction::Pop);
                         return true;
                     } else {
                         let mut body_code = Vec::new();
                         if !compile_expr(&body_expr, &mut body_code, consts, true) { return false; }
                         code.push(Instruction::ForRange { index_slot, end, body: Rc::new(body_code) });
+                        code.push(Instruction::Pop);
                         return true;
                     }
                 }
@@ -1301,6 +1333,97 @@ fn execute_instructions(
                     *slot = Value::Integer(end_idx as i64);
                 }
                 stack.push(Value::Float(total));
+            }
+            Instruction::F64Dot2Range {
+                acc1_slot,
+                a1_slot,
+                b1_slot,
+                acc2_slot,
+                a2_slot,
+                b2_slot,
+                index_slot,
+                end,
+            } => {
+                let start = match slots.get(*index_slot) {
+                    Some(Value::Integer(i)) => *i as usize,
+                    Some(Value::Float(f)) => *f as usize,
+                    _ => 0,
+                };
+                let end_val = match end {
+                    RangeEnd::Slot(s) => slots.get(*s).cloned().unwrap_or(Value::Nil),
+                    RangeEnd::Const(idx) => const_pool.get(*idx).cloned().unwrap_or(Value::Nil),
+                };
+                let end_idx = match end_val {
+                    Value::Integer(i) if i >= 0 => i as usize,
+                    Value::Float(f) if f >= 0.0 => f as usize,
+                    _ => return Err(RuntimeError { message: "Range end must be a non-negative number".to_string(), line: 0 }),
+                };
+                let acc1 = match slots.get(*acc1_slot) {
+                    Some(Value::Float(f)) => *f,
+                    Some(Value::Integer(i)) => *i as f64,
+                    _ => 0.0,
+                };
+                let acc2 = match slots.get(*acc2_slot) {
+                    Some(Value::Float(f)) => *f,
+                    Some(Value::Integer(i)) => *i as f64,
+                    _ => 0.0,
+                };
+                let a1 = match slots.get(*a1_slot) {
+                    Some(Value::F64Array(arr)) => arr.clone(),
+                    _ => return Err(RuntimeError { message: "F64Dot2Range requires F64Array a1".to_string(), line: 0 }),
+                };
+                let b1 = match slots.get(*b1_slot) {
+                    Some(Value::F64Array(arr)) => arr.clone(),
+                    _ => return Err(RuntimeError { message: "F64Dot2Range requires F64Array b1".to_string(), line: 0 }),
+                };
+                let a2 = match slots.get(*a2_slot) {
+                    Some(Value::F64Array(arr)) => arr.clone(),
+                    _ => return Err(RuntimeError { message: "F64Dot2Range requires F64Array a2".to_string(), line: 0 }),
+                };
+                let b2 = match slots.get(*b2_slot) {
+                    Some(Value::F64Array(arr)) => arr.clone(),
+                    _ => return Err(RuntimeError { message: "F64Dot2Range requires F64Array b2".to_string(), line: 0 }),
+                };
+                let a1_vec = a1.borrow();
+                let b1_vec = b1.borrow();
+                let a2_vec = a2.borrow();
+                let b2_vec = b2.borrow();
+                if end_idx > a1_vec.len()
+                    || end_idx > b1_vec.len()
+                    || end_idx > a2_vec.len()
+                    || end_idx > b2_vec.len()
+                {
+                    return Err(RuntimeError { message: "F64Dot2Range index out of bounds".to_string(), line: 0 });
+                }
+                let mut i = start;
+                let mut sum1 = Simd::<f64, 4>::splat(0.0);
+                let mut sum2 = Simd::<f64, 4>::splat(0.0);
+                while i + 4 <= end_idx {
+                    let a1v = Simd::from_slice(&a1_vec[i..i + 4]);
+                    let b1v = Simd::from_slice(&b1_vec[i..i + 4]);
+                    let a2v = Simd::from_slice(&a2_vec[i..i + 4]);
+                    let b2v = Simd::from_slice(&b2_vec[i..i + 4]);
+                    sum1 += a1v * b1v;
+                    sum2 += a2v * b2v;
+                    i += 4;
+                }
+                let mut total1 = acc1 + sum1.reduce_sum();
+                let mut total2 = acc2 + sum2.reduce_sum();
+                while i < end_idx {
+                    total1 += a1_vec[i] * b1_vec[i];
+                    total2 += a2_vec[i] * b2_vec[i];
+                    i += 1;
+                }
+                if let Some(slot) = slots.get_mut(*acc1_slot) {
+                    *slot = Value::Float(total1);
+                }
+                if let Some(slot) = slots.get_mut(*acc2_slot) {
+                    *slot = Value::Float(total2);
+                }
+                if let Some(slot) = slots.get_mut(*index_slot) {
+                    *slot = Value::Integer(end_idx as i64);
+                }
+                stack.push(Value::Float(total2));
             }
             inst => {
                 let r = stack.pop().unwrap();

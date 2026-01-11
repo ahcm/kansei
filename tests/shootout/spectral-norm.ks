@@ -42,7 +42,8 @@ fn main(n)
 
    use std::Float64
    Float64 = std::Float64
-   puts Float64.sqrt(vBv/vv)    
+   res = Float64.sqrt(vBv/vv)
+   puts f"{res:.9}" 
 end  
 
 n = program.args[0]

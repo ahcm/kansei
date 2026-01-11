@@ -6,6 +6,7 @@ mod intern;
 mod lexer;
 mod parser;
 mod value;
+mod wasm;
 
 use directories::ProjectDirs;
 use rustyline::DefaultEditor;

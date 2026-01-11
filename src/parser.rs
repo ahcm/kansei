@@ -315,6 +315,7 @@ impl Parser
             Token::For => self.parse_for(),
             Token::Loop => self.parse_loop(),
             Token::Use => self.parse_use(),
+            Token::Load => self.parse_load(),
             Token::LeftBracket => self.parse_array(),
             Token::LeftBrace => {
                 let mut temp_lexer = self.lexer.clone();
@@ -466,6 +467,33 @@ impl Parser
         }
 
         self.make_expr(ExprKind::Use(path), line)
+    }
+
+    fn parse_load(&mut self) -> Expr {
+        let line = self.current_token.line;
+        self.eat(); // eat 'load'
+
+        let mut path = Vec::new();
+        match &self.current_token.token {
+            Token::Identifier(n) => {
+                path.push(intern::intern_symbol_owned(n.clone()));
+                self.eat();
+            }
+            _ => panic!("Expected module name after load at line {}", self.current_token.line),
+        }
+
+        while self.current_token.token == Token::ColonColon {
+            self.eat(); // ::
+            match &self.current_token.token {
+                Token::Identifier(n) => {
+                    path.push(intern::intern_symbol_owned(n.clone()));
+                    self.eat();
+                }
+                _ => panic!("Expected module name after :: at line {}", self.current_token.line),
+            }
+        }
+
+        self.make_expr(ExprKind::Load(path), line)
     }
 
     fn parse_fn(&mut self) -> Expr

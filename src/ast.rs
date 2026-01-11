@@ -156,6 +156,7 @@ pub enum ExprKind
     Block(Vec<Expr>),
 
     FormatString(Vec<FormatPart>),
+    Load(Vec<SymbolId>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

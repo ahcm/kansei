@@ -268,6 +268,21 @@ short_pi = f"{pi:.2}"
 
 Use `{{` and `}}` to include literal braces. Precision formatting uses `{expr:.N}`.
 
+## WASM Modules
+Use `load wasm::name` to load a WebAssembly module from `wasm/name.wasm`. The module is exposed under the `wasm` namespace.
+
+```ruby
+load wasm::json
+json = wasm.json
+result = json.parse(f"{1 + 2}")
+```
+
+### WASM ABI
+- Export a `memory` and an `alloc(size: i32) -> i32`. `dealloc(ptr: i32, len: i32)` is optional.
+- String arguments are passed as `(i32 ptr, i32 len)` in UTF-8.
+- Numeric arguments map to `i32/i64/f32/f64`.
+- For string returns, export functions ending with `_str` and return an `i64` where the low 32 bits are `ptr` and high 32 bits are `len` (both `u32`). The host reads from `memory`.
+
 ## Shell Commands
 Backticks execute shell commands and capture stdout (trimmed).
 ```ruby

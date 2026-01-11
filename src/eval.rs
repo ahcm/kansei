@@ -1115,8 +1115,12 @@ impl Interpreter {
                 let mut last_val = Value::Nil;
                 match iter_val {
                     Value::Array(arr) => {
-                        let vec = arr.borrow().clone();
-                        for item in vec {
+                        let len = arr.borrow().len();
+                        for idx in 0..len {
+                            let item = {
+                                let vec = arr.borrow();
+                                vec[idx].clone()
+                            };
                             self.env.borrow_mut().assign(var.clone(), item);
                             last_val = self.eval(body, slots)?;
                         }

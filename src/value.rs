@@ -9,7 +9,7 @@ use smallvec::SmallVec;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Environment {
-    pub values: FxHashMap<SymbolId, Value>,
+    pub values: Vec<Value>,
     pub slots: SmallVec<[Value; 8]>,
     pub parent: Option<Rc<RefCell<Environment>>>,
     pub is_partial: bool, // If true, allow full recursive lookup (used for currying/params)
@@ -17,7 +17,7 @@ pub struct Environment {
 
 impl Environment {
     pub fn new(parent: Option<Rc<RefCell<Environment>>>) -> Self {
-        Self { values: FxHashMap::default(), slots: SmallVec::new(), parent, is_partial: false }
+        Self { values: Vec::new(), slots: SmallVec::new(), parent, is_partial: false }
     }
 
     pub fn reset(&mut self, parent: Option<Rc<RefCell<Environment>>>, is_partial: bool) {
@@ -28,7 +28,9 @@ impl Environment {
     }
 
     pub fn get(&self, name: SymbolId) -> Option<Value> {
-        if let Some(v) = self.values.get(&name) {
+        let idx = name as usize;
+        if idx < self.values.len() {
+            let v = &self.values[idx];
              match v {
                  Value::Reference(r) => Some(r.borrow().clone()),
                  _ => Some(v.clone()),
@@ -46,7 +48,9 @@ impl Environment {
     }
 
     pub fn get_recursive(&self, name: SymbolId) -> Option<Value> {
-        if let Some(v) = self.values.get(&name) {
+        let idx = name as usize;
+        if idx < self.values.len() {
+            let v = &self.values[idx];
              match v {
                  Value::Function(_) | Value::Reference(_) => {
                      // Dereference if it's a reference
@@ -70,20 +74,29 @@ impl Environment {
     }
 
     pub fn define(&mut self, name: SymbolId, val: Value) {
-        self.values.insert(name, val);
+        let idx = name as usize;
+        if idx >= self.values.len() {
+            self.values.resize(idx + 1, Value::Uninitialized);
+        }
+        self.values[idx] = val;
     }
 
     // Set variable in current scope. If it's a reference, update referee.
     pub fn set(&mut self, name: SymbolId, val: Value) {
-         if let Some(Value::Reference(r)) = self.values.get(&name) {
+         let idx = name as usize;
+         if idx >= self.values.len() {
+             self.values.resize(idx + 1, Value::Uninitialized);
+         }
+         if let Some(Value::Reference(r)) = self.values.get(idx) {
              *r.borrow_mut() = val;
          } else {
-             self.values.insert(name, val);
+             self.values[idx] = val;
          }
     }
 
     pub fn assign(&mut self, name: SymbolId, val: Value) {
-        if self.values.contains_key(&name) {
+        let idx = name as usize;
+        if idx < self.values.len() {
             self.set(name, val);
             return;
         }
@@ -99,12 +112,13 @@ impl Environment {
     }
 
     fn update_existing(&mut self, name: SymbolId, val: &Value) -> bool {
-        if self.values.contains_key(&name) {
+        let idx = name as usize;
+        if idx < self.values.len() {
             // Self::set logic inline because of borrowing issues?
-            if let Some(Value::Reference(r)) = self.values.get(&name) {
+            if let Some(Value::Reference(r)) = self.values.get(idx) {
                 *r.borrow_mut() = val.clone();
             } else {
-                self.values.insert(name, val.clone());
+                self.values[idx] = val.clone();
             }
             return true;
         }
@@ -115,20 +129,21 @@ impl Environment {
     }
 
     pub fn promote(&mut self, name: SymbolId) -> Option<Value> {
-         if self.values.contains_key(&name) {
-             let val = self.values.get(&name).unwrap().clone();
+         let idx = name as usize;
+         if idx < self.values.len() {
+             let val = self.values[idx].clone();
              if let Value::Reference(_) = val {
                  return Some(val);
              }
              // Promote
-            let r = Rc::new(RefCell::new(val));
-            let new_ref = Value::Reference(r);
-            self.values.insert(name, new_ref.clone());
-            return Some(new_ref);
+             let r = Rc::new(RefCell::new(val));
+             let new_ref = Value::Reference(r);
+             self.values[idx] = new_ref.clone();
+             return Some(new_ref);
          }
          
          if let Some(parent) = &self.parent {
-             return parent.borrow_mut().promote(name);
+            return parent.borrow_mut().promote(name);
          }
          
          None

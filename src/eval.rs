@@ -1802,7 +1802,8 @@ impl Interpreter {
                      let mut locals = HashSet::new();
                      collect_declarations(&closure.body, &mut locals);
                      for local in locals {
-                         if !new_env.borrow().values.contains_key(&local) {
+                         let idx = local as usize;
+                         if idx >= new_env.borrow().values.len() {
                              new_env.borrow_mut().define(local, Value::Uninitialized);
                          }
                      }

@@ -172,6 +172,8 @@ pub enum Instruction {
     MakeArray(usize),
     MakeMap(usize),
     Index,
+    IndexAssign,
+    ArrayGen,
     Add,
     Sub,
     Mul,

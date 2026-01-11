@@ -243,6 +243,12 @@ fn compile_to_instructions(expr: &Expr, code: &mut Vec<Instruction>) -> bool {
             if !compile_to_instructions(index, code) { return false; }
             code.push(Instruction::Index);
         }
+        ExprKind::IndexAssignment { target, index, value } => {
+            if !compile_to_instructions(target, code) { return false; }
+            if !compile_to_instructions(index, code) { return false; }
+            if !compile_to_instructions(value, code) { return false; }
+            code.push(Instruction::IndexAssign);
+        }
         ExprKind::BinaryOp { left, op, right } => {
             if !compile_to_instructions(left, code) { return false; }
             if !compile_to_instructions(right, code) { return false; }
@@ -310,6 +316,11 @@ fn compile_to_instructions(expr: &Expr, code: &mut Vec<Instruction>) -> bool {
                 if !compile_to_instructions(e, code) { return false; }
             }
             code.push(Instruction::MakeArray(elements.len()));
+        }
+        ExprKind::ArrayGenerator { generator, size } => {
+            if !compile_to_instructions(generator, code) { return false; }
+            if !compile_to_instructions(size, code) { return false; }
+            code.push(Instruction::ArrayGen);
         }
         ExprKind::Map(entries) => {
             for (k, v) in entries {
@@ -518,6 +529,86 @@ fn execute_instructions(interpreter: &mut Interpreter, code: &[Instruction], slo
                     _ => return Err(RuntimeError { message: "Index operator not supported on this type".to_string(), line: 0 }),
                 };
                 stack.push(result);
+            }
+            Instruction::IndexAssign => {
+                let value = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing value for index assignment".to_string(),
+                    line: 0,
+                })?;
+                let index_val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing index for index assignment".to_string(),
+                    line: 0,
+                })?;
+                let target_val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing target for index assignment".to_string(),
+                    line: 0,
+                })?;
+                match target_val {
+                    Value::Array(arr) => {
+                        if let Value::Integer(idx) = index_val {
+                            let mut vec = arr.borrow_mut();
+                            let i = idx as usize;
+                            if idx >= 0 && i < vec.len() {
+                                vec[i] = value.clone();
+                            } else {
+                                return Err(RuntimeError { message: format!("Array index out of bounds: {}", idx), line: 0 });
+                            }
+                        } else {
+                            return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
+                        }
+                    }
+                    Value::Map(map) => {
+                        let key = match index_val {
+                             Value::String(s) => s,
+                             _ => intern::intern_owned(index_val.inspect()),
+                        };
+                        map.borrow_mut().insert(key, value.clone());
+                    }
+                    _ => return Err(RuntimeError { message: "Index assignment not supported on this type".to_string(), line: 0 }),
+                }
+                stack.push(value);
+            }
+            Instruction::ArrayGen => {
+                let size_val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing size for array generator".to_string(),
+                    line: 0,
+                })?;
+                let gen_val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing generator for array".to_string(),
+                    line: 0,
+                })?;
+                let n = match size_val {
+                    Value::Integer(i) if i >= 0 => i as usize,
+                    _ => return Err(RuntimeError { message: "Array size must be a non-negative integer".to_string(), line: 0 }),
+                };
+                let mut vals = Vec::with_capacity(n);
+                if let Value::Function(data) = gen_val {
+                    for i in 0..n {
+                        let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, data.declarations.len());
+                        if !data.params.is_empty() {
+                             new_slots[data.param_offset] = Value::Integer(i as i64);
+                        }
+                        let result = if let Some(code) = &data.code {
+                            execute_instructions(interpreter, code, &mut new_slots)?
+                        } else if data.uses_env {
+                            let new_env = interpreter.get_env(Some(data.env.clone()), false);
+                            let original_env = interpreter.env.clone();
+                            interpreter.env = new_env.clone();
+                            let result = interpreter.eval(&data.body, &mut new_slots)?;
+                            interpreter.env = original_env;
+                            interpreter.recycle_env(new_env);
+                            result
+                        } else {
+                            interpreter.eval(&data.body, &mut new_slots)?
+                        };
+                        vals.push(result);
+                    }
+                } else {
+                    for _ in 0..n {
+                        vals.push(gen_val.clone());
+                    }
+                }
+                stack.push(Value::Array(Rc::new(RefCell::new(vals))));
             }
             inst => {
                 let r = stack.pop().unwrap();

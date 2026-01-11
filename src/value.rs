@@ -145,6 +145,7 @@ pub enum Instruction {
     CallBuiltin(Builtin, usize),
     CallValue(usize),
     ForEach { var_slot: usize, body: Rc<Vec<Instruction>> },
+    ForRange { index_slot: usize, end: RangeEnd, body: Rc<Vec<Instruction>> },
     MakeArray(usize),
     MakeMap(usize),
     Index,
@@ -158,6 +159,12 @@ pub enum Instruction {
     Gt,
     Lt,
     // Add more if needed
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RangeEnd {
+    Slot(usize),
+    Const(usize),
 }
 
 #[derive(Debug, Clone, PartialEq)]

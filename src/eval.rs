@@ -1,6 +1,6 @@
 use crate::ast::{Closure, Expr, ExprKind, Op};
 use crate::intern;
-use crate::value::{Builtin, Environment, Instruction, Value};
+use crate::value::{Builtin, Environment, Instruction, RangeEnd, Value};
 use rustc_hash::FxHashMap;
 use std::collections::HashSet;
 use std::fs;
@@ -216,28 +216,105 @@ fn push_const(consts: &mut Vec<Value>, value: Value) -> usize {
     consts.len() - 1
 }
 
+fn match_for_range(condition: &Expr, body: &Expr, consts: &mut Vec<Value>) -> Option<(usize, RangeEnd, Expr)> {
+    let (index_slot, end) = match &condition.kind {
+        ExprKind::BinaryOp { left, op: Op::LessThan, right } => {
+            let idx_slot = match &left.kind {
+                ExprKind::Identifier { slot: Some(s), .. } => *s,
+                _ => return None,
+            };
+            let end = match &right.kind {
+                ExprKind::Identifier { slot: Some(s), .. } => RangeEnd::Slot(*s),
+                ExprKind::Integer(i) => {
+                    let idx = push_const(consts, Value::Integer(*i));
+                    RangeEnd::Const(idx)
+                }
+                ExprKind::Float(f) => {
+                    let idx = push_const(consts, Value::Float(*f));
+                    RangeEnd::Const(idx)
+                }
+                _ => return None,
+            };
+            (idx_slot, end)
+        }
+        _ => return None,
+    };
+
+    let (stmts, line) = match &body.kind {
+        ExprKind::Block(stmts) => (stmts, body.line),
+        _ => return None,
+    };
+    if stmts.is_empty() {
+        return None;
+    }
+    let (body_stmts, increment) = stmts.split_at(stmts.len() - 1);
+    let inc_stmt = &increment[0];
+    match &inc_stmt.kind {
+        ExprKind::Assignment { slot: Some(s), value, .. } if *s == index_slot => {
+            match &value.kind {
+                ExprKind::BinaryOp { left, op: Op::Add, right } => {
+                    let left_slot = match &left.kind {
+                        ExprKind::Identifier { slot: Some(ls), .. } => *ls,
+                        _ => return None,
+                    };
+                    if left_slot != index_slot {
+                        return None;
+                    }
+                    let is_one = matches!(right.kind, ExprKind::Integer(1) | ExprKind::Float(1.0));
+                    if !is_one {
+                        return None;
+                    }
+                }
+                _ => return None,
+            }
+        }
+        _ => return None,
+    }
+
+    let body_expr = Expr {
+        kind: ExprKind::Block(body_stmts.to_vec()),
+        line,
+    };
+    Some((index_slot, end, body_expr))
+}
+
 fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value>, want_value: bool) -> bool {
     match &expr.kind {
         ExprKind::Integer(i) => {
-            let idx = push_const(consts, Value::Integer(*i));
-            code.push(Instruction::LoadConstIdx(idx));
+            if want_value {
+                let idx = push_const(consts, Value::Integer(*i));
+                code.push(Instruction::LoadConstIdx(idx));
+            }
         }
         ExprKind::Float(f) => {
-            let idx = push_const(consts, Value::Float(*f));
-            code.push(Instruction::LoadConstIdx(idx));
+            if want_value {
+                let idx = push_const(consts, Value::Float(*f));
+                code.push(Instruction::LoadConstIdx(idx));
+            }
         }
-        ExprKind::Identifier { slot: Some(s), .. } => code.push(Instruction::LoadSlot(*s)),
+        ExprKind::Identifier { slot: Some(s), .. } => {
+            if want_value {
+                code.push(Instruction::LoadSlot(*s));
+            }
+        }
         ExprKind::Boolean(b) => {
-            let idx = push_const(consts, Value::Boolean(*b));
-            code.push(Instruction::LoadConstIdx(idx));
+            if want_value {
+                let idx = push_const(consts, Value::Boolean(*b));
+                code.push(Instruction::LoadConstIdx(idx));
+            }
         }
         ExprKind::Nil => {
-            let idx = push_const(consts, Value::Nil);
-            code.push(Instruction::LoadConstIdx(idx));
+            if want_value {
+                let idx = push_const(consts, Value::Nil);
+                code.push(Instruction::LoadConstIdx(idx));
+            }
         }
         ExprKind::Assignment { value, slot: Some(s), .. } => {
             if !compile_expr(value, code, consts, true) { return false; }
             code.push(Instruction::StoreSlot(*s));
+            if !want_value {
+                code.push(Instruction::Pop);
+            }
         }
         ExprKind::Call { function, args, block, .. } => {
             if block.is_some() {
@@ -333,13 +410,23 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
             code[jump_end_idx] = Instruction::Jump(end_target);
         }
         ExprKind::While { condition, body } => {
+            if !want_value {
+                if let Some((index_slot, end, body_expr)) = match_for_range(condition, body, consts) {
+                    let mut body_code = Vec::new();
+                    if !compile_expr(&body_expr, &mut body_code, consts, true) { return false; }
+                    code.push(Instruction::ForRange { index_slot, end, body: Rc::new(body_code) });
+                    return true;
+                }
+            }
+            if want_value {
+                let nil_idx = push_const(consts, Value::Nil);
+                code.push(Instruction::LoadConstIdx(nil_idx));
+            }
             let loop_start = code.len();
             if !compile_expr(condition, code, consts, true) { return false; }
             let jump_if_false_idx = code.len();
             code.push(Instruction::JumpIfFalse(usize::MAX));
             if want_value {
-                let nil_idx = push_const(consts, Value::Nil);
-                code.push(Instruction::LoadConstIdx(nil_idx)); // placeholder last value
                 code.push(Instruction::Pop);
                 if !compile_expr(body, code, consts, true) { return false; }
             } else {
@@ -348,10 +435,6 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
             code.push(Instruction::Jump(loop_start));
             let loop_end = code.len();
             code[jump_if_false_idx] = Instruction::JumpIfFalse(loop_end);
-            if want_value {
-                let nil_idx = push_const(consts, Value::Nil);
-                code.push(Instruction::LoadConstIdx(nil_idx));
-            }
         }
         ExprKind::For { var_slot: Some(var_slot), iterable, body, .. } => {
             if !compile_expr(iterable, code, consts, true) { return false; }
@@ -543,6 +626,39 @@ fn execute_instructions(
                         }
                     }
                     _ => return Err(RuntimeError { message: "Type is not iterable".to_string(), line: 0 }),
+                }
+                stack.push(last);
+            }
+            Instruction::ForRange { index_slot, end, body } => {
+                let mut last = Value::Nil;
+                loop {
+                    let end_val = match end {
+                        RangeEnd::Slot(s) => slots.get(*s).cloned().unwrap_or(Value::Nil),
+                        RangeEnd::Const(idx) => const_pool.get(*idx).cloned().unwrap_or(Value::Nil),
+                    };
+                    let end_f = match end_val {
+                        Value::Integer(i) => i as f64,
+                        Value::Float(f) => f,
+                        _ => return Err(RuntimeError { message: "Range end must be a number".to_string(), line: 0 }),
+                    };
+                    let current = match slots.get(*index_slot) {
+                        Some(Value::Integer(i)) => *i,
+                        Some(Value::Float(f)) => *f as i64,
+                        _ => return Err(RuntimeError { message: "Range index must be a number".to_string(), line: 0 }),
+                    };
+                    if (current as f64) >= end_f {
+                        if let Some(slot) = slots.get_mut(*index_slot) {
+                            *slot = Value::Integer(current);
+                        }
+                        break;
+                    }
+                    if let Some(slot) = slots.get_mut(*index_slot) {
+                        *slot = Value::Integer(current);
+                    }
+                    last = execute_instructions(interpreter, body, const_pool, slots)?;
+                    if let Some(slot) = slots.get_mut(*index_slot) {
+                        *slot = Value::Integer(current + 1);
+                    }
                 }
                 stack.push(last);
             }

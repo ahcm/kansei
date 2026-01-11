@@ -641,6 +641,22 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr {
                 expr.clone()
             }
         }
+        ExprKind::Assignment { name, value, slot } => Expr {
+            kind: ExprKind::Assignment {
+                name: name.clone(),
+                value: Box::new(substitute(value, args)),
+                slot: *slot,
+            },
+            line: expr.line,
+        },
+        ExprKind::IndexAssignment { target, index, value } => Expr {
+            kind: ExprKind::IndexAssignment {
+                target: Box::new(substitute(target, args)),
+                index: Box::new(substitute(index, args)),
+                value: Box::new(substitute(value, args)),
+            },
+            line: expr.line,
+        },
         ExprKind::BinaryOp { left, op, right } => Expr {
             kind: ExprKind::BinaryOp {
                 left: Box::new(substitute(left, args)),
@@ -657,6 +673,31 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr {
             },
             line: expr.line,
         },
+        ExprKind::While { condition, body } => Expr {
+            kind: ExprKind::While {
+                condition: Box::new(substitute(condition, args)),
+                body: Box::new(substitute(body, args)),
+            },
+            line: expr.line,
+        },
+        ExprKind::For { var, var_slot, iterable, body } => Expr {
+            kind: ExprKind::For {
+                var: var.clone(),
+                var_slot: *var_slot,
+                iterable: Box::new(substitute(iterable, args)),
+                body: Box::new(substitute(body, args)),
+            },
+            line: expr.line,
+        },
+        ExprKind::Loop { count, var, var_slot, body } => Expr {
+            kind: ExprKind::Loop {
+                count: Box::new(substitute(count, args)),
+                var: var.clone(),
+                var_slot: *var_slot,
+                body: Box::new(substitute(body, args)),
+            },
+            line: expr.line,
+        },
         ExprKind::Call { function, args: call_args, block, inlined_body } => Expr {
             kind: ExprKind::Call {
                 function: Box::new(substitute(function, args)),
@@ -666,8 +707,75 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr {
             },
             line: expr.line,
         },
+        ExprKind::Array(elements) => Expr {
+            kind: ExprKind::Array(elements.iter().map(|e| substitute(e, args)).collect()),
+            line: expr.line,
+        },
+        ExprKind::ArrayGenerator { generator, size } => Expr {
+            kind: ExprKind::ArrayGenerator {
+                generator: Box::new(substitute(generator, args)),
+                size: Box::new(substitute(size, args)),
+            },
+            line: expr.line,
+        },
+        ExprKind::Map(entries) => Expr {
+            kind: ExprKind::Map(
+                entries
+                    .iter()
+                    .map(|(k, v)| (substitute(k, args), substitute(v, args)))
+                    .collect(),
+            ),
+            line: expr.line,
+        },
+        ExprKind::Index { target, index } => Expr {
+            kind: ExprKind::Index {
+                target: Box::new(substitute(target, args)),
+                index: Box::new(substitute(index, args)),
+            },
+            line: expr.line,
+        },
+        ExprKind::Yield(args_exprs) => Expr {
+            kind: ExprKind::Yield(args_exprs.iter().map(|a| substitute(a, args)).collect()),
+            line: expr.line,
+        },
+        ExprKind::Block(stmts) => Expr {
+            kind: ExprKind::Block(stmts.iter().map(|s| substitute(s, args)).collect()),
+            line: expr.line,
+        },
         // Literals
         _ => expr.clone(),
+    }
+}
+
+fn expr_size(expr: &Expr) -> usize {
+    match &expr.kind {
+        ExprKind::BinaryOp { left, right, .. } => 1 + expr_size(left) + expr_size(right),
+        ExprKind::Assignment { value, .. } => 1 + expr_size(value),
+        ExprKind::IndexAssignment { target, index, value } => 1 + expr_size(target) + expr_size(index) + expr_size(value),
+        ExprKind::If { condition, then_branch, else_branch } => {
+            1 + expr_size(condition) + expr_size(then_branch) + else_branch.as_ref().map_or(0, |e| expr_size(e))
+        }
+        ExprKind::While { condition, body } => 1 + expr_size(condition) + expr_size(body),
+        ExprKind::For { iterable, body, .. } => 1 + expr_size(iterable) + expr_size(body),
+        ExprKind::Loop { count, body, .. } => 1 + expr_size(count) + expr_size(body),
+        ExprKind::Call { function, args, .. } => 1 + expr_size(function) + args.iter().map(expr_size).sum::<usize>(),
+        ExprKind::Array(elements) => 1 + elements.iter().map(expr_size).sum::<usize>(),
+        ExprKind::ArrayGenerator { generator, size } => 1 + expr_size(generator) + expr_size(size),
+        ExprKind::Map(entries) => 1 + entries.iter().map(|(k, v)| expr_size(k) + expr_size(v)).sum::<usize>(),
+        ExprKind::Index { target, index } => 1 + expr_size(target) + expr_size(index),
+        ExprKind::Yield(args) => 1 + args.iter().map(expr_size).sum::<usize>(),
+        ExprKind::Block(stmts) => 1 + stmts.iter().map(expr_size).sum::<usize>(),
+        _ => 1,
+    }
+}
+
+fn is_inline_safe_arg(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Integer(_) | ExprKind::Float(_) | ExprKind::Boolean(_) | ExprKind::Nil => true,
+        ExprKind::Identifier { .. } => true,
+        ExprKind::BinaryOp { left, right, .. } => is_inline_safe_arg(left) && is_inline_safe_arg(right),
+        ExprKind::Index { target, index } => is_inline_safe_arg(target) && is_inline_safe_arg(index),
+        _ => false,
     }
 }
 
@@ -1931,8 +2039,9 @@ impl Interpreter {
                     // - Function does not capture environment (no slot=None identifiers).
                     // - Args are simple expressions (Identifiers/Literals) to avoid code explosion or side-effect duplication.
                     if data.is_simple && inlined_body.borrow().is_none() && !data.uses_env {
-                        let safe_args = args.iter().all(|a| matches!(a.kind, ExprKind::Identifier{..} | ExprKind::Integer(_) | ExprKind::Float(_) | ExprKind::Boolean(_)));
-                        if safe_args {
+                        let small_body = expr_size(&data.body) <= 40;
+                        let safe_args = args.iter().all(is_inline_safe_arg);
+                        if safe_args && small_body {
                             let inlined = substitute(&data.body, args);
                             inlined_body.replace(Some(inlined));
                             // Run the newly minted inlined body immediately

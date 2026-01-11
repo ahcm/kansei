@@ -216,7 +216,7 @@ fn push_const(consts: &mut Vec<Value>, value: Value) -> usize {
     consts.len() - 1
 }
 
-fn compile_to_instructions(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value>) -> bool {
+fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value>, want_value: bool) -> bool {
     match &expr.kind {
         ExprKind::Integer(i) => {
             let idx = push_const(consts, Value::Integer(*i));
@@ -236,7 +236,7 @@ fn compile_to_instructions(expr: &Expr, code: &mut Vec<Instruction>, consts: &mu
             code.push(Instruction::LoadConstIdx(idx));
         }
         ExprKind::Assignment { value, slot: Some(s), .. } => {
-            if !compile_to_instructions(value, code, consts) { return false; }
+            if !compile_expr(value, code, consts, true) { return false; }
             code.push(Instruction::StoreSlot(*s));
         }
         ExprKind::Call { function, args, block, .. } => {
@@ -246,32 +246,44 @@ fn compile_to_instructions(expr: &Expr, code: &mut Vec<Instruction>, consts: &mu
             if let ExprKind::Identifier { name, .. } = &function.kind {
                 if let Some(builtin) = builtin_from_name(name) {
                     for arg in args {
-                        if !compile_to_instructions(arg, code, consts) { return false; }
+                        if !compile_expr(arg, code, consts, true) { return false; }
                     }
                     code.push(Instruction::CallBuiltin(builtin, args.len()));
+                    if !want_value {
+                        code.push(Instruction::Pop);
+                    }
                     return true;
                 }
             }
-            if !compile_to_instructions(function, code, consts) { return false; }
+            if !compile_expr(function, code, consts, true) { return false; }
             for arg in args {
-                if !compile_to_instructions(arg, code, consts) { return false; }
+                if !compile_expr(arg, code, consts, true) { return false; }
             }
             code.push(Instruction::CallValue(args.len()));
+            if !want_value {
+                code.push(Instruction::Pop);
+            }
         }
         ExprKind::Index { target, index } => {
-            if !compile_to_instructions(target, code, consts) { return false; }
-            if !compile_to_instructions(index, code, consts) { return false; }
+            if !compile_expr(target, code, consts, true) { return false; }
+            if !compile_expr(index, code, consts, true) { return false; }
             code.push(Instruction::Index);
+            if !want_value {
+                code.push(Instruction::Pop);
+            }
         }
         ExprKind::IndexAssignment { target, index, value } => {
-            if !compile_to_instructions(target, code, consts) { return false; }
-            if !compile_to_instructions(index, code, consts) { return false; }
-            if !compile_to_instructions(value, code, consts) { return false; }
+            if !compile_expr(target, code, consts, true) { return false; }
+            if !compile_expr(index, code, consts, true) { return false; }
+            if !compile_expr(value, code, consts, true) { return false; }
             code.push(Instruction::IndexAssign);
+            if !want_value {
+                code.push(Instruction::Pop);
+            }
         }
         ExprKind::BinaryOp { left, op, right } => {
-            if !compile_to_instructions(left, code, consts) { return false; }
-            if !compile_to_instructions(right, code, consts) { return false; }
+            if !compile_expr(left, code, consts, true) { return false; }
+            if !compile_expr(right, code, consts, true) { return false; }
             match op {
                 Op::Add => code.push(Instruction::Add),
                 Op::Subtract => code.push(Instruction::Sub),
@@ -282,75 +294,100 @@ fn compile_to_instructions(expr: &Expr, code: &mut Vec<Instruction>, consts: &mu
                 Op::LessThan => code.push(Instruction::Lt),
                 _ => return false,
             }
+            if !want_value {
+                code.push(Instruction::Pop);
+            }
         }
         ExprKind::Block(stmts) => {
             if stmts.is_empty() {
-                let idx = push_const(consts, Value::Nil);
-                code.push(Instruction::LoadConstIdx(idx));
+                if want_value {
+                    let idx = push_const(consts, Value::Nil);
+                    code.push(Instruction::LoadConstIdx(idx));
+                }
             } else {
                 let last_idx = stmts.len() - 1;
                 for (idx, stmt) in stmts.iter().enumerate() {
-                    if !compile_to_instructions(stmt, code, consts) { return false; }
-                    if idx != last_idx {
-                        code.push(Instruction::Pop);
-                    }
+                    let is_last = idx == last_idx;
+                    if !compile_expr(stmt, code, consts, is_last && want_value) { return false; }
                 }
             }
         }
         ExprKind::If { condition, then_branch, else_branch } => {
-            if !compile_to_instructions(condition, code, consts) { return false; }
+            if !compile_expr(condition, code, consts, true) { return false; }
             let jump_if_false_idx = code.len();
             code.push(Instruction::JumpIfFalse(usize::MAX));
-            if !compile_to_instructions(then_branch, code, consts) { return false; }
+            if !compile_expr(then_branch, code, consts, want_value) { return false; }
             let jump_end_idx = code.len();
             code.push(Instruction::Jump(usize::MAX));
             let else_target = code.len();
             if let Some(else_expr) = else_branch {
-                if !compile_to_instructions(else_expr, code, consts) { return false; }
+                if !compile_expr(else_expr, code, consts, want_value) { return false; }
             } else {
-                let idx = push_const(consts, Value::Nil);
-                code.push(Instruction::LoadConstIdx(idx));
+                if want_value {
+                    let idx = push_const(consts, Value::Nil);
+                    code.push(Instruction::LoadConstIdx(idx));
+                }
             }
             let end_target = code.len();
             code[jump_if_false_idx] = Instruction::JumpIfFalse(else_target);
             code[jump_end_idx] = Instruction::Jump(end_target);
         }
         ExprKind::While { condition, body } => {
-            let nil_idx = push_const(consts, Value::Nil);
-            code.push(Instruction::LoadConstIdx(nil_idx)); // last value
             let loop_start = code.len();
-            if !compile_to_instructions(condition, code, consts) { return false; }
+            if !compile_expr(condition, code, consts, true) { return false; }
             let jump_if_false_idx = code.len();
             code.push(Instruction::JumpIfFalse(usize::MAX));
-            code.push(Instruction::Pop); // discard previous last
-            if !compile_to_instructions(body, code, consts) { return false; }
+            if want_value {
+                let nil_idx = push_const(consts, Value::Nil);
+                code.push(Instruction::LoadConstIdx(nil_idx)); // placeholder last value
+                code.push(Instruction::Pop);
+                if !compile_expr(body, code, consts, true) { return false; }
+            } else {
+                if !compile_expr(body, code, consts, false) { return false; }
+            }
             code.push(Instruction::Jump(loop_start));
             let loop_end = code.len();
             code[jump_if_false_idx] = Instruction::JumpIfFalse(loop_end);
+            if want_value {
+                let nil_idx = push_const(consts, Value::Nil);
+                code.push(Instruction::LoadConstIdx(nil_idx));
+            }
         }
         ExprKind::For { var_slot: Some(var_slot), iterable, body, .. } => {
-            if !compile_to_instructions(iterable, code, consts) { return false; }
+            if !compile_expr(iterable, code, consts, true) { return false; }
             let mut body_code = Vec::new();
-            if !compile_to_instructions(body, &mut body_code, consts) { return false; }
+            if !compile_expr(body, &mut body_code, consts, true) { return false; }
             code.push(Instruction::ForEach { var_slot: *var_slot, body: Rc::new(body_code) });
+            if !want_value {
+                code.push(Instruction::Pop);
+            }
         }
         ExprKind::Array(elements) => {
             for e in elements {
-                if !compile_to_instructions(e, code, consts) { return false; }
+                if !compile_expr(e, code, consts, true) { return false; }
             }
             code.push(Instruction::MakeArray(elements.len()));
+            if !want_value {
+                code.push(Instruction::Pop);
+            }
         }
         ExprKind::ArrayGenerator { generator, size } => {
-            if !compile_to_instructions(generator, code, consts) { return false; }
-            if !compile_to_instructions(size, code, consts) { return false; }
+            if !compile_expr(generator, code, consts, true) { return false; }
+            if !compile_expr(size, code, consts, true) { return false; }
             code.push(Instruction::ArrayGen);
+            if !want_value {
+                code.push(Instruction::Pop);
+            }
         }
         ExprKind::Map(entries) => {
             for (k, v) in entries {
-                if !compile_to_instructions(k, code, consts) { return false; }
-                if !compile_to_instructions(v, code, consts) { return false; }
+                if !compile_expr(k, code, consts, true) { return false; }
+                if !compile_expr(v, code, consts, true) { return false; }
             }
             code.push(Instruction::MakeMap(entries.len()));
+            if !want_value {
+                code.push(Instruction::Pop);
+            }
         }
         _ => return false,
     }
@@ -1124,7 +1161,7 @@ impl Interpreter {
                 
             let mut code = Vec::new();
             let mut const_pool = Vec::new();
-            let compiled = if simple { compile_to_instructions(&resolved_body, &mut code, &mut const_pool) } else { false };
+            let compiled = if simple { compile_expr(&resolved_body, &mut code, &mut const_pool, true) } else { false };
 
             let func = Value::Function(Rc::new(crate::value::FunctionData {
                 params: params.clone(),
@@ -1157,7 +1194,7 @@ impl Interpreter {
                 
             let mut code = Vec::new();
             let mut const_pool = Vec::new();
-            let compiled = if simple { compile_to_instructions(&resolved_body, &mut code, &mut const_pool) } else { false };
+            let compiled = if simple { compile_expr(&resolved_body, &mut code, &mut const_pool, true) } else { false };
 
                 Ok(Value::Function(Rc::new(crate::value::FunctionData {
                     params: params.clone(),

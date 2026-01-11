@@ -1,4 +1,5 @@
 use crate::ast::{Closure, Expr, ExprKind, Op};
+use crate::intern;
 use crate::value::{Environment, Instruction, Value};
 use rustc_hash::FxHashMap;
 use std::collections::HashSet;
@@ -16,7 +17,7 @@ pub struct RuntimeError {
 
 pub type EvalResult = Result<Value, RuntimeError>;
 
-fn collect_declarations(expr: &Expr, decls: &mut HashSet<String>) {
+fn collect_declarations(expr: &Expr, decls: &mut HashSet<Rc<String>>) {
     match &expr.kind {
         ExprKind::Assignment { name, .. } => {
             decls.insert(name.clone());
@@ -64,7 +65,7 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<String>) {
     }
 }
 
-fn build_slot_map(params: &[(String, bool)], locals: HashSet<String>) -> (FxHashMap<String, usize>, Vec<String>) {
+fn build_slot_map(params: &[(Rc<String>, bool)], locals: HashSet<Rc<String>>) -> (FxHashMap<Rc<String>, usize>, Vec<Rc<String>>) {
     let mut slot_map = FxHashMap::default();
     let mut slot_names = Vec::new();
     for (p, _) in params {
@@ -196,6 +197,12 @@ fn compile_to_instructions(expr: &Expr, code: &mut Vec<Instruction>) -> bool {
         ExprKind::Integer(i) => code.push(Instruction::LoadConst(Value::Integer(*i))),
         ExprKind::Float(f) => code.push(Instruction::LoadConst(Value::Float(*f))),
         ExprKind::Identifier { slot: Some(s), .. } => code.push(Instruction::LoadSlot(*s)),
+        ExprKind::Boolean(b) => code.push(Instruction::LoadConst(Value::Boolean(*b))),
+        ExprKind::Nil => code.push(Instruction::LoadConst(Value::Nil)),
+        ExprKind::Assignment { value, slot: Some(s), .. } => {
+            if !compile_to_instructions(value, code) { return false; }
+            code.push(Instruction::StoreSlot(*s));
+        }
         ExprKind::BinaryOp { left, op, right } => {
             if !compile_to_instructions(left, code) { return false; }
             if !compile_to_instructions(right, code) { return false; }
@@ -209,6 +216,48 @@ fn compile_to_instructions(expr: &Expr, code: &mut Vec<Instruction>) -> bool {
                 Op::LessThan => code.push(Instruction::Lt),
                 _ => return false,
             }
+        }
+        ExprKind::Block(stmts) => {
+            if stmts.is_empty() {
+                code.push(Instruction::LoadConst(Value::Nil));
+            } else {
+                let last_idx = stmts.len() - 1;
+                for (idx, stmt) in stmts.iter().enumerate() {
+                    if !compile_to_instructions(stmt, code) { return false; }
+                    if idx != last_idx {
+                        code.push(Instruction::Pop);
+                    }
+                }
+            }
+        }
+        ExprKind::If { condition, then_branch, else_branch } => {
+            if !compile_to_instructions(condition, code) { return false; }
+            let jump_if_false_idx = code.len();
+            code.push(Instruction::JumpIfFalse(usize::MAX));
+            if !compile_to_instructions(then_branch, code) { return false; }
+            let jump_end_idx = code.len();
+            code.push(Instruction::Jump(usize::MAX));
+            let else_target = code.len();
+            if let Some(else_expr) = else_branch {
+                if !compile_to_instructions(else_expr, code) { return false; }
+            } else {
+                code.push(Instruction::LoadConst(Value::Nil));
+            }
+            let end_target = code.len();
+            code[jump_if_false_idx] = Instruction::JumpIfFalse(else_target);
+            code[jump_end_idx] = Instruction::Jump(end_target);
+        }
+        ExprKind::While { condition, body } => {
+            code.push(Instruction::LoadConst(Value::Nil)); // last value
+            let loop_start = code.len();
+            if !compile_to_instructions(condition, code) { return false; }
+            let jump_if_false_idx = code.len();
+            code.push(Instruction::JumpIfFalse(usize::MAX));
+            code.push(Instruction::Pop); // discard previous last
+            if !compile_to_instructions(body, code) { return false; }
+            code.push(Instruction::Jump(loop_start));
+            let loop_end = code.len();
+            code[jump_if_false_idx] = Instruction::JumpIfFalse(loop_end);
         }
         _ => return false,
     }
@@ -254,13 +303,36 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr {
     }
 }
 
-fn execute_instructions(code: &[Instruction], slots: &[Value]) -> EvalResult {
+fn execute_instructions(code: &[Instruction], slots: &mut [Value]) -> EvalResult {
     let mut stack = Vec::with_capacity(8);
-    for inst in code {
-        match inst {
+    let mut ip = 0;
+    while ip < code.len() {
+        match &code[ip] {
             Instruction::LoadConst(v) => stack.push(v.clone()),
             Instruction::LoadSlot(s) => stack.push(slots[*s].clone()),
-            _ => {
+            Instruction::StoreSlot(s) => {
+                let val = stack.pop().unwrap();
+                if let Some(slot) = slots.get_mut(*s) {
+                    *slot = val.clone();
+                }
+                stack.push(val);
+            }
+            Instruction::Pop => {
+                stack.pop();
+            }
+            Instruction::JumpIfFalse(target) => {
+                let cond = stack.pop().unwrap_or(Value::Nil);
+                let is_false = matches!(cond, Value::Boolean(false) | Value::Nil);
+                if is_false {
+                    ip = *target;
+                    continue;
+                }
+            }
+            Instruction::Jump(target) => {
+                ip = *target;
+                continue;
+            }
+            inst => {
                 let r = stack.pop().unwrap();
                 let l = stack.pop().unwrap();
                 let res = match (l, r) {
@@ -315,6 +387,7 @@ fn execute_instructions(code: &[Instruction], slots: &[Value]) -> EvalResult {
                 stack.push(res);
             }
         }
+        ip += 1;
     }
     Ok(stack.pop().unwrap())
 }
@@ -343,7 +416,7 @@ fn is_simple(expr: &Expr) -> bool {
     }
 }
 
-fn resolve(expr: &mut Expr, slot_map: &FxHashMap<String, usize>) {
+fn resolve(expr: &mut Expr, slot_map: &FxHashMap<Rc<String>, usize>) {
     match &mut expr.kind {
         ExprKind::Identifier { name, slot } => {
             if let Some(s) = slot_map.get(name) {
@@ -457,7 +530,7 @@ impl Interpreter {
         }
     }
 
-    pub fn define_global(&mut self, name: String, val: Value) {
+    pub fn define_global(&mut self, name: Rc<String>, val: Value) {
         self.env.borrow_mut().define(name, val);
     }
 
@@ -479,9 +552,9 @@ impl Interpreter {
                 match output {
                     Ok(o) => {
                         let res = String::from_utf8_lossy(&o.stdout).to_string();
-                        Ok(Value::String(Rc::new(res.trim().to_string())))
+                        Ok(Value::String(intern::intern_owned(res.trim().to_string())))
                     }
-                    Err(_) => Ok(Value::String(Rc::new("".to_string()))),
+                    Err(_) => Ok(Value::String(intern::intern_owned("".to_string()))),
                 }
             }
             ExprKind::Identifier { name, slot } => {
@@ -495,12 +568,12 @@ impl Interpreter {
                     }
                 }
                 let val = self.env.borrow().get(name).ok_or_else(|| RuntimeError {
-                    message: format!("Undefined variable: {}", name),
+                    message: format!("Undefined variable: {}", name.as_str()),
                     line,
                 })?;
                 if let Value::Uninitialized = val {
                     return Err(RuntimeError {
-                        message: format!("Variable '{}' used before assignment", name),
+                        message: format!("Variable '{}' used before assignment", name.as_str()),
                         line,
                     });
                 }
@@ -508,7 +581,7 @@ impl Interpreter {
             }
             ExprKind::Reference(name) => {
                 let val = self.env.borrow_mut().promote(name).ok_or_else(|| RuntimeError {
-                    message: format!("Undefined variable referenced: {}", name),
+                    message: format!("Undefined variable referenced: {}", name.as_str()),
                     line,
                 })?;
                 Ok(val)
@@ -552,7 +625,7 @@ impl Interpreter {
                     Value::Map(map) => {
                         let key = match index_val {
                              Value::String(s) => s,
-                             _ => Rc::new(index_val.inspect()),
+                             _ => intern::intern_owned(index_val.inspect()),
                         };
                         map.borrow_mut().insert(key, val.clone());
                     }
@@ -576,6 +649,7 @@ impl Interpreter {
                 (resolved, Rc::new(slot_names))
             };
             let simple = is_simple(&resolved_body);
+            let uses_env = uses_environment(&resolved_body);
                 
             let mut code = Vec::new();
             let compiled = if simple { compile_to_instructions(&resolved_body, &mut code) } else { false };
@@ -586,6 +660,7 @@ impl Interpreter {
                 declarations: slot_names,
                 param_offset: 0,
                 is_simple: simple,
+                uses_env,
                 code: if compiled { Some(Rc::new(code)) } else { None },
                 env: func_env,
             }));
@@ -605,6 +680,7 @@ impl Interpreter {
                 (resolved, Rc::new(slot_names))
             };
             let simple = is_simple(&resolved_body);
+            let uses_env = uses_environment(&resolved_body);
                 
             let mut code = Vec::new();
             let compiled = if simple { compile_to_instructions(&resolved_body, &mut code) } else { false };
@@ -615,6 +691,7 @@ impl Interpreter {
                     declarations: slot_names,
                     param_offset: 0,
                     is_simple: simple,
+                    uses_env,
                     code: if compiled { Some(Rc::new(code)) } else { None },
                     env: func_env,
                 })))
@@ -692,8 +769,8 @@ impl Interpreter {
                         }
                         
                         let result = if let Some(code) = &data.code {
-                            execute_instructions(code, &new_slots)?
-                        } else {
+                            execute_instructions(code, &mut new_slots)?
+                        } else if data.uses_env {
                             let new_env = self.get_env(Some(data.env.clone()), false);
                             let original_env = self.env.clone();
                             self.env = new_env.clone();
@@ -701,6 +778,8 @@ impl Interpreter {
                             self.env = original_env;
                             self.recycle_env(new_env);
                             result
+                        } else {
+                            self.eval(&data.body, &mut new_slots)?
                         };
                         vals.push(result);
                     }
@@ -718,7 +797,7 @@ impl Interpreter {
                     let v_val = self.eval(v_expr, slots)?;
                     let k_str = match k_val {
                         Value::String(s) => s,
-                        _ => Rc::new(k_val.inspect()),
+                        _ => intern::intern_owned(k_val.inspect()),
                     };
                     map.insert(k_str, v_val);
                 }
@@ -747,7 +826,7 @@ impl Interpreter {
                     Value::Map(map) => {
                         let key = match index_val {
                              Value::String(s) => s,
-                             _ => Rc::new(index_val.inspect()),
+                             _ => intern::intern_owned(index_val.inspect()),
                         };
                         Ok(map.borrow().get(&key).cloned().unwrap_or(Value::Nil))
                     }
@@ -769,7 +848,7 @@ impl Interpreter {
                             let mut last_val = Value::Nil;
                             for arg in args {
                                 let val = self.eval(arg, slots)?;
-                                if name == "puts" {
+                                if name.as_str() == "puts" {
                                     println!("{}", val);
                                 } else {
                                     print!("{}", val);
@@ -791,7 +870,7 @@ impl Interpreter {
                         "read_file" => {
                             let path = self.eval(&args[0], slots)?.to_string();
                             return match fs::read_to_string(&path) {
-                                Ok(content) => Ok(Value::String(Rc::new(content))),
+                                Ok(content) => Ok(Value::String(intern::intern_owned(content))),
                                 Err(_) => Ok(Value::Nil),
                             };
                         }
@@ -817,7 +896,7 @@ impl Interpreter {
                     // - Function is simple (no locals/assignments).
                     // - Function does not capture environment (no slot=None identifiers).
                     // - Args are simple expressions (Identifiers/Literals) to avoid code explosion or side-effect duplication.
-                    if data.is_simple && inlined_body.borrow().is_none() && !uses_environment(&data.body) {
+                    if data.is_simple && inlined_body.borrow().is_none() && !data.uses_env {
                         let safe_args = args.iter().all(|a| matches!(a.kind, ExprKind::Identifier{..} | ExprKind::Integer(_) | ExprKind::Float(_) | ExprKind::Boolean(_)));
                         if safe_args {
                             let inlined = substitute(&data.body, args);
@@ -862,6 +941,7 @@ impl Interpreter {
                             declarations: data.declarations.clone(),
                             param_offset: data.param_offset + num_bound,
                             is_simple: data.is_simple,
+                            uses_env: data.uses_env,
                             code: data.code.clone(),
                             env: new_env,
                         })));
@@ -875,7 +955,7 @@ impl Interpreter {
                         for (i, val) in arg_vals.into_iter().enumerate() {
                             new_slots[i + data.param_offset] = val;
                         }
-                        return execute_instructions(code, &new_slots);
+                        return execute_instructions(code, &mut new_slots);
                     }
 
                     if data.is_simple {
@@ -883,11 +963,14 @@ impl Interpreter {
                         for (i, val) in arg_vals.into_iter().enumerate() {
                             new_slots[i + data.param_offset] = val;
                         }
-                        let original_env = self.env.clone();
-                        self.env = data.env.clone();
-                        let result = self.eval(&data.body, &mut new_slots)?;
-                        self.env = original_env;
-                        return Ok(result);
+                        if data.uses_env {
+                            let original_env = self.env.clone();
+                            self.env = data.env.clone();
+                            let result = self.eval(&data.body, &mut new_slots)?;
+                            self.env = original_env;
+                            return Ok(result);
+                        }
+                        return self.eval(&data.body, &mut new_slots);
                     }
 
                     let block_entry = if let Some(closure) = block {
@@ -897,18 +980,23 @@ impl Interpreter {
                     };
                     self.block_stack.push(block_entry);
 
-                    let new_env = self.get_env(Some(data.env.clone()), false);
                     let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, data.declarations.len());
                     for (i, val) in arg_vals.into_iter().enumerate() {
                         new_slots[i + data.param_offset] = val;
                     }
 
-                    let original_env = self.env.clone();
-                    self.env = new_env.clone();
-                    let result = self.eval(&data.body, &mut new_slots)?;
-                    self.env = original_env;
+                    let result = if data.uses_env {
+                        let new_env = self.get_env(Some(data.env.clone()), false);
+                        let original_env = self.env.clone();
+                        self.env = new_env.clone();
+                        let result = self.eval(&data.body, &mut new_slots)?;
+                        self.env = original_env;
+                        self.recycle_env(new_env);
+                        result
+                    } else {
+                        self.eval(&data.body, &mut new_slots)?
+                    };
                     self.block_stack.pop();
-                    self.recycle_env(new_env);
                     Ok(result)
                 } else {
                     Err(RuntimeError { message: format!("Tried to call a non-function value: {}", func_val), line })

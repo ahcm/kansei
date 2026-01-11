@@ -17,7 +17,7 @@ pub enum Op
 #[derive(Debug, Clone, PartialEq)]
 pub struct Closure
 {
-    pub params: Vec<(String, bool)>,
+    pub params: Vec<(Rc<String>, bool)>,
     pub body: Box<Expr>,
 }
 
@@ -33,8 +33,8 @@ pub enum ExprKind
     // Basic Values
     Integer(i64),
     Float(f64),
-    Identifier { name: String, slot: Option<usize> },
-    Reference(String), // &x
+    Identifier { name: Rc<String>, slot: Option<usize> },
+    Reference(Rc<String>), // &x
     String(Rc<String>), // "hello"
     Boolean(bool),
     Nil,
@@ -51,7 +51,7 @@ pub enum ExprKind
     // Assignment: x = 10
     Assignment
     {
-        name: String,
+        name: Rc<String>,
         value: Box<Expr>,
         slot: Option<usize>,
     },
@@ -88,23 +88,23 @@ pub enum ExprKind
 
     For
     {
-        var: String,
+        var: Rc<String>,
         iterable: Box<Expr>,
         body: Box<Expr>,
     },
 
     FunctionDef
     {
-        name: String,
-        params: Vec<(String, bool)>,
+        name: Rc<String>,
+        params: Vec<(Rc<String>, bool)>,
         body: Box<Expr>,
-        slots: Option<Rc<Vec<String>>>,
+        slots: Option<Rc<Vec<Rc<String>>>>,
     },
     AnonymousFunction
     {
-        params: Vec<(String, bool)>,
+        params: Vec<(Rc<String>, bool)>,
         body: Box<Expr>,
-        slots: Option<Rc<Vec<String>>>,
+        slots: Option<Rc<Vec<Rc<String>>>>,
     },
 
     Array(Vec<Expr>),

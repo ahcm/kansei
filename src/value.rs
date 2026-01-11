@@ -1,5 +1,4 @@
 use crate::ast::Expr;
-use std::collections::HashSet;
 use rustc_hash::FxHashMap;
 use std::fmt;
 use std::cell::RefCell;
@@ -9,7 +8,7 @@ use smallvec::SmallVec;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Environment {
-    pub values: FxHashMap<String, Value>,
+    pub values: FxHashMap<Rc<String>, Value>,
     pub slots: SmallVec<[Value; 8]>,
     pub parent: Option<Rc<RefCell<Environment>>>,
     pub is_partial: bool, // If true, allow full recursive lookup (used for currying/params)
@@ -41,7 +40,7 @@ impl Environment {
         self.is_partial = is_partial;
     }
 
-    pub fn get(&self, name: &str) -> Option<Value> {
+    pub fn get(&self, name: &Rc<String>) -> Option<Value> {
         if let Some(v) = self.values.get(name) {
              match v {
                  Value::Reference(r) => Some(r.borrow().clone()),
@@ -59,7 +58,7 @@ impl Environment {
         }
     }
 
-    pub fn get_recursive(&self, name: &str) -> Option<Value> {
+    pub fn get_recursive(&self, name: &Rc<String>) -> Option<Value> {
         if let Some(v) = self.values.get(name) {
              match v {
                  Value::Function(_) | Value::Reference(_) => {
@@ -83,7 +82,7 @@ impl Environment {
         }
     }
 
-    pub fn get_raw_no_deref(&self, name: &str) -> Option<Value> {
+    pub fn get_raw_no_deref(&self, name: &Rc<String>) -> Option<Value> {
         if let Some(v) = self.values.get(name) {
             Some(v.clone())
         } else if let Some(parent) = &self.parent {
@@ -93,12 +92,12 @@ impl Environment {
         }
     }
 
-    pub fn define(&mut self, name: String, val: Value) {
+    pub fn define(&mut self, name: Rc<String>, val: Value) {
         self.values.insert(name, val);
     }
 
     // Set variable in current scope. If it's a reference, update referee.
-    pub fn set(&mut self, name: String, val: Value) {
+    pub fn set(&mut self, name: Rc<String>, val: Value) {
          if let Some(Value::Reference(r)) = self.values.get(&name) {
              *r.borrow_mut() = val;
          } else {
@@ -106,7 +105,7 @@ impl Environment {
          }
     }
 
-    pub fn assign(&mut self, name: String, val: Value) {
+    pub fn assign(&mut self, name: Rc<String>, val: Value) {
         if self.values.contains_key(&name) {
             self.set(name, val);
             return;
@@ -122,13 +121,13 @@ impl Environment {
         self.define(name, val);
     }
 
-    fn update_existing(&mut self, name: &str, val: &Value) -> bool {
+    fn update_existing(&mut self, name: &Rc<String>, val: &Value) -> bool {
         if self.values.contains_key(name) {
             // Self::set logic inline because of borrowing issues?
             if let Some(Value::Reference(r)) = self.values.get(name) {
                 *r.borrow_mut() = val.clone();
             } else {
-                self.values.insert(name.to_string(), val.clone());
+                self.values.insert(name.clone(), val.clone());
             }
             return true;
         }
@@ -138,7 +137,7 @@ impl Environment {
         false
     }
 
-    pub fn promote(&mut self, name: &str) -> Option<Value> {
+    pub fn promote(&mut self, name: &Rc<String>) -> Option<Value> {
          if self.values.contains_key(name) {
              let val = self.values.get(name).unwrap().clone();
              if let Value::Reference(_) = val {
@@ -147,7 +146,7 @@ impl Environment {
              // Promote
              let r = Rc::new(RefCell::new(val));
              let new_ref = Value::Reference(r);
-             self.values.insert(name.to_string(), new_ref.clone());
+             self.values.insert(name.clone(), new_ref.clone());
              return Some(new_ref);
          }
          
@@ -162,7 +161,11 @@ impl Environment {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Instruction {
     LoadSlot(usize),
+    StoreSlot(usize),
     LoadConst(Value),
+    Pop,
+    JumpIfFalse(usize),
+    Jump(usize),
     Add,
     Sub,
     Mul,
@@ -175,11 +178,12 @@ pub enum Instruction {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionData {
-    pub params: Vec<(String, bool)>,
+    pub params: Vec<(Rc<String>, bool)>,
     pub body: Expr,
-    pub declarations: Rc<Vec<String>>,
+    pub declarations: Rc<Vec<Rc<String>>>,
     pub param_offset: usize,
     pub is_simple: bool,
+    pub uses_env: bool,
     pub code: Option<Rc<Vec<Instruction>>>,
     pub env: Rc<RefCell<Environment>>,
 }
@@ -279,7 +283,9 @@ impl Value
             }
             Value::Nil => "nil".to_string(),
             Value::Function(data) => {
-                let p_str: Vec<String> = data.params.iter().map(|(n, r)| if *r { format!("&{}", n) } else { n.clone() }).collect();
+                let p_str: Vec<String> = data.params.iter()
+                    .map(|(n, r)| if *r { format!("&{}", n.as_str()) } else { n.as_str().to_string() })
+                    .collect();
                 format!("<function({})>", p_str.join(", "))
             },
             Value::Reference(r) => r.borrow().inspect(),
@@ -313,7 +319,9 @@ impl fmt::Display for Value
             }
             Value::Nil => write!(f, "nil"),
             Value::Function(data) => {
-                let p_str: Vec<String> = data.params.iter().map(|(n, r)| if *r { format!("&{}", n) } else { n.clone() }).collect();
+                let p_str: Vec<String> = data.params.iter()
+                    .map(|(n, r)| if *r { format!("&{}", n.as_str()) } else { n.as_str().to_string() })
+                    .collect();
                 write!(f, "<function({})>", p_str.join(", "))
             },
             Value::Reference(r) => write!(f, "{}", r.borrow()),

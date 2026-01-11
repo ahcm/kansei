@@ -1,5 +1,6 @@
 mod ast;
 mod eval;
+mod intern;
 mod lexer;
 mod parser;
 mod value;
@@ -29,21 +30,23 @@ fn main() -> rustyline::Result<()>
     };
 
     let args_val = value::Value::Array(
-        Rc::new(RefCell::new(script_args.iter().map(|s| value::Value::String(Rc::new(s.clone()))).collect()))
+        Rc::new(RefCell::new(script_args.iter()
+            .map(|s| value::Value::String(intern::intern_owned(s.clone())))
+            .collect()))
     );
 
     let mut env_map = FxHashMap::default();
     for (key, val) in env::vars() {
-        env_map.insert(Rc::new(key), value::Value::String(Rc::new(val)));
+        env_map.insert(intern::intern_owned(key), value::Value::String(intern::intern_owned(val)));
     }
     let env_val = value::Value::Map(Rc::new(RefCell::new(env_map)));
 
     let mut program_map = FxHashMap::default();
-    program_map.insert(Rc::new("name".to_string()), value::Value::String(Rc::new(args[0].clone())));
-    program_map.insert(Rc::new("args".to_string()), args_val);
-    program_map.insert(Rc::new("env".to_string()), env_val);
+    program_map.insert(intern::intern("name"), value::Value::String(intern::intern_owned(args[0].clone())));
+    program_map.insert(intern::intern("args"), args_val);
+    program_map.insert(intern::intern("env"), env_val);
 
-    interpreter.define_global("program".to_string(), value::Value::Map(Rc::new(RefCell::new(program_map))));
+    interpreter.define_global(intern::intern("program"), value::Value::Map(Rc::new(RefCell::new(program_map))));
 
     if args.len() > 1
     {

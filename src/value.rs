@@ -169,6 +169,7 @@ pub enum Instruction {
     ArrayGen,
     Dup,
     F64Axpy { dst_slot: usize, dst_index_slot: usize, src_slot: usize, src_index_slot: usize },
+    F64DotRange { acc_slot: usize, a_slot: usize, b_slot: usize, index_slot: usize, end: RangeEnd },
     Add,
     Sub,
     Mul,

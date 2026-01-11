@@ -9,6 +9,8 @@ use std::io::{self, Write};
 use std::process::Command;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::simd::Simd;
+use std::simd::num::SimdFloat;
 
 #[derive(Debug)]
 pub struct RuntimeError {
@@ -290,6 +292,41 @@ fn match_for_range(condition: &Expr, body: &Expr, consts: &mut Vec<Value>) -> Op
     Some((index_slot, end, body_expr))
 }
 
+fn match_dot_range_body(body: &Expr, index_slot: usize) -> Option<(usize, usize, usize)> {
+    let stmt = match &body.kind {
+        ExprKind::Block(stmts) if stmts.len() == 1 => &stmts[0],
+        _ => body,
+    };
+    let (acc_slot, value) = match &stmt.kind {
+        ExprKind::Assignment { slot: Some(s), value, .. } => (*s, value.as_ref()),
+        _ => return None,
+    };
+    let (add_left, add_right) = match &value.kind {
+        ExprKind::BinaryOp { left, op: Op::Add, right } => (left.as_ref(), right.as_ref()),
+        _ => return None,
+    };
+    let is_acc = |expr: &Expr| matches!(expr.kind, ExprKind::Identifier { slot: Some(s), .. } if s == acc_slot);
+    let mul_expr = if is_acc(add_left) {
+        add_right
+    } else if is_acc(add_right) {
+        add_left
+    } else {
+        return None;
+    };
+    let (a_slot, b_slot) = match &mul_expr.kind {
+        ExprKind::BinaryOp { left, op: Op::Multiply, right } => {
+            let (a_slot, a_idx) = match_f64_index(left)?;
+            let (b_slot, b_idx) = match_f64_index(right)?;
+            if a_idx != index_slot || b_idx != index_slot {
+                return None;
+            }
+            (a_slot, b_slot)
+        }
+        _ => return None,
+    };
+    Some((acc_slot, a_slot, b_slot))
+}
+
 fn match_range_end(expr: &Expr, consts: &mut Vec<Value>) -> Option<RangeEnd> {
     match &expr.kind {
         ExprKind::Identifier { slot: Some(s), .. } => Some(RangeEnd::Slot(*s)),
@@ -552,10 +589,15 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
         ExprKind::While { condition, body } => {
             if !want_value {
                 if let Some((index_slot, end, body_expr)) = match_for_range(condition, body, consts) {
-                    let mut body_code = Vec::new();
-                    if !compile_expr(&body_expr, &mut body_code, consts, true) { return false; }
-                    code.push(Instruction::ForRange { index_slot, end, body: Rc::new(body_code) });
-                    return true;
+                    if let Some((acc_slot, a_slot, b_slot)) = match_dot_range_body(&body_expr, index_slot) {
+                        code.push(Instruction::F64DotRange { acc_slot, a_slot, b_slot, index_slot, end });
+                        return true;
+                    } else {
+                        let mut body_code = Vec::new();
+                        if !compile_expr(&body_expr, &mut body_code, consts, true) { return false; }
+                        code.push(Instruction::ForRange { index_slot, end, body: Rc::new(body_code) });
+                        return true;
+                    }
                 }
             }
             if want_value {
@@ -1205,6 +1247,60 @@ fn execute_instructions(
                 let result = dst_vec[dst_idx] + scalar * src_vec[src_idx];
                 dst_vec[dst_idx] = result;
                 stack.push(Value::Float(result));
+            }
+            Instruction::F64DotRange { acc_slot, a_slot, b_slot, index_slot, end } => {
+                let start = match slots.get(*index_slot) {
+                    Some(Value::Integer(i)) => *i as usize,
+                    Some(Value::Float(f)) => *f as usize,
+                    _ => 0,
+                };
+                let end_val = match end {
+                    RangeEnd::Slot(s) => slots.get(*s).cloned().unwrap_or(Value::Nil),
+                    RangeEnd::Const(idx) => const_pool.get(*idx).cloned().unwrap_or(Value::Nil),
+                };
+                let end_idx = match end_val {
+                    Value::Integer(i) if i >= 0 => i as usize,
+                    Value::Float(f) if f >= 0.0 => f as usize,
+                    _ => return Err(RuntimeError { message: "Range end must be a non-negative number".to_string(), line: 0 }),
+                };
+                let acc = match slots.get(*acc_slot) {
+                    Some(Value::Float(f)) => *f,
+                    Some(Value::Integer(i)) => *i as f64,
+                    _ => 0.0,
+                };
+                let a = match slots.get(*a_slot) {
+                    Some(Value::F64Array(arr)) => arr.clone(),
+                    _ => return Err(RuntimeError { message: "F64DotRange requires F64Array a".to_string(), line: 0 }),
+                };
+                let b = match slots.get(*b_slot) {
+                    Some(Value::F64Array(arr)) => arr.clone(),
+                    _ => return Err(RuntimeError { message: "F64DotRange requires F64Array b".to_string(), line: 0 }),
+                };
+                let a_vec = a.borrow();
+                let b_vec = b.borrow();
+                if end_idx > a_vec.len() || end_idx > b_vec.len() {
+                    return Err(RuntimeError { message: "F64DotRange index out of bounds".to_string(), line: 0 });
+                }
+                let mut i = start;
+                let mut sum = Simd::<f64, 4>::splat(0.0);
+                while i + 4 <= end_idx {
+                    let av = Simd::from_slice(&a_vec[i..i + 4]);
+                    let bv = Simd::from_slice(&b_vec[i..i + 4]);
+                    sum += av * bv;
+                    i += 4;
+                }
+                let mut total = acc + sum.reduce_sum();
+                while i < end_idx {
+                    total += a_vec[i] * b_vec[i];
+                    i += 1;
+                }
+                if let Some(slot) = slots.get_mut(*acc_slot) {
+                    *slot = Value::Float(total);
+                }
+                if let Some(slot) = slots.get_mut(*index_slot) {
+                    *slot = Value::Integer(end_idx as i64);
+                }
+                stack.push(Value::Float(total));
             }
             inst => {
                 let r = stack.pop().unwrap();

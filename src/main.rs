@@ -1,3 +1,5 @@
+#![feature(portable_simd)]
+
 mod ast;
 mod eval;
 mod intern;

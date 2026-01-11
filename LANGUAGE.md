@@ -73,9 +73,12 @@ Kansei exposes native modules via the `std` namespace. The `use` keyword validat
 
 ```ruby
 use std::Int64
+use std::Float64
 
 Int64 = std::Int64
 value = Int64.parse("42")
+Float64 = std::Float64
+pi = Float64.parse("3.14159")
 ```
 
 The `::` operator accesses module members, similar to map dot access.

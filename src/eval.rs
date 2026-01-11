@@ -30,16 +30,33 @@ fn native_int64_parse(args: &[Value]) -> Result<Value, String> {
     }
 }
 
+fn native_float64_parse(args: &[Value]) -> Result<Value, String> {
+    let arg = args.get(0).ok_or_else(|| "Float64.parse expects 1 argument".to_string())?;
+    match arg {
+        Value::String(s) => s.parse::<f64>()
+            .map(Value::Float)
+            .map_err(|_| "Float64.parse failed to parse string".to_string()),
+        _ => Err("Float64.parse expects a string argument".to_string()),
+    }
+}
+
 fn build_int64_module() -> Value {
     let mut int64_map = FxHashMap::default();
     int64_map.insert(intern::intern("parse"), Value::NativeFunction(native_int64_parse));
     Value::Map(Rc::new(RefCell::new(int64_map)))
 }
 
+fn build_float64_module() -> Value {
+    let mut float64_map = FxHashMap::default();
+    float64_map.insert(intern::intern("parse"), Value::NativeFunction(native_float64_parse));
+    Value::Map(Rc::new(RefCell::new(float64_map)))
+}
+
 fn build_std_module() -> Value {
     let int64_val = build_int64_module();
     let mut std_map = FxHashMap::default();
     std_map.insert(intern::intern("Int64"), int64_val);
+    std_map.insert(intern::intern("Float64"), build_float64_module());
     Value::Map(Rc::new(RefCell::new(std_map)))
 }
 
@@ -1693,6 +1710,9 @@ impl Interpreter {
                 let mut map_mut = map.borrow_mut();
                 if !map_mut.contains_key(&intern::intern("Int64")) {
                     map_mut.insert(intern::intern("Int64"), build_int64_module());
+                }
+                if !map_mut.contains_key(&intern::intern("Float64")) {
+                    map_mut.insert(intern::intern("Float64"), build_float64_module());
                 }
             }
             Some(_) | None => {

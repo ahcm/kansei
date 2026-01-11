@@ -981,13 +981,21 @@ impl Interpreter {
                         }
                     },
                     (Value::String(s1), Value::String(s2)) => match op {
-                        Op::Add => Ok(Value::String(Rc::new(format!("{}{}", s1, s2)))),
+                        Op::Add => {
+                            let mut out = s1.clone();
+                            Rc::make_mut(&mut out).push_str(&s2);
+                            Ok(Value::String(out))
+                        }
                         Op::Equal => Ok(Value::Boolean(s1 == s2)),
                         Op::NotEqual => Ok(Value::Boolean(s1 != s2)),
                         _ => Err(RuntimeError { message: "Invalid operation on two strings".to_string(), line }),
                     },
                     (Value::String(s), v2) => match op {
-                        Op::Add => Ok(Value::String(Rc::new(format!("{}{}", s, v2.inspect())))),
+                        Op::Add => {
+                            let mut out = s.clone();
+                            Rc::make_mut(&mut out).push_str(&v2.inspect());
+                            Ok(Value::String(out))
+                        }
                         Op::Equal => Ok(Value::Boolean(false)),
                         Op::NotEqual => Ok(Value::Boolean(true)),
                         _ => Err(RuntimeError { message: format!("Invalid operation between String and {:?}", v2), line }),

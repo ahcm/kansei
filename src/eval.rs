@@ -278,6 +278,15 @@ fn match_for_range(condition: &Expr, body: &Expr, consts: &mut Vec<Value>) -> Op
     Some((index_slot, end, body_expr))
 }
 
+fn is_pure_expr(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Integer(_) | ExprKind::Float(_) | ExprKind::Boolean(_) | ExprKind::Nil => true,
+        ExprKind::Identifier { .. } => true,
+        ExprKind::BinaryOp { left, right, .. } => is_pure_expr(left) && is_pure_expr(right),
+        _ => false,
+    }
+}
+
 fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value>, want_value: bool) -> bool {
     match &expr.kind {
         ExprKind::Integer(i) => {
@@ -359,17 +368,59 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
             }
         }
         ExprKind::BinaryOp { left, op, right } => {
-            if !compile_expr(left, code, consts, true) { return false; }
-            if !compile_expr(right, code, consts, true) { return false; }
-            match op {
-                Op::Add => code.push(Instruction::Add),
-                Op::Subtract => code.push(Instruction::Sub),
-                Op::Multiply => code.push(Instruction::Mul),
-                Op::Divide => code.push(Instruction::Div),
-                Op::Equal => code.push(Instruction::Eq),
-                Op::GreaterThan => code.push(Instruction::Gt),
-                Op::LessThan => code.push(Instruction::Lt),
-                _ => return false,
+            let mut handled = false;
+            if *op == Op::Multiply {
+                let one = |expr: &Expr| matches!(expr.kind, ExprKind::Integer(1) | ExprKind::Float(1.0));
+                if is_pure_expr(left) {
+                    match &right.kind {
+                        ExprKind::BinaryOp { left: r_left, op: Op::Add, right: r_right } => {
+                            if (r_left.as_ref() == left.as_ref() && one(r_right))
+                                || (r_right.as_ref() == left.as_ref() && one(r_left))
+                            {
+                                if !compile_expr(left, code, consts, true) { return false; }
+                                code.push(Instruction::Dup);
+                                let idx = push_const(consts, Value::Integer(1));
+                                code.push(Instruction::LoadConstIdx(idx));
+                                code.push(Instruction::Add);
+                                code.push(Instruction::Mul);
+                                handled = true;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if !handled && is_pure_expr(right) {
+                    match &left.kind {
+                        ExprKind::BinaryOp { left: l_left, op: Op::Add, right: l_right } => {
+                            if (l_left.as_ref() == right.as_ref() && one(l_right))
+                                || (l_right.as_ref() == right.as_ref() && one(l_left))
+                            {
+                                if !compile_expr(right, code, consts, true) { return false; }
+                                code.push(Instruction::Dup);
+                                let idx = push_const(consts, Value::Integer(1));
+                                code.push(Instruction::LoadConstIdx(idx));
+                                code.push(Instruction::Add);
+                                code.push(Instruction::Mul);
+                                handled = true;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            if !handled {
+                if !compile_expr(left, code, consts, true) { return false; }
+                if !compile_expr(right, code, consts, true) { return false; }
+                match op {
+                    Op::Add => code.push(Instruction::Add),
+                    Op::Subtract => code.push(Instruction::Sub),
+                    Op::Multiply => code.push(Instruction::Mul),
+                    Op::Divide => code.push(Instruction::Div),
+                    Op::Equal => code.push(Instruction::Eq),
+                    Op::GreaterThan => code.push(Instruction::Gt),
+                    Op::LessThan => code.push(Instruction::Lt),
+                    _ => return false,
+                }
             }
             if !want_value {
                 code.push(Instruction::Pop);
@@ -540,6 +591,13 @@ fn execute_instructions(
             }
             Instruction::Pop => {
                 stack.pop();
+            }
+            Instruction::Dup => {
+                let val = stack.last().cloned().ok_or_else(|| RuntimeError {
+                    message: "Stack underflow on dup".to_string(),
+                    line: 0,
+                })?;
+                stack.push(val);
             }
             Instruction::JumpIfFalse(target) => {
                 let cond = stack.pop().unwrap_or(Value::Nil);

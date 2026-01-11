@@ -151,6 +151,7 @@ pub enum Instruction {
     Index,
     IndexAssign,
     ArrayGen,
+    Dup,
     Add,
     Sub,
     Mul,

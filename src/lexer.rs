@@ -238,29 +238,42 @@ impl Lexer
 
     fn read_number(&mut self) -> Token
     {
-        let start = self.position;
+        let mut int_val: i64 = 0;
+        let mut overflowed = false;
         while self.position < self.input.len() && self.input[self.position].is_digit(10)
         {
+            let digit = (self.input[self.position] as u8 - b'0') as i64;
+            if let Some(next) = int_val.checked_mul(10).and_then(|v| v.checked_add(digit)) {
+                int_val = next;
+            } else {
+                overflowed = true;
+            }
             self.position += 1;
         }
 
         if self.position < self.input.len() && self.input[self.position] == '.' {
-            // Check if it's a property access or method call (next char is start of identifier?)
-            // Or just allow 1. method? Ruby allows `1.to_s`. 
-            // But if it's digit after dot, it's a float.
-            // If we peek next char and it is digit, we consume dot.
             if self.position + 1 < self.input.len() && self.input[self.position + 1].is_digit(10) {
                 self.position += 1; // Consume dot
+                let mut frac_val: i64 = 0;
+                let mut divisor: f64 = 1.0;
                 while self.position < self.input.len() && self.input[self.position].is_digit(10) {
+                    let digit = (self.input[self.position] as u8 - b'0') as i64;
+                    if let Some(next) = frac_val.checked_mul(10).and_then(|v| v.checked_add(digit)) {
+                        frac_val = next;
+                    }
+                    divisor *= 10.0;
                     self.position += 1;
                 }
-                let num_str: String = self.input[start..self.position].iter().collect();
-                return Token::Float(num_str.parse().unwrap_or(0.0));
+                let int_part = if overflowed { 0 } else { int_val };
+                return Token::Float(int_part as f64 + (frac_val as f64 / divisor));
             }
         }
 
-        let num_str: String = self.input[start..self.position].iter().collect();
-        Token::Integer(num_str.parse().unwrap_or(0))
+        if overflowed {
+            Token::Integer(0)
+        } else {
+            Token::Integer(int_val)
+        }
     }
 
     fn read_identifier(&mut self) -> Token

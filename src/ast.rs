@@ -93,6 +93,13 @@ pub enum ExprKind
         iterable: Box<Expr>,
         body: Box<Expr>,
     },
+    Loop
+    {
+        count: Box<Expr>,
+        var: Option<Rc<String>>,
+        var_slot: Option<usize>,
+        body: Box<Expr>,
+    },
 
     FunctionDef
     {

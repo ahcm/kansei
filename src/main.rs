@@ -234,7 +234,7 @@ fn is_balanced(input: &str) -> bool
             let span = lexer.next_token();
             match span.token
             {
-                lexer::Token::If | lexer::Token::While | lexer::Token::For | lexer::Token::Fn => depth += 1,
+                lexer::Token::If | lexer::Token::While | lexer::Token::For | lexer::Token::Loop | lexer::Token::Fn => depth += 1,
                 lexer::Token::End | lexer::Token::RightBrace => depth -= 1, // Handle { } blocks?
                 // Wait, lexer doesn't count braces in is_balanced?
                 // `is_balanced` uses Lexer. Lexer emits RightBrace.

@@ -43,12 +43,19 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<Rc<String>>) {
                 collect_declarations(else_expr, decls);
             }
         }
-            ExprKind::While { body, .. } => {
-                collect_declarations(body, decls);
-            }
+        ExprKind::While { body, .. } => {
+            collect_declarations(body, decls);
+        }
         ExprKind::For { var, iterable, body, .. } => {
             decls.insert(var.clone());
             collect_declarations(iterable, decls);
+            collect_declarations(body, decls);
+        }
+        ExprKind::Loop { var, count, body, .. } => {
+            if let Some(name) = var {
+                decls.insert(name.clone());
+            }
+            collect_declarations(count, decls);
             collect_declarations(body, decls);
         }
         ExprKind::Array(elements) => {
@@ -142,6 +149,10 @@ fn resolve_functions(expr: &mut Expr) {
         }
         ExprKind::For { iterable, body, .. } => {
             resolve_functions(iterable);
+            resolve_functions(body);
+        }
+        ExprKind::Loop { count, body, .. } => {
+            resolve_functions(count);
             resolve_functions(body);
         }
         ExprKind::Call { function, args, block, .. } => {
@@ -276,6 +287,21 @@ fn match_for_range(condition: &Expr, body: &Expr, consts: &mut Vec<Value>) -> Op
         line,
     };
     Some((index_slot, end, body_expr))
+}
+
+fn match_range_end(expr: &Expr, consts: &mut Vec<Value>) -> Option<RangeEnd> {
+    match &expr.kind {
+        ExprKind::Identifier { slot: Some(s), .. } => Some(RangeEnd::Slot(*s)),
+        ExprKind::Integer(i) => {
+            let idx = push_const(consts, Value::Integer(*i));
+            Some(RangeEnd::Const(idx))
+        }
+        ExprKind::Float(f) => {
+            let idx = push_const(consts, Value::Float(*f));
+            Some(RangeEnd::Const(idx))
+        }
+        _ => None,
+    }
 }
 
 fn is_pure_expr(expr: &Expr) -> bool {
@@ -556,6 +582,22 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
             code.push(Instruction::ForEach { var_slot: *var_slot, body: Rc::new(body_code) });
             if !want_value {
                 code.push(Instruction::Pop);
+            }
+        }
+        ExprKind::Loop { count, var_slot: Some(var_slot), body, .. } => {
+            let end = match_range_end(count, consts);
+            if let Some(end) = end {
+                let zero_idx = push_const(consts, Value::Integer(0));
+                code.push(Instruction::LoadConstIdx(zero_idx));
+                code.push(Instruction::StoreSlot(*var_slot));
+                let mut body_code = Vec::new();
+                if !compile_expr(body, &mut body_code, consts, true) { return false; }
+                code.push(Instruction::ForRange { index_slot: *var_slot, end, body: Rc::new(body_code) });
+                if !want_value {
+                    code.push(Instruction::Pop);
+                }
+            } else {
+                return false;
             }
         }
         ExprKind::Array(elements) => {
@@ -1141,6 +1183,7 @@ fn is_simple(expr: &Expr) -> bool {
         }
         ExprKind::While { condition, body } => is_simple(condition) && is_simple(body),
         ExprKind::For { iterable, body, .. } => is_simple(iterable) && is_simple(body),
+        ExprKind::Loop { count, body, .. } => is_simple(count) && is_simple(body),
         ExprKind::BinaryOp { left, right, .. } => is_simple(left) && is_simple(right),
         ExprKind::Call { function, args, block, .. } => {
             if block.is_some() { return false; }
@@ -1193,6 +1236,15 @@ fn resolve(expr: &mut Expr, slot_map: &FxHashMap<Rc<String>, usize>) {
                 *var_slot = Some(*s);
             }
             resolve(iterable, slot_map);
+            resolve(body, slot_map);
+        }
+        ExprKind::Loop { var, var_slot, count, body } => {
+            if let Some(name) = var {
+                if let Some(s) = slot_map.get(name) {
+                    *var_slot = Some(*s);
+                }
+            }
+            resolve(count, slot_map);
             resolve(body, slot_map);
         }
         ExprKind::Call { function, args, block, .. } => {
@@ -2063,6 +2115,29 @@ impl Interpreter {
                     }
                     _ => Err(RuntimeError { message: "Type is not iterable".to_string(), line }),
                 }
+            }
+            ExprKind::Loop { count, var, var_slot, body } => {
+                let count_val = self.eval(count, slots)?;
+                let n = match count_val {
+                    Value::Integer(i) if i >= 0 => i as usize,
+                    Value::Float(f) if f >= 0.0 => f as usize,
+                    _ => return Err(RuntimeError {
+                        message: "Loop count must be a non-negative number".to_string(),
+                        line,
+                    }),
+                };
+                let mut last_val = Value::Nil;
+                for idx in 0..n {
+                    if let Some(slot) = var_slot {
+                        if let Some(slot_val) = slots.get_mut(*slot) {
+                            *slot_val = Value::Integer(idx as i64);
+                        }
+                    } else if let Some(name) = var {
+                        self.env.borrow_mut().assign(name.clone(), Value::Integer(idx as i64));
+                    }
+                    last_val = self.eval(body, slots)?;
+                }
+                Ok(last_val)
             }
             ExprKind::Block(statements) => {
                 let mut last = Value::Nil;

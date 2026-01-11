@@ -302,6 +302,7 @@ impl Parser
             Token::If => self.parse_if(),
             Token::While => self.parse_while(),
             Token::For => self.parse_for(),
+            Token::Loop => self.parse_loop(),
             Token::LeftBracket => self.parse_array(),
             Token::LeftBrace => {
                 let mut temp_lexer = self.lexer.clone();
@@ -565,6 +566,37 @@ impl Parser
             var: var_name,
             var_slot: None,
             iterable: Box::new(iterable),
+            body: Box::new(body),
+        }, line)
+    }
+
+    fn parse_loop(&mut self) -> Expr
+    {
+        let line = self.current_token.line;
+        self.eat(); // eat 'loop'
+
+        let count = self.parse_expression();
+
+        let var = if self.current_token.token == Token::Pipe {
+            self.eat(); // |
+            let name = match &self.current_token.token {
+                Token::Identifier(n) => intern::intern_owned(n.clone()),
+                _ => panic!("Expected loop variable name at line {}", self.current_token.line),
+            };
+            self.eat();
+            self.expect(Token::Pipe);
+            Some(name)
+        } else {
+            None
+        };
+
+        let body = self.parse_block();
+        self.expect(Token::End);
+
+        self.make_expr(ExprKind::Loop {
+            count: Box::new(count),
+            var,
+            var_slot: None,
             body: Box::new(body),
         }, line)
     }

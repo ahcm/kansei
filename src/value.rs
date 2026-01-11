@@ -1,4 +1,4 @@
-use crate::ast::{Expr, FloatKind};
+use crate::ast::{Expr, FloatKind, IntKind};
 use crate::intern::SymbolId;
 use rustc_hash::FxHashMap;
 use std::fmt;
@@ -223,7 +223,8 @@ pub struct FunctionData {
 #[derive(Clone)]
 pub enum Value
 {
-    Integer(i64),
+    Integer { value: i128, kind: IntKind },
+    Unsigned { value: u128, kind: IntKind },
     Float { value: f64, kind: FloatKind },
     String(Rc<String>),
     Boolean(bool),
@@ -249,7 +250,8 @@ impl PartialEq for Value {
         };
         
         match (left, right) {
-            (Value::Integer(a), Value::Integer(b)) => a == b,
+            (Value::Integer { value: a, kind: ka }, Value::Integer { value: b, kind: kb }) => a == b && ka == kb,
+            (Value::Unsigned { value: a, kind: ka }, Value::Unsigned { value: b, kind: kb }) => a == b && ka == kb,
             (Value::Float { value: a, kind: ka }, Value::Float { value: b, kind: kb }) => a == b && ka == kb, // Note: NaN != NaN
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Boolean(a), Value::Boolean(b)) => a == b,
@@ -280,7 +282,8 @@ impl PartialEq for Value {
 impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Value::Integer(i) => write!(f, "Integer({})", i),
+            Value::Integer { value, kind } => write!(f, "Integer({:?}, {})", kind, value),
+            Value::Unsigned { value, kind } => write!(f, "Unsigned({:?}, {})", kind, value),
             Value::Float { value, kind } => write!(f, "Float({:?}, {})", kind, value),
             Value::String(s) => write!(f, "String({:?})", s),
             Value::Boolean(b) => write!(f, "Boolean({})", b),
@@ -302,7 +305,8 @@ impl Value
     {
         match self
         {
-            Value::Integer(i) => i.to_string(),
+            Value::Integer { value, .. } => value.to_string(),
+            Value::Unsigned { value, .. } => value.to_string(),
             Value::Float { value, .. } => value.to_string(),
             Value::String(s) => format!("\"{}\"", s),
             Value::Boolean(b) => b.to_string(),
@@ -347,7 +351,8 @@ impl fmt::Display for Value
     {
         match self
         {
-            Value::Integer(i) => write!(f, "{}", i),
+            Value::Integer { value, .. } => write!(f, "{}", value),
+            Value::Unsigned { value, .. } => write!(f, "{}", value),
             Value::Float { value, .. } => write!(f, "{}", value),
             Value::String(s) => write!(f, "{}", s),
             Value::Boolean(b) => write!(f, "{}", b),

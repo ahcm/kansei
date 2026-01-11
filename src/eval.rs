@@ -1,4 +1,4 @@
-use crate::ast::{Closure, Expr, ExprKind, FloatKind, Op};
+use crate::ast::{Closure, Expr, ExprKind, FloatKind, IntKind, Op};
 use crate::intern;
 use crate::intern::{SymbolId, symbol_name};
 use crate::value::{Builtin, Environment, Instruction, RangeEnd, Value};
@@ -21,13 +21,7 @@ pub struct RuntimeError {
 pub type EvalResult = Result<Value, RuntimeError>;
 
 fn native_int64_parse(args: &[Value]) -> Result<Value, String> {
-    let arg = args.get(0).ok_or_else(|| "Int64.parse expects 1 argument".to_string())?;
-    match arg {
-        Value::String(s) => s.parse::<i64>()
-            .map(Value::Integer)
-            .map_err(|_| "Int64.parse failed to parse string".to_string()),
-        _ => Err("Int64.parse expects a string argument".to_string()),
-    }
+    parse_signed_int(args, IntKind::I64, "Int64")
 }
 
 fn native_float64_parse(args: &[Value]) -> Result<Value, String> {
@@ -60,10 +54,137 @@ fn native_float128_parse(args: &[Value]) -> Result<Value, String> {
     }
 }
 
+fn signed_int_min(kind: IntKind) -> i128 {
+    match kind {
+        IntKind::I8 => i8::MIN as i128,
+        IntKind::I16 => i16::MIN as i128,
+        IntKind::I32 => i32::MIN as i128,
+        IntKind::I64 => i64::MIN as i128,
+        IntKind::I128 => i128::MIN,
+        _ => panic!("Expected signed int kind, got {:?}", kind),
+    }
+}
+
+fn signed_int_max(kind: IntKind) -> i128 {
+    match kind {
+        IntKind::I8 => i8::MAX as i128,
+        IntKind::I16 => i16::MAX as i128,
+        IntKind::I32 => i32::MAX as i128,
+        IntKind::I64 => i64::MAX as i128,
+        IntKind::I128 => i128::MAX,
+        _ => panic!("Expected signed int kind, got {:?}", kind),
+    }
+}
+
+fn unsigned_int_max(kind: IntKind) -> u128 {
+    match kind {
+        IntKind::U8 => u8::MAX as u128,
+        IntKind::U16 => u16::MAX as u128,
+        IntKind::U32 => u32::MAX as u128,
+        IntKind::U64 => u64::MAX as u128,
+        IntKind::U128 => u128::MAX,
+        _ => panic!("Expected unsigned int kind, got {:?}", kind),
+    }
+}
+
+fn parse_signed_int(args: &[Value], kind: IntKind, label: &str) -> Result<Value, String> {
+    let arg = args.get(0).ok_or_else(|| format!("{}.parse expects 1 argument", label))?;
+    let s = match arg {
+        Value::String(s) => s.as_str(),
+        _ => return Err(format!("{}.parse expects a string argument", label)),
+    };
+    let value = s.parse::<i128>().map_err(|_| format!("{}.parse failed to parse string", label))?;
+    let min = signed_int_min(kind);
+    let max = signed_int_max(kind);
+    if value < min || value > max {
+        return Err(format!("{}.parse out of range for {:?}", label, kind));
+    }
+    Ok(make_signed_int(value, kind))
+}
+
+fn parse_unsigned_int(args: &[Value], kind: IntKind, label: &str) -> Result<Value, String> {
+    let arg = args.get(0).ok_or_else(|| format!("{}.parse expects 1 argument", label))?;
+    let s = match arg {
+        Value::String(s) => s.as_str(),
+        _ => return Err(format!("{}.parse expects a string argument", label)),
+    };
+    let value = s.parse::<u128>().map_err(|_| format!("{}.parse failed to parse string", label))?;
+    let max = unsigned_int_max(kind);
+    if value > max {
+        return Err(format!("{}.parse out of range for {:?}", label, kind));
+    }
+    Ok(make_unsigned_int(value, kind))
+}
+
+fn native_int8_parse(args: &[Value]) -> Result<Value, String> { parse_signed_int(args, IntKind::I8, "Int8") }
+fn native_int16_parse(args: &[Value]) -> Result<Value, String> { parse_signed_int(args, IntKind::I16, "Int16") }
+fn native_int32_parse(args: &[Value]) -> Result<Value, String> { parse_signed_int(args, IntKind::I32, "Int32") }
+fn native_int128_parse(args: &[Value]) -> Result<Value, String> { parse_signed_int(args, IntKind::I128, "Int128") }
+
+fn native_uint8_parse(args: &[Value]) -> Result<Value, String> { parse_unsigned_int(args, IntKind::U8, "Uint8") }
+fn native_uint16_parse(args: &[Value]) -> Result<Value, String> { parse_unsigned_int(args, IntKind::U16, "Uint16") }
+fn native_uint32_parse(args: &[Value]) -> Result<Value, String> { parse_unsigned_int(args, IntKind::U32, "Uint32") }
+fn native_uint64_parse(args: &[Value]) -> Result<Value, String> { parse_unsigned_int(args, IntKind::U64, "Uint64") }
+fn native_uint128_parse(args: &[Value]) -> Result<Value, String> { parse_unsigned_int(args, IntKind::U128, "Uint128") }
+
 fn build_int64_module() -> Value {
     let mut int64_map = FxHashMap::default();
     int64_map.insert(intern::intern("parse"), Value::NativeFunction(native_int64_parse));
     Value::Map(Rc::new(RefCell::new(int64_map)))
+}
+
+fn build_int8_module() -> Value {
+    let mut map = FxHashMap::default();
+    map.insert(intern::intern("parse"), Value::NativeFunction(native_int8_parse));
+    Value::Map(Rc::new(RefCell::new(map)))
+}
+
+fn build_int16_module() -> Value {
+    let mut map = FxHashMap::default();
+    map.insert(intern::intern("parse"), Value::NativeFunction(native_int16_parse));
+    Value::Map(Rc::new(RefCell::new(map)))
+}
+
+fn build_int32_module() -> Value {
+    let mut map = FxHashMap::default();
+    map.insert(intern::intern("parse"), Value::NativeFunction(native_int32_parse));
+    Value::Map(Rc::new(RefCell::new(map)))
+}
+
+fn build_int128_module() -> Value {
+    let mut map = FxHashMap::default();
+    map.insert(intern::intern("parse"), Value::NativeFunction(native_int128_parse));
+    Value::Map(Rc::new(RefCell::new(map)))
+}
+
+fn build_uint8_module() -> Value {
+    let mut map = FxHashMap::default();
+    map.insert(intern::intern("parse"), Value::NativeFunction(native_uint8_parse));
+    Value::Map(Rc::new(RefCell::new(map)))
+}
+
+fn build_uint16_module() -> Value {
+    let mut map = FxHashMap::default();
+    map.insert(intern::intern("parse"), Value::NativeFunction(native_uint16_parse));
+    Value::Map(Rc::new(RefCell::new(map)))
+}
+
+fn build_uint32_module() -> Value {
+    let mut map = FxHashMap::default();
+    map.insert(intern::intern("parse"), Value::NativeFunction(native_uint32_parse));
+    Value::Map(Rc::new(RefCell::new(map)))
+}
+
+fn build_uint64_module() -> Value {
+    let mut map = FxHashMap::default();
+    map.insert(intern::intern("parse"), Value::NativeFunction(native_uint64_parse));
+    Value::Map(Rc::new(RefCell::new(map)))
+}
+
+fn build_uint128_module() -> Value {
+    let mut map = FxHashMap::default();
+    map.insert(intern::intern("parse"), Value::NativeFunction(native_uint128_parse));
+    Value::Map(Rc::new(RefCell::new(map)))
 }
 
 fn build_float32_module() -> Value {
@@ -85,9 +206,17 @@ fn build_float128_module() -> Value {
 }
 
 fn build_std_module() -> Value {
-    let int64_val = build_int64_module();
     let mut std_map = FxHashMap::default();
-    std_map.insert(intern::intern("Int64"), int64_val);
+    std_map.insert(intern::intern("Int8"), build_int8_module());
+    std_map.insert(intern::intern("Int16"), build_int16_module());
+    std_map.insert(intern::intern("Int32"), build_int32_module());
+    std_map.insert(intern::intern("Int64"), build_int64_module());
+    std_map.insert(intern::intern("Int128"), build_int128_module());
+    std_map.insert(intern::intern("Uint8"), build_uint8_module());
+    std_map.insert(intern::intern("Uint16"), build_uint16_module());
+    std_map.insert(intern::intern("Uint32"), build_uint32_module());
+    std_map.insert(intern::intern("Uint64"), build_uint64_module());
+    std_map.insert(intern::intern("Uint128"), build_uint128_module());
     std_map.insert(intern::intern("Float32"), build_float32_module());
     std_map.insert(intern::intern("Float64"), build_float64_module());
     std_map.insert(intern::intern("Float128"), build_float128_module());
@@ -112,6 +241,79 @@ fn promote_float_kind(left: FloatKind, right: FloatKind) -> FloatKind {
 
 fn make_float(value: f64, kind: FloatKind) -> Value {
     Value::Float { value: normalize_float_value(value, kind), kind }
+}
+
+fn int_kind_bits(kind: IntKind) -> u32 {
+    match kind {
+        IntKind::I8 | IntKind::U8 => 8,
+        IntKind::I16 | IntKind::U16 => 16,
+        IntKind::I32 | IntKind::U32 => 32,
+        IntKind::I64 | IntKind::U64 => 64,
+        IntKind::I128 | IntKind::U128 => 128,
+    }
+}
+
+fn signed_kind_for_bits(bits: u32) -> IntKind {
+    match bits {
+        8 => IntKind::I8,
+        16 => IntKind::I16,
+        32 => IntKind::I32,
+        64 => IntKind::I64,
+        _ => IntKind::I128,
+    }
+}
+
+fn unsigned_kind_for_bits(bits: u32) -> IntKind {
+    match bits {
+        8 => IntKind::U8,
+        16 => IntKind::U16,
+        32 => IntKind::U32,
+        64 => IntKind::U64,
+        _ => IntKind::U128,
+    }
+}
+
+fn make_signed_int(value: i128, kind: IntKind) -> Value {
+    Value::Integer { value, kind }
+}
+
+fn make_unsigned_int(value: u128, kind: IntKind) -> Value {
+    Value::Unsigned { value, kind }
+}
+
+fn int_value_as_f64(value: &Value) -> Option<f64> {
+    match value {
+        Value::Integer { value, .. } => Some(*value as f64),
+        Value::Unsigned { value, .. } => Some(*value as f64),
+        _ => None,
+    }
+}
+
+fn int_value_as_i64(value: &Value) -> Option<i64> {
+    match value {
+        Value::Integer { value, .. } => i64::try_from(*value).ok(),
+        Value::Unsigned { value, .. } => i64::try_from(*value).ok(),
+        _ => None,
+    }
+}
+
+fn default_int(value: i128) -> Value {
+    make_signed_int(value, IntKind::I64)
+}
+
+fn int_value_as_usize(value: &Value) -> Option<usize> {
+    match value {
+        Value::Integer { value, .. } if *value >= 0 => usize::try_from(*value).ok(),
+        Value::Unsigned { value, .. } => usize::try_from(*value).ok(),
+        _ => None,
+    }
+}
+
+fn number_to_usize(value: &Value) -> Option<usize> {
+    match value {
+        Value::Float { value, .. } if *value >= 0.0 => Some(*value as usize),
+        _ => int_value_as_usize(value),
+    }
 }
 
 
@@ -303,7 +505,7 @@ fn uses_environment(expr: &Expr) -> bool {
         ExprKind::Use(_) => true,
         // Simple functions (is_simple) only have these constructs roughly. 
         // We can be conservative.
-        ExprKind::Integer(_) | ExprKind::Float { .. } | ExprKind::String(_) | ExprKind::Boolean(_) | ExprKind::Nil => false,
+        ExprKind::Integer { .. } | ExprKind::Unsigned { .. } | ExprKind::Float { .. } | ExprKind::String(_) | ExprKind::Boolean(_) | ExprKind::Nil => false,
         _ => true, // Conservative fallback for blocks, loops, etc. if they slipped into is_simple
     }
 }
@@ -336,8 +538,12 @@ fn match_for_range(condition: &Expr, body: &Expr, consts: &mut Vec<Value>) -> Op
             };
             let end = match &right.kind {
                 ExprKind::Identifier { slot: Some(s), .. } => RangeEnd::Slot(*s),
-                ExprKind::Integer(i) => {
-                    let idx = push_const(consts, Value::Integer(*i));
+                ExprKind::Integer { value, kind } => {
+                    let idx = push_const(consts, make_signed_int(*value, *kind));
+                    RangeEnd::Const(idx)
+                }
+                ExprKind::Unsigned { value, kind } => {
+                    let idx = push_const(consts, make_unsigned_int(*value, *kind));
                     RangeEnd::Const(idx)
                 }
                 ExprKind::Float { value, kind } => {
@@ -371,7 +577,7 @@ fn match_for_range(condition: &Expr, body: &Expr, consts: &mut Vec<Value>) -> Op
                     if left_slot != index_slot {
                         return None;
                     }
-                    let is_one = matches!(right.kind, ExprKind::Integer(1) | ExprKind::Float { value: 1.0, .. });
+                    let is_one = matches!(right.kind, ExprKind::Integer { value: 1, .. } | ExprKind::Unsigned { value: 1, .. } | ExprKind::Float { value: 1.0, .. });
                     if !is_one {
                         return None;
                     }
@@ -444,8 +650,12 @@ fn match_dot2_range_body(body: &Expr, index_slot: usize) -> Option<(usize, usize
 fn match_range_end(expr: &Expr, consts: &mut Vec<Value>) -> Option<RangeEnd> {
     match &expr.kind {
         ExprKind::Identifier { slot: Some(s), .. } => Some(RangeEnd::Slot(*s)),
-        ExprKind::Integer(i) => {
-            let idx = push_const(consts, Value::Integer(*i));
+        ExprKind::Integer { value, kind } => {
+            let idx = push_const(consts, make_signed_int(*value, *kind));
+            Some(RangeEnd::Const(idx))
+        }
+        ExprKind::Unsigned { value, kind } => {
+            let idx = push_const(consts, make_unsigned_int(*value, *kind));
             Some(RangeEnd::Const(idx))
         }
         ExprKind::Float { value, kind } => {
@@ -458,7 +668,7 @@ fn match_range_end(expr: &Expr, consts: &mut Vec<Value>) -> Option<RangeEnd> {
 
 fn is_pure_expr(expr: &Expr) -> bool {
     match &expr.kind {
-        ExprKind::Integer(_) | ExprKind::Float { .. } | ExprKind::Boolean(_) | ExprKind::Nil => true,
+        ExprKind::Integer { .. } | ExprKind::Unsigned { .. } | ExprKind::Float { .. } | ExprKind::Boolean(_) | ExprKind::Nil => true,
         ExprKind::Identifier { .. } => true,
         ExprKind::BinaryOp { left, right, .. } => is_pure_expr(left) && is_pure_expr(right),
         _ => false,
@@ -522,9 +732,15 @@ fn match_f64_axpy(target: &Expr, value: &Expr) -> Option<(usize, usize, usize, u
 
 fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value>, want_value: bool) -> bool {
     match &expr.kind {
-        ExprKind::Integer(i) => {
+        ExprKind::Integer { value, kind } => {
             if want_value {
-                let idx = push_const(consts, Value::Integer(*i));
+                let idx = push_const(consts, make_signed_int(*value, *kind));
+                code.push(Instruction::LoadConstIdx(idx));
+            }
+        }
+        ExprKind::Unsigned { value, kind } => {
+            if want_value {
+                let idx = push_const(consts, make_unsigned_int(*value, *kind));
                 code.push(Instruction::LoadConstIdx(idx));
             }
         }
@@ -613,7 +829,7 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
         ExprKind::BinaryOp { left, op, right } => {
             let mut handled = false;
             if *op == Op::Multiply {
-                let one = |expr: &Expr| matches!(expr.kind, ExprKind::Integer(1) | ExprKind::Float { value: 1.0, .. });
+                let one = |expr: &Expr| matches!(expr.kind, ExprKind::Integer { value: 1, .. } | ExprKind::Unsigned { value: 1, .. } | ExprKind::Float { value: 1.0, .. });
                 if is_pure_expr(left) {
                     match &right.kind {
                         ExprKind::BinaryOp { left: r_left, op: Op::Add, right: r_right } => {
@@ -622,7 +838,7 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
                             {
                                 if !compile_expr(left, code, consts, true) { return false; }
                                 code.push(Instruction::Dup);
-                                let idx = push_const(consts, Value::Integer(1));
+                                let idx = push_const(consts, default_int(1));
                                 code.push(Instruction::LoadConstIdx(idx));
                                 code.push(Instruction::Add);
                                 code.push(Instruction::Mul);
@@ -640,7 +856,7 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
                             {
                                 if !compile_expr(right, code, consts, true) { return false; }
                                 code.push(Instruction::Dup);
-                                let idx = push_const(consts, Value::Integer(1));
+                                let idx = push_const(consts, default_int(1));
                                 code.push(Instruction::LoadConstIdx(idx));
                                 code.push(Instruction::Add);
                                 code.push(Instruction::Mul);
@@ -762,7 +978,7 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
         ExprKind::Loop { count, var_slot: Some(var_slot), body, .. } => {
             let end = match_range_end(count, consts);
             if let Some(end) = end {
-                let zero_idx = push_const(consts, Value::Integer(0));
+                let zero_idx = push_const(consts, default_int(0));
                 code.push(Instruction::LoadConstIdx(zero_idx));
                 code.push(Instruction::StoreSlot(*var_slot));
                 let mut body_code = Vec::new();
@@ -946,7 +1162,7 @@ fn expr_size(expr: &Expr) -> usize {
 
 fn is_inline_safe_arg(expr: &Expr) -> bool {
     match &expr.kind {
-        ExprKind::Integer(_) | ExprKind::Float { .. } | ExprKind::Boolean(_) | ExprKind::Nil => true,
+        ExprKind::Integer { .. } | ExprKind::Unsigned { .. } | ExprKind::Float { .. } | ExprKind::Boolean(_) | ExprKind::Nil => true,
         ExprKind::Identifier { .. } => true,
         ExprKind::BinaryOp { left, right, .. } => is_inline_safe_arg(left) && is_inline_safe_arg(right),
         ExprKind::Index { target, index } => is_inline_safe_arg(target) && is_inline_safe_arg(index),
@@ -1082,27 +1298,31 @@ fn execute_instructions(
                         RangeEnd::Const(idx) => const_pool.get(*idx).cloned().unwrap_or(Value::Nil),
                     };
                     let end_f = match end_val {
-                        Value::Integer(i) => i as f64,
                         Value::Float { value, .. } => value,
-                        _ => return Err(RuntimeError { message: "Range end must be a number".to_string(), line: 0 }),
+                        _ => int_value_as_f64(&end_val).ok_or_else(|| RuntimeError {
+                            message: "Range end must be a number".to_string(),
+                            line: 0,
+                        })?,
                     };
                     let current = match slots.get(*index_slot) {
-                        Some(Value::Integer(i)) => *i,
-                        Some(Value::Float { value, .. }) => *value as i64,
-                        _ => return Err(RuntimeError { message: "Range index must be a number".to_string(), line: 0 }),
+                        Some(v) => int_value_as_i64(v).ok_or_else(|| RuntimeError {
+                            message: "Range index must be a number".to_string(),
+                            line: 0,
+                        })?,
+                        None => return Err(RuntimeError { message: "Range index must be a number".to_string(), line: 0 }),
                     };
                     if (current as f64) >= end_f {
                         if let Some(slot) = slots.get_mut(*index_slot) {
-                            *slot = Value::Integer(current);
+                            *slot = default_int(current as i128);
                         }
                         break;
                     }
                     if let Some(slot) = slots.get_mut(*index_slot) {
-                        *slot = Value::Integer(current);
+                        *slot = default_int(current as i128);
                     }
                     last = execute_instructions(interpreter, body, const_pool, slots)?;
                     if let Some(slot) = slots.get_mut(*index_slot) {
-                        *slot = Value::Integer(current + 1);
+                        *slot = default_int(current as i128 + 1);
                     }
                 }
                 stack.push(last);
@@ -1119,11 +1339,14 @@ fn execute_instructions(
                     if all_f64 {
                         match v {
                             Value::Float { value, .. } => f64_vals.push(value),
-                            Value::Integer(i) => f64_vals.push(i as f64),
-                            _ => {
-                                all_f64 = false;
-                                elems.extend(f64_vals.drain(..).map(|value| make_float(value, FloatKind::F64)));
-                                elems.push(v);
+                            v => {
+                                if let Some(num) = int_value_as_f64(&v) {
+                                    f64_vals.push(num);
+                                } else {
+                                    all_f64 = false;
+                                    elems.extend(f64_vals.drain(..).map(|value| make_float(value, FloatKind::F64)));
+                                    elems.push(v);
+                                }
                             }
                         }
                     } else {
@@ -1171,10 +1394,9 @@ fn execute_instructions(
                 })?;
                 let result = match target_val {
                     Value::Array(arr) => {
-                        if let Value::Integer(idx) = index_val {
-                            let i = idx as usize;
+                        if let Some(i) = int_value_as_usize(&index_val) {
                             let vec = arr.borrow();
-                            if idx >= 0 && i < vec.len() {
+                            if i < vec.len() {
                                 vec[i].clone()
                             } else {
                                 Value::Nil
@@ -1184,10 +1406,9 @@ fn execute_instructions(
                         }
                     }
                     Value::F64Array(arr) => {
-                        if let Value::Integer(idx) = index_val {
-                            let i = idx as usize;
+                        if let Some(i) = int_value_as_usize(&index_val) {
                             let vec = arr.borrow();
-                            if idx >= 0 && i < vec.len() {
+                            if i < vec.len() {
                                 make_float(vec[i], FloatKind::F64)
                             } else {
                                 Value::Nil
@@ -1222,34 +1443,37 @@ fn execute_instructions(
                 })?;
                 match target_val {
                     Value::Array(arr) => {
-                        if let Value::Integer(idx) = index_val {
+                        if let Some(i) = int_value_as_usize(&index_val) {
                             let mut vec = arr.borrow_mut();
-                            let i = idx as usize;
-                            if idx >= 0 && i < vec.len() {
+                            if i < vec.len() {
                                 vec[i] = value.clone();
                             } else {
-                                return Err(RuntimeError { message: format!("Array index out of bounds: {}", idx), line: 0 });
+                                return Err(RuntimeError { message: "Array index out of bounds".to_string(), line: 0 });
                             }
                         } else {
                             return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
                         }
                     }
                     Value::F64Array(arr) => {
-                        if let Value::Integer(idx) = index_val {
+                        if let Some(i) = int_value_as_usize(&index_val) {
                             let mut vec = arr.borrow_mut();
-                            let i = idx as usize;
-                            if idx >= 0 && i < vec.len() {
-                                match value {
-                                    Value::Float { value, .. } => vec[i] = value,
-                                    Value::Integer(int_val) => vec[i] = int_val as f64,
-                                    _ => return Err(RuntimeError {
-                                        message: "F64Array assignment requires a number".to_string(),
-                                        line: 0,
-                                    }),
+                            if i < vec.len() {
+                                match &value {
+                                    Value::Float { value, .. } => vec[i] = *value,
+                                    v => {
+                                        if let Some(num) = int_value_as_f64(v) {
+                                            vec[i] = num;
+                                        } else {
+                                            return Err(RuntimeError {
+                                                message: "F64Array assignment requires a number".to_string(),
+                                                line: 0,
+                                            });
+                                        }
+                                    }
                                 }
                             } else {
                                 return Err(RuntimeError {
-                                    message: format!("Array index out of bounds: {}", idx),
+                                    message: "Array index out of bounds".to_string(),
                                     line: 0,
                                 });
                             }
@@ -1280,10 +1504,11 @@ fn execute_instructions(
                     message: "Missing generator for array".to_string(),
                     line: 0,
                 })?;
-                let n = match size_val {
-                    Value::Integer(i) if i >= 0 => i as usize,
-                    _ => return Err(RuntimeError { message: "Array size must be a non-negative integer".to_string(), line: 0 }),
-                };
+                let n = int_value_as_usize(&size_val)
+                    .ok_or_else(|| RuntimeError {
+                        message: "Array size must be a non-negative integer".to_string(),
+                        line: 0,
+                    })?;
                 let mut vals: Vec<Value> = Vec::new();
                 let mut f64_vals: Vec<f64> = Vec::new();
                 let mut all_f64 = true;
@@ -1291,7 +1516,7 @@ fn execute_instructions(
                     for i in 0..n {
                         let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, data.declarations.len());
                         if !data.params.is_empty() {
-                             new_slots[data.param_offset] = Value::Integer(i as i64);
+                             new_slots[data.param_offset] = default_int(i as i128);
                         }
                         let result = if let Some(code) = &data.code {
                             execute_instructions(interpreter, code, const_pool, &mut new_slots)?
@@ -1309,7 +1534,8 @@ fn execute_instructions(
                         if all_f64 {
                             match result {
                                 Value::Float { value, .. } => f64_vals.push(value),
-                                Value::Integer(i) => f64_vals.push(i as f64),
+                                Value::Integer { value, .. } => f64_vals.push(value as f64),
+                                Value::Unsigned { value, .. } => f64_vals.push(value as f64),
                                 _ => {
                                     all_f64 = false;
                                     vals.extend(f64_vals.drain(..).map(|value| make_float(value, FloatKind::F64)));
@@ -1325,7 +1551,8 @@ fn execute_instructions(
                         if all_f64 {
                             match gen_val {
                                 Value::Float { value, .. } => f64_vals.push(value),
-                                Value::Integer(i) => f64_vals.push(i as f64),
+                                Value::Integer { value, .. } => f64_vals.push(value as f64),
+                                Value::Unsigned { value, .. } => f64_vals.push(value as f64),
                                 _ => {
                                     all_f64 = false;
                                     vals.extend(f64_vals.drain(..).map(|value| make_float(value, FloatKind::F64)));
@@ -1350,18 +1577,24 @@ fn execute_instructions(
                 })?;
                 let scalar = match scalar_val {
                     Value::Float { value, .. } => value,
-                    Value::Integer(i) => i as f64,
-                    _ => return Err(RuntimeError { message: "F64Axpy requires numeric scalar".to_string(), line: 0 }),
+                    v => int_value_as_f64(&v).ok_or_else(|| RuntimeError {
+                        message: "F64Axpy requires numeric scalar".to_string(),
+                        line: 0,
+                    })?,
                 };
                 let dst_idx = match slots.get(*dst_index_slot) {
-                    Some(Value::Integer(i)) => *i as usize,
-                    Some(Value::Float { value, .. }) => *value as usize,
-                    _ => return Err(RuntimeError { message: "F64Axpy dst index must be numeric".to_string(), line: 0 }),
+                    Some(v) => number_to_usize(v).ok_or_else(|| RuntimeError {
+                        message: "F64Axpy dst index must be numeric".to_string(),
+                        line: 0,
+                    })?,
+                    None => return Err(RuntimeError { message: "F64Axpy dst index must be numeric".to_string(), line: 0 }),
                 };
                 let src_idx = match slots.get(*src_index_slot) {
-                    Some(Value::Integer(i)) => *i as usize,
-                    Some(Value::Float { value, .. }) => *value as usize,
-                    _ => return Err(RuntimeError { message: "F64Axpy src index must be numeric".to_string(), line: 0 }),
+                    Some(v) => number_to_usize(v).ok_or_else(|| RuntimeError {
+                        message: "F64Axpy src index must be numeric".to_string(),
+                        line: 0,
+                    })?,
+                    None => return Err(RuntimeError { message: "F64Axpy src index must be numeric".to_string(), line: 0 }),
                 };
                 let dst = match slots.get_mut(*dst_slot) {
                     Some(Value::F64Array(arr)) => arr.clone(),
@@ -1382,22 +1615,20 @@ fn execute_instructions(
             }
             Instruction::F64DotRange { acc_slot, a_slot, b_slot, index_slot, end } => {
                 let start = match slots.get(*index_slot) {
-                    Some(Value::Integer(i)) => *i as usize,
-                    Some(Value::Float { value, .. }) => *value as usize,
-                    _ => 0,
+                    Some(v) => number_to_usize(v).unwrap_or(0),
+                    None => 0,
                 };
                 let end_val = match end {
                     RangeEnd::Slot(s) => slots.get(*s).cloned().unwrap_or(Value::Nil),
                     RangeEnd::Const(idx) => const_pool.get(*idx).cloned().unwrap_or(Value::Nil),
                 };
-                let end_idx = match end_val {
-                    Value::Integer(i) if i >= 0 => i as usize,
-                    Value::Float { value, .. } if value >= 0.0 => value as usize,
-                    _ => return Err(RuntimeError { message: "Range end must be a non-negative number".to_string(), line: 0 }),
-                };
+                let end_idx = number_to_usize(&end_val).ok_or_else(|| RuntimeError {
+                    message: "Range end must be a non-negative number".to_string(),
+                    line: 0,
+                })?;
                 let acc = match slots.get(*acc_slot) {
                     Some(Value::Float { value, .. }) => *value,
-                    Some(Value::Integer(i)) => *i as f64,
+                    Some(v) => int_value_as_f64(v).unwrap_or(0.0),
                     _ => 0.0,
                 };
                 let a = match slots.get(*a_slot) {
@@ -1430,7 +1661,7 @@ fn execute_instructions(
                     *slot = make_float(total, FloatKind::F64);
                 }
                 if let Some(slot) = slots.get_mut(*index_slot) {
-                    *slot = Value::Integer(end_idx as i64);
+                    *slot = default_int(end_idx as i128);
                 }
                 stack.push(make_float(total, FloatKind::F64));
             }
@@ -1445,27 +1676,25 @@ fn execute_instructions(
                 end,
             } => {
                 let start = match slots.get(*index_slot) {
-                    Some(Value::Integer(i)) => *i as usize,
-                    Some(Value::Float { value, .. }) => *value as usize,
-                    _ => 0,
+                    Some(v) => number_to_usize(v).unwrap_or(0),
+                    None => 0,
                 };
                 let end_val = match end {
                     RangeEnd::Slot(s) => slots.get(*s).cloned().unwrap_or(Value::Nil),
                     RangeEnd::Const(idx) => const_pool.get(*idx).cloned().unwrap_or(Value::Nil),
                 };
-                let end_idx = match end_val {
-                    Value::Integer(i) if i >= 0 => i as usize,
-                    Value::Float { value, .. } if value >= 0.0 => value as usize,
-                    _ => return Err(RuntimeError { message: "Range end must be a non-negative number".to_string(), line: 0 }),
-                };
+                let end_idx = number_to_usize(&end_val).ok_or_else(|| RuntimeError {
+                    message: "Range end must be a non-negative number".to_string(),
+                    line: 0,
+                })?;
                 let acc1 = match slots.get(*acc1_slot) {
                     Some(Value::Float { value, .. }) => *value,
-                    Some(Value::Integer(i)) => *i as f64,
+                    Some(v) => int_value_as_f64(v).unwrap_or(0.0),
                     _ => 0.0,
                 };
                 let acc2 = match slots.get(*acc2_slot) {
                     Some(Value::Float { value, .. }) => *value,
-                    Some(Value::Integer(i)) => *i as f64,
+                    Some(v) => int_value_as_f64(v).unwrap_or(0.0),
                     _ => 0.0,
                 };
                 let a1 = match slots.get(*a1_slot) {
@@ -1521,7 +1750,7 @@ fn execute_instructions(
                     *slot = make_float(total2, FloatKind::F64);
                 }
                 if let Some(slot) = slots.get_mut(*index_slot) {
-                    *slot = Value::Integer(end_idx as i64);
+                    *slot = default_int(end_idx as i128);
                 }
                 stack.push(make_float(total2, FloatKind::F64));
             }
@@ -1529,16 +1758,64 @@ fn execute_instructions(
                 let r = stack.pop().unwrap();
                 let l = stack.pop().unwrap();
                 let res = match (l, r) {
-                    (Value::Integer(i1), Value::Integer(i2)) => match inst {
-                        Instruction::Add => Value::Integer(i1 + i2),
-                        Instruction::Sub => Value::Integer(i1 - i2),
-                        Instruction::Mul => Value::Integer(i1 * i2),
-                        Instruction::Div => Value::Integer(i1 / i2),
-                        Instruction::Eq => Value::Boolean(i1 == i2),
-                        Instruction::Gt => Value::Boolean(i1 > i2),
-                        Instruction::Lt => Value::Boolean(i1 < i2),
-                        _ => unreachable!(),
-                    },
+                    (Value::Integer { value: i1, kind: k1 }, Value::Integer { value: i2, kind: k2 }) => {
+                        let kind = signed_kind_for_bits(int_kind_bits(k1).max(int_kind_bits(k2)));
+                        match inst {
+                            Instruction::Add => make_signed_int(i1 + i2, kind),
+                            Instruction::Sub => make_signed_int(i1 - i2, kind),
+                            Instruction::Mul => make_signed_int(i1 * i2, kind),
+                            Instruction::Div => make_signed_int(i1 / i2, kind),
+                            Instruction::Eq => Value::Boolean(i1 == i2),
+                            Instruction::Gt => Value::Boolean(i1 > i2),
+                            Instruction::Lt => Value::Boolean(i1 < i2),
+                            _ => unreachable!(),
+                        }
+                    }
+                    (Value::Unsigned { value: u1, kind: k1 }, Value::Unsigned { value: u2, kind: k2 }) => {
+                        let kind = unsigned_kind_for_bits(int_kind_bits(k1).max(int_kind_bits(k2)));
+                        match inst {
+                            Instruction::Add => make_unsigned_int(u1 + u2, kind),
+                            Instruction::Sub => make_unsigned_int(u1 - u2, kind),
+                            Instruction::Mul => make_unsigned_int(u1 * u2, kind),
+                            Instruction::Div => make_unsigned_int(u1 / u2, kind),
+                            Instruction::Eq => Value::Boolean(u1 == u2),
+                            Instruction::Gt => Value::Boolean(u1 > u2),
+                            Instruction::Lt => Value::Boolean(u1 < u2),
+                            _ => unreachable!(),
+                        }
+                    }
+                    (Value::Integer { value: i1, .. }, Value::Unsigned { value: u2, .. }) => {
+                        let u2_i = i128::try_from(u2).map_err(|_| RuntimeError {
+                            message: "Unsigned value too large for signed operation".to_string(),
+                            line: 0,
+                        })?;
+                        match inst {
+                            Instruction::Add => make_signed_int(i1 + u2_i, IntKind::I128),
+                            Instruction::Sub => make_signed_int(i1 - u2_i, IntKind::I128),
+                            Instruction::Mul => make_signed_int(i1 * u2_i, IntKind::I128),
+                            Instruction::Div => make_signed_int(i1 / u2_i, IntKind::I128),
+                            Instruction::Eq => Value::Boolean(i1 == u2_i),
+                            Instruction::Gt => Value::Boolean(i1 > u2_i),
+                            Instruction::Lt => Value::Boolean(i1 < u2_i),
+                            _ => unreachable!(),
+                        }
+                    }
+                    (Value::Unsigned { value: u1, .. }, Value::Integer { value: i2, .. }) => {
+                        let u1_i = i128::try_from(u1).map_err(|_| RuntimeError {
+                            message: "Unsigned value too large for signed operation".to_string(),
+                            line: 0,
+                        })?;
+                        match inst {
+                            Instruction::Add => make_signed_int(u1_i + i2, IntKind::I128),
+                            Instruction::Sub => make_signed_int(u1_i - i2, IntKind::I128),
+                            Instruction::Mul => make_signed_int(u1_i * i2, IntKind::I128),
+                            Instruction::Div => make_signed_int(u1_i / i2, IntKind::I128),
+                            Instruction::Eq => Value::Boolean(u1_i == i2),
+                            Instruction::Gt => Value::Boolean(u1_i > i2),
+                            Instruction::Lt => Value::Boolean(u1_i < i2),
+                            _ => unreachable!(),
+                        }
+                    }
                     (Value::Float { value: f1, kind: k1 }, Value::Float { value: f2, kind: k2 }) => {
                         let kind = promote_float_kind(k1, k2);
                         match inst {
@@ -1552,8 +1829,9 @@ fn execute_instructions(
                             _ => unreachable!(),
                         }
                     }
-                    (Value::Integer(i), Value::Float { value: f, kind }) => {
-                        let f1 = i as f64;
+                    (v @ Value::Integer { .. }, Value::Float { value: f, kind })
+                    | (v @ Value::Unsigned { .. }, Value::Float { value: f, kind }) => {
+                        let f1 = int_value_as_f64(&v).unwrap_or(0.0);
                         match inst {
                             Instruction::Add => make_float(f1 + f, kind),
                             Instruction::Sub => make_float(f1 - f, kind),
@@ -1565,8 +1843,9 @@ fn execute_instructions(
                             _ => unreachable!(),
                         }
                     }
-                    (Value::Float { value: f, kind }, Value::Integer(i)) => {
-                        let f2 = i as f64;
+                    (Value::Float { value: f, kind }, v @ Value::Integer { .. })
+                    | (Value::Float { value: f, kind }, v @ Value::Unsigned { .. }) => {
+                        let f2 = int_value_as_f64(&v).unwrap_or(0.0);
                         match inst {
                             Instruction::Add => make_float(f + f2, kind),
                             Instruction::Sub => make_float(f - f2, kind),
@@ -1766,8 +2045,35 @@ impl Interpreter {
         match existing {
             Some(Value::Map(map)) => {
                 let mut map_mut = map.borrow_mut();
+                if !map_mut.contains_key(&intern::intern("Int8")) {
+                    map_mut.insert(intern::intern("Int8"), build_int8_module());
+                }
+                if !map_mut.contains_key(&intern::intern("Int16")) {
+                    map_mut.insert(intern::intern("Int16"), build_int16_module());
+                }
+                if !map_mut.contains_key(&intern::intern("Int32")) {
+                    map_mut.insert(intern::intern("Int32"), build_int32_module());
+                }
                 if !map_mut.contains_key(&intern::intern("Int64")) {
                     map_mut.insert(intern::intern("Int64"), build_int64_module());
+                }
+                if !map_mut.contains_key(&intern::intern("Int128")) {
+                    map_mut.insert(intern::intern("Int128"), build_int128_module());
+                }
+                if !map_mut.contains_key(&intern::intern("Uint8")) {
+                    map_mut.insert(intern::intern("Uint8"), build_uint8_module());
+                }
+                if !map_mut.contains_key(&intern::intern("Uint16")) {
+                    map_mut.insert(intern::intern("Uint16"), build_uint16_module());
+                }
+                if !map_mut.contains_key(&intern::intern("Uint32")) {
+                    map_mut.insert(intern::intern("Uint32"), build_uint32_module());
+                }
+                if !map_mut.contains_key(&intern::intern("Uint64")) {
+                    map_mut.insert(intern::intern("Uint64"), build_uint64_module());
+                }
+                if !map_mut.contains_key(&intern::intern("Uint128")) {
+                    map_mut.insert(intern::intern("Uint128"), build_uint128_module());
                 }
                 if !map_mut.contains_key(&intern::intern("Float32")) {
                     map_mut.insert(intern::intern("Float32"), build_float32_module());
@@ -1853,11 +2159,11 @@ impl Interpreter {
             Builtin::Len => {
                 let val = args.get(0).cloned().unwrap_or(Value::Nil);
                 match val {
-                    Value::String(s) => Ok(Value::Integer(s.len() as i64)),
-                    Value::Array(arr) => Ok(Value::Integer(arr.borrow().len() as i64)),
-                    Value::F64Array(arr) => Ok(Value::Integer(arr.borrow().len() as i64)),
-                    Value::Map(map) => Ok(Value::Integer(map.borrow().len() as i64)),
-                    _ => Ok(Value::Integer(0)),
+                    Value::String(s) => Ok(default_int(s.len() as i128)),
+                    Value::Array(arr) => Ok(default_int(arr.borrow().len() as i128)),
+                    Value::F64Array(arr) => Ok(default_int(arr.borrow().len() as i128)),
+                    Value::Map(map) => Ok(default_int(map.borrow().len() as i128)),
+                    _ => Ok(default_int(0)),
                 }
             }
             Builtin::ReadFile => {
@@ -1983,7 +2289,8 @@ impl Interpreter {
     pub fn eval(&mut self, expr: &Expr, slots: &mut [Value]) -> EvalResult {
         let line = expr.line;
         match &expr.kind {
-            ExprKind::Integer(i) => Ok(Value::Integer(*i)),
+            ExprKind::Integer { value, kind } => Ok(make_signed_int(*value, *kind)),
+            ExprKind::Unsigned { value, kind } => Ok(make_unsigned_int(*value, *kind)),
             ExprKind::Float { value, kind } => Ok(make_float(*value, *kind)),
             ExprKind::String(s) => Ok(Value::String(s.clone())),
             ExprKind::Boolean(b) => Ok(Value::Boolean(*b)),
@@ -2054,14 +2361,13 @@ impl Interpreter {
 
                 match target_val {
                     Value::Array(arr) => {
-                        if let Value::Integer(idx) = index_val {
+                        if let Some(i) = int_value_as_usize(&index_val) {
                             let mut vec = arr.borrow_mut();
-                            let i = idx as usize;
-                            if idx >= 0 && i < vec.len() {
+                            if i < vec.len() {
                                 vec[i] = val.clone();
                             } else {
                                 return Err(RuntimeError {
-                                    message: format!("Array index out of bounds: {}", idx),
+                                    message: "Array index out of bounds".to_string(),
                                     line,
                                 });
                             }
@@ -2073,21 +2379,25 @@ impl Interpreter {
                         }
                     }
                     Value::F64Array(arr) => {
-                        if let Value::Integer(idx) = index_val {
+                        if let Some(i) = int_value_as_usize(&index_val) {
                             let mut vec = arr.borrow_mut();
-                            let i = idx as usize;
-                            if idx >= 0 && i < vec.len() {
-                                match val {
-                                    Value::Float { value, .. } => vec[i] = value,
-                                    Value::Integer(int_val) => vec[i] = int_val as f64,
-                                    _ => return Err(RuntimeError {
-                                        message: "F64Array assignment requires a number".to_string(),
-                                        line,
-                                    }),
+                            if i < vec.len() {
+                                match &val {
+                                    Value::Float { value, .. } => vec[i] = *value,
+                                    v => {
+                                        if let Some(num) = int_value_as_f64(v) {
+                                            vec[i] = num;
+                                        } else {
+                                            return Err(RuntimeError {
+                                                message: "F64Array assignment requires a number".to_string(),
+                                                line,
+                                            });
+                                        }
+                                    }
                                 }
                             } else {
                                 return Err(RuntimeError {
-                                    message: format!("Array index out of bounds: {}", idx),
+                                    message: "Array index out of bounds".to_string(),
                                     line,
                                 });
                             }
@@ -2233,11 +2543,14 @@ impl Interpreter {
                     if all_f64 {
                         match v {
                             Value::Float { value, .. } => f64_vals.push(value),
-                            Value::Integer(i) => f64_vals.push(i as f64),
-                            _ => {
-                                all_f64 = false;
-                                vals.extend(f64_vals.drain(..).map(|value| make_float(value, FloatKind::F64)));
-                                vals.push(v);
+                            v => {
+                                if let Some(num) = int_value_as_f64(&v) {
+                                    f64_vals.push(num);
+                                } else {
+                                    all_f64 = false;
+                                    vals.extend(f64_vals.drain(..).map(|value| make_float(value, FloatKind::F64)));
+                                    vals.push(v);
+                                }
                             }
                         }
                     } else {
@@ -2253,13 +2566,10 @@ impl Interpreter {
             ExprKind::ArrayGenerator { generator, size } => {
                 let gen_val = self.eval(generator, slots)?;
                 let size_val = self.eval(size, slots)?;
-                let n = match size_val {
-                    Value::Integer(i) if i >= 0 => i as usize,
-                    _ => return Err(RuntimeError {
-                        message: "Array size must be a non-negative integer".to_string(),
-                        line,
-                    }),
-                };
+                let n = int_value_as_usize(&size_val).ok_or_else(|| RuntimeError {
+                    message: "Array size must be a non-negative integer".to_string(),
+                    line,
+                })?;
                 let mut vals: Vec<Value> = Vec::new();
                 let mut f64_vals: Vec<f64> = Vec::new();
                 let mut all_f64 = true;
@@ -2267,7 +2577,7 @@ impl Interpreter {
                     for i in 0..n {
                         let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, data.declarations.len());
                         if data.params.len() > 0 {
-                             new_slots[data.param_offset] = Value::Integer(i as i64);
+                             new_slots[data.param_offset] = default_int(i as i128);
                         }
                         
                         let result = if let Some(code) = &data.code {
@@ -2284,13 +2594,16 @@ impl Interpreter {
                             self.eval(&data.body, &mut new_slots)?
                         };
                         if all_f64 {
-                            match result {
-                                Value::Float { value, .. } => f64_vals.push(value),
-                                Value::Integer(i) => f64_vals.push(i as f64),
-                                _ => {
-                                    all_f64 = false;
-                                    vals.extend(f64_vals.drain(..).map(|value| make_float(value, FloatKind::F64)));
-                                    vals.push(result);
+                            match &result {
+                                Value::Float { value, .. } => f64_vals.push(*value),
+                                v => {
+                                    if let Some(num) = int_value_as_f64(v) {
+                                        f64_vals.push(num);
+                                    } else {
+                                        all_f64 = false;
+                                        vals.extend(f64_vals.drain(..).map(|value| make_float(value, FloatKind::F64)));
+                                        vals.push(result);
+                                    }
                                 }
                             }
                         } else {
@@ -2300,13 +2613,16 @@ impl Interpreter {
                 } else {
                     for _ in 0..n {
                         if all_f64 {
-                            match gen_val {
-                                Value::Float { value, .. } => f64_vals.push(value),
-                                Value::Integer(i) => f64_vals.push(i as f64),
-                                _ => {
-                                    all_f64 = false;
-                                    vals.extend(f64_vals.drain(..).map(|value| make_float(value, FloatKind::F64)));
-                                    vals.push(gen_val.clone());
+                            match &gen_val {
+                                Value::Float { value, .. } => f64_vals.push(*value),
+                                v => {
+                                    if let Some(num) = int_value_as_f64(v) {
+                                        f64_vals.push(num);
+                                    } else {
+                                        all_f64 = false;
+                                        vals.extend(f64_vals.drain(..).map(|value| make_float(value, FloatKind::F64)));
+                                        vals.push(gen_val.clone());
+                                    }
                                 }
                             }
                         } else {
@@ -2338,10 +2654,9 @@ impl Interpreter {
                 let index_val = self.eval(index, slots)?;
                 match target_val {
                     Value::Array(arr) => {
-                        if let Value::Integer(idx) = index_val {
-                            let i = idx as usize; 
+                        if let Some(i) = int_value_as_usize(&index_val) {
                             let vec = arr.borrow();
-                            if idx >= 0 && i < vec.len() {
+                            if i < vec.len() {
                                 Ok(vec[i].clone())
                             } else {
                                 Ok(Value::Nil)
@@ -2354,10 +2669,9 @@ impl Interpreter {
                         }
                     }
                     Value::F64Array(arr) => {
-                        if let Value::Integer(idx) = index_val {
-                            let i = idx as usize;
+                        if let Some(i) = int_value_as_usize(&index_val) {
                             let vec = arr.borrow();
-                            if idx >= 0 && i < vec.len() {
+                            if i < vec.len() {
                                 Ok(make_float(vec[i], FloatKind::F64))
                             } else {
                                 Ok(Value::Nil)
@@ -2407,11 +2721,11 @@ impl Interpreter {
                         "len" => {
                             let val = self.eval(&args[0], slots)?;
                             return match val {
-                                Value::String(s) => Ok(Value::Integer(s.len() as i64)),
-                                Value::Array(arr) => Ok(Value::Integer(arr.borrow().len() as i64)),
-                                Value::F64Array(arr) => Ok(Value::Integer(arr.borrow().len() as i64)),
-                                Value::Map(map) => Ok(Value::Integer(map.borrow().len() as i64)),
-                                _ => Ok(Value::Integer(0)),
+                                Value::String(s) => Ok(default_int(s.len() as i128)),
+                                Value::Array(arr) => Ok(default_int(arr.borrow().len() as i128)),
+                                Value::F64Array(arr) => Ok(default_int(arr.borrow().len() as i128)),
+                                Value::Map(map) => Ok(default_int(map.borrow().len() as i128)),
+                                _ => Ok(default_int(0)),
                             };
                         }
                         "read_file" => {
@@ -2497,7 +2811,8 @@ impl Interpreter {
             }
             ExprKind::BinaryOp { left, op, right } => {
                 let l = match &left.kind {
-                    ExprKind::Integer(i) => Value::Integer(*i),
+                    ExprKind::Integer { value, kind } => make_signed_int(*value, *kind),
+                    ExprKind::Unsigned { value, kind } => make_unsigned_int(*value, *kind),
                     ExprKind::Float { value, kind } => make_float(*value, *kind),
                     ExprKind::Identifier { slot: Some(s), .. } => {
                         let v = &slots[*s];
@@ -2506,7 +2821,8 @@ impl Interpreter {
                     _ => self.eval(left, slots)?,
                 };
                 let r = match &right.kind {
-                    ExprKind::Integer(i) => Value::Integer(*i),
+                    ExprKind::Integer { value, kind } => make_signed_int(*value, *kind),
+                    ExprKind::Unsigned { value, kind } => make_unsigned_int(*value, *kind),
                     ExprKind::Float { value, kind } => make_float(*value, *kind),
                     ExprKind::Identifier { slot: Some(s), .. } => {
                         let v = &slots[*s];
@@ -2515,16 +2831,66 @@ impl Interpreter {
                     _ => self.eval(right, slots)?,
                 };
                 match (l, r) {
-                    (Value::Integer(i1), Value::Integer(i2)) => match op {
-                        Op::Add => Ok(Value::Integer(i1 + i2)),
-                        Op::Subtract => Ok(Value::Integer(i1 - i2)),
-                        Op::Multiply => Ok(Value::Integer(i1 * i2)),
-                        Op::Divide => Ok(Value::Integer(i1 / i2)),
-                        Op::GreaterThan => Ok(Value::Boolean(i1 > i2)),
-                        Op::LessThan => Ok(Value::Boolean(i1 < i2)),
-                        Op::Equal => Ok(Value::Boolean(i1 == i2)),
-                        Op::NotEqual => Ok(Value::Boolean(i1 != i2)),
-                    },
+                    (Value::Integer { value: i1, kind: k1 }, Value::Integer { value: i2, kind: k2 }) => {
+                        let kind = signed_kind_for_bits(int_kind_bits(k1).max(int_kind_bits(k2)));
+                        match op {
+                            Op::Add => Ok(make_signed_int(i1 + i2, kind)),
+                            Op::Subtract => Ok(make_signed_int(i1 - i2, kind)),
+                            Op::Multiply => Ok(make_signed_int(i1 * i2, kind)),
+                            Op::Divide => Ok(make_signed_int(i1 / i2, kind)),
+                            Op::GreaterThan => Ok(Value::Boolean(i1 > i2)),
+                            Op::LessThan => Ok(Value::Boolean(i1 < i2)),
+                            Op::Equal => Ok(Value::Boolean(i1 == i2)),
+                            Op::NotEqual => Ok(Value::Boolean(i1 != i2)),
+                        }
+                    }
+                    (Value::Unsigned { value: u1, kind: k1 }, Value::Unsigned { value: u2, kind: k2 }) => {
+                        let kind = unsigned_kind_for_bits(int_kind_bits(k1).max(int_kind_bits(k2)));
+                        match op {
+                            Op::Add => Ok(make_unsigned_int(u1 + u2, kind)),
+                            Op::Subtract => Ok(make_unsigned_int(u1 - u2, kind)),
+                            Op::Multiply => Ok(make_unsigned_int(u1 * u2, kind)),
+                            Op::Divide => Ok(make_unsigned_int(u1 / u2, kind)),
+                            Op::GreaterThan => Ok(Value::Boolean(u1 > u2)),
+                            Op::LessThan => Ok(Value::Boolean(u1 < u2)),
+                            Op::Equal => Ok(Value::Boolean(u1 == u2)),
+                            Op::NotEqual => Ok(Value::Boolean(u1 != u2)),
+                        }
+                    }
+                    (Value::Integer { value: i1, .. }, Value::Unsigned { value: u2, .. }) => {
+                        let u2_i = i128::try_from(u2).map_err(|_| RuntimeError {
+                            message: "Unsigned value too large for signed operation".to_string(),
+                            line,
+                        })?;
+                        let kind = IntKind::I128;
+                        match op {
+                            Op::Add => Ok(make_signed_int(i1 + u2_i, kind)),
+                            Op::Subtract => Ok(make_signed_int(i1 - u2_i, kind)),
+                            Op::Multiply => Ok(make_signed_int(i1 * u2_i, kind)),
+                            Op::Divide => Ok(make_signed_int(i1 / u2_i, kind)),
+                            Op::GreaterThan => Ok(Value::Boolean(i1 > u2_i)),
+                            Op::LessThan => Ok(Value::Boolean(i1 < u2_i)),
+                            Op::Equal => Ok(Value::Boolean(i1 == u2_i)),
+                            Op::NotEqual => Ok(Value::Boolean(i1 != u2_i)),
+                        }
+                    }
+                    (Value::Unsigned { value: u1, .. }, Value::Integer { value: i2, .. }) => {
+                        let u1_i = i128::try_from(u1).map_err(|_| RuntimeError {
+                            message: "Unsigned value too large for signed operation".to_string(),
+                            line,
+                        })?;
+                        let kind = IntKind::I128;
+                        match op {
+                            Op::Add => Ok(make_signed_int(u1_i + i2, kind)),
+                            Op::Subtract => Ok(make_signed_int(u1_i - i2, kind)),
+                            Op::Multiply => Ok(make_signed_int(u1_i * i2, kind)),
+                            Op::Divide => Ok(make_signed_int(u1_i / i2, kind)),
+                            Op::GreaterThan => Ok(Value::Boolean(u1_i > i2)),
+                            Op::LessThan => Ok(Value::Boolean(u1_i < i2)),
+                            Op::Equal => Ok(Value::Boolean(u1_i == i2)),
+                            Op::NotEqual => Ok(Value::Boolean(u1_i != i2)),
+                        }
+                    }
                     (Value::Float { value: f1, kind: k1 }, Value::Float { value: f2, kind: k2 }) => {
                         let kind = promote_float_kind(k1, k2);
                         match op {
@@ -2538,8 +2904,9 @@ impl Interpreter {
                             Op::NotEqual => Ok(Value::Boolean(f1 != f2)),
                         }
                     }
-                    (Value::Integer(i), Value::Float { value: f, kind }) => {
-                        let f1 = i as f64;
+                    (v @ Value::Integer { .. }, Value::Float { value: f, kind })
+                    | (v @ Value::Unsigned { .. }, Value::Float { value: f, kind }) => {
+                        let f1 = int_value_as_f64(&v).unwrap_or(0.0);
                         match op {
                             Op::Add => Ok(make_float(f1 + f, kind)),
                             Op::Subtract => Ok(make_float(f1 - f, kind)),
@@ -2551,8 +2918,9 @@ impl Interpreter {
                             Op::NotEqual => Ok(Value::Boolean(f1 != f)),
                         }
                     }
-                    (Value::Float { value: f, kind }, Value::Integer(i)) => {
-                        let f2 = i as f64;
+                    (Value::Float { value: f, kind }, v @ Value::Integer { .. })
+                    | (Value::Float { value: f, kind }, v @ Value::Unsigned { .. }) => {
+                        let f2 = int_value_as_f64(&v).unwrap_or(0.0);
                         match op {
                             Op::Add => Ok(make_float(f + f2, kind)),
                             Op::Subtract => Ok(make_float(f - f2, kind)),
@@ -2649,22 +3017,18 @@ impl Interpreter {
             }
             ExprKind::Loop { count, var, var_slot, body } => {
                 let count_val = self.eval(count, slots)?;
-                let n = match count_val {
-                    Value::Integer(i) if i >= 0 => i as usize,
-                    Value::Float { value, .. } if value >= 0.0 => value as usize,
-                    _ => return Err(RuntimeError {
-                        message: "Loop count must be a non-negative number".to_string(),
-                        line,
-                    }),
-                };
+                let n = number_to_usize(&count_val).ok_or_else(|| RuntimeError {
+                    message: "Loop count must be a non-negative number".to_string(),
+                    line,
+                })?;
                 let mut last_val = Value::Nil;
                 for idx in 0..n {
                     if let Some(slot) = var_slot {
                         if let Some(slot_val) = slots.get_mut(*slot) {
-                            *slot_val = Value::Integer(idx as i64);
+                            *slot_val = default_int(idx as i128);
                         }
                     } else if let Some(name) = var {
-                        self.env.borrow_mut().assign(*name, Value::Integer(idx as i64));
+                        self.env.borrow_mut().assign(*name, default_int(idx as i128));
                     }
                     last_val = self.eval(body, slots)?;
                 }

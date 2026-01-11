@@ -1,9 +1,10 @@
-use crate::ast::FloatKind;
+use crate::ast::{FloatKind, IntKind};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token
 {
-    Integer(i64),
+    Integer { value: i128, kind: IntKind },
+    Unsigned { value: u128, kind: IntKind },
     Float { value: f64, kind: FloatKind },
     Identifier(String),
     Plus,
@@ -251,12 +252,12 @@ impl Lexer
 
     fn read_number(&mut self) -> Token
     {
-        let mut int_val: i64 = 0;
+        let mut int_val: u128 = 0;
         let mut overflowed = false;
         let mut saw_fraction = false;
         while self.position < self.input.len() && self.input[self.position].is_digit(10)
         {
-            let digit = (self.input[self.position] as u8 - b'0') as i64;
+            let digit = (self.input[self.position] as u8 - b'0') as u128;
             if let Some(next) = int_val.checked_mul(10).and_then(|v| v.checked_add(digit)) {
                 int_val = next;
             } else {
@@ -265,13 +266,13 @@ impl Lexer
             self.position += 1;
         }
 
-        let mut frac_val: i64 = 0;
+        let mut frac_val: u128 = 0;
         let mut divisor: f64 = 1.0;
         if self.position < self.input.len() && self.input[self.position] == '.' {
             if self.position + 1 < self.input.len() && self.input[self.position + 1].is_digit(10) {
                 self.position += 1; // Consume dot
                 while self.position < self.input.len() && self.input[self.position].is_digit(10) {
-                    let digit = (self.input[self.position] as u8 - b'0') as i64;
+                    let digit = (self.input[self.position] as u8 - b'0') as u128;
                     if let Some(next) = frac_val.checked_mul(10).and_then(|v| v.checked_add(digit)) {
                         frac_val = next;
                     }
@@ -308,10 +309,28 @@ impl Lexer
                 int_part as f64
             };
             Token::Float { value, kind }
-        } else if overflowed {
-            Token::Integer(0)
         } else {
-            Token::Integer(int_val)
+            let (int_kind, is_signed) = self.read_int_suffix();
+            if overflowed {
+                return if is_signed {
+                    Token::Integer { value: 0, kind: int_kind }
+                } else {
+                    Token::Unsigned { value: 0, kind: int_kind }
+                };
+            }
+            if is_signed {
+                let max = signed_int_max(int_kind);
+                if int_val > max as u128 {
+                    panic!("Integer literal out of range for {:?}", int_kind);
+                }
+                Token::Integer { value: int_val as i128, kind: int_kind }
+            } else {
+                let max = unsigned_int_max(int_kind);
+                if int_val > max {
+                    panic!("Unsigned literal out of range for {:?}", int_kind);
+                }
+                Token::Unsigned { value: int_val, kind: int_kind }
+            }
         }
     }
 
@@ -375,6 +394,31 @@ impl Lexer
         }
     }
 
+    fn read_int_suffix(&mut self) -> (IntKind, bool) {
+        if self.position + 1 < self.input.len() {
+            let ch = self.input[self.position];
+            if ch == 'i' || ch == 'u' {
+                let is_signed = ch == 'i';
+                self.position += 1; // consume i/u
+                let start = self.position;
+                while self.position < self.input.len() && self.input[self.position].is_digit(10) {
+                    self.position += 1;
+                }
+                let suffix: String = self.input[start..self.position].iter().collect();
+                let kind = match suffix.as_str() {
+                    "8" => if is_signed { IntKind::I8 } else { IntKind::U8 },
+                    "16" => if is_signed { IntKind::I16 } else { IntKind::U16 },
+                    "32" => if is_signed { IntKind::I32 } else { IntKind::U32 },
+                    "64" => if is_signed { IntKind::I64 } else { IntKind::U64 },
+                    "128" => if is_signed { IntKind::I128 } else { IntKind::U128 },
+                    _ => panic!("Unknown integer suffix: {}{}", if is_signed { "i" } else { "u" }, suffix),
+                };
+                return (kind, is_signed);
+            }
+        }
+        (IntKind::I64, true)
+    }
+
     fn peek(&self) -> char
     {
         if self.position + 1 >= self.input.len()
@@ -382,5 +426,27 @@ impl Lexer
             return '\0';
         }
         self.input[self.position + 1]
+    }
+}
+
+fn signed_int_max(kind: IntKind) -> i128 {
+    match kind {
+        IntKind::I8 => i8::MAX as i128,
+        IntKind::I16 => i16::MAX as i128,
+        IntKind::I32 => i32::MAX as i128,
+        IntKind::I64 => i64::MAX as i128,
+        IntKind::I128 => i128::MAX,
+        _ => panic!("Expected signed int kind, got {:?}", kind),
+    }
+}
+
+fn unsigned_int_max(kind: IntKind) -> u128 {
+    match kind {
+        IntKind::U8 => u8::MAX as u128,
+        IntKind::U16 => u16::MAX as u128,
+        IntKind::U32 => u32::MAX as u128,
+        IntKind::U64 => u64::MAX as u128,
+        IntKind::U128 => u128::MAX,
+        _ => panic!("Expected unsigned int kind, got {:?}", kind),
     }
 }

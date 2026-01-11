@@ -242,10 +242,15 @@ impl Parser
         let line = self.current_token.line;
         match self.current_token.token.clone()
         {
-            Token::Integer(i) =>
+            Token::Integer { value, kind } =>
             {
                 self.eat();
-                self.make_expr(ExprKind::Integer(i), line)
+                self.make_expr(ExprKind::Integer { value, kind }, line)
+            }
+            Token::Unsigned { value, kind } =>
+            {
+                self.eat();
+                self.make_expr(ExprKind::Unsigned { value, kind }, line)
             }
             Token::Float { value, kind } =>
             {

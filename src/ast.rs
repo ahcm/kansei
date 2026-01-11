@@ -22,6 +22,20 @@ pub enum FloatKind {
     F128,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntKind {
+    I8,
+    I16,
+    I32,
+    I64,
+    I128,
+    U8,
+    U16,
+    U32,
+    U64,
+    U128,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Closure
 {
@@ -39,7 +53,8 @@ pub struct Expr {
 pub enum ExprKind
 {
     // Basic Values
-    Integer(i64),
+    Integer { value: i128, kind: IntKind },
+    Unsigned { value: u128, kind: IntKind },
     Float { value: f64, kind: FloatKind },
     Identifier { name: SymbolId, slot: Option<usize> },
     Reference(SymbolId), // &x

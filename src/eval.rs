@@ -64,6 +64,117 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<String>) {
     }
 }
 
+fn build_slot_map(params: &[(String, bool)], locals: HashSet<String>) -> (FxHashMap<String, usize>, Vec<String>) {
+    let mut slot_map = FxHashMap::default();
+    let mut slot_names = Vec::new();
+    for (p, _) in params {
+        if !slot_map.contains_key(p) {
+            slot_map.insert(p.clone(), slot_names.len());
+            slot_names.push(p.clone());
+        }
+    }
+    for l in locals {
+        if !slot_map.contains_key(&l) {
+            slot_map.insert(l.clone(), slot_names.len());
+            slot_names.push(l);
+        }
+    }
+    (slot_map, slot_names)
+}
+
+pub fn resolve_slots(expr: &mut Expr) {
+    resolve_functions(expr);
+}
+
+fn resolve_functions(expr: &mut Expr) {
+    match &mut expr.kind {
+        ExprKind::FunctionDef { params, body, slots, .. } => {
+            if slots.is_none() {
+                let mut locals = HashSet::new();
+                collect_declarations(body, &mut locals);
+                let (slot_map, slot_names) = build_slot_map(params, locals);
+                resolve(body.as_mut(), &slot_map);
+                *slots = Some(Rc::new(slot_names));
+            }
+            resolve_functions(body);
+        }
+        ExprKind::AnonymousFunction { params, body, slots } => {
+            if slots.is_none() {
+                let mut locals = HashSet::new();
+                collect_declarations(body, &mut locals);
+                let (slot_map, slot_names) = build_slot_map(params, locals);
+                resolve(body.as_mut(), &slot_map);
+                *slots = Some(Rc::new(slot_names));
+            }
+            resolve_functions(body);
+        }
+        ExprKind::Assignment { value, .. } => resolve_functions(value),
+        ExprKind::IndexAssignment { target, index, value } => {
+            resolve_functions(target);
+            resolve_functions(index);
+            resolve_functions(value);
+        }
+        ExprKind::BinaryOp { left, right, .. } => {
+            resolve_functions(left);
+            resolve_functions(right);
+        }
+        ExprKind::Block(stmts) => {
+            for stmt in stmts {
+                resolve_functions(stmt);
+            }
+        }
+        ExprKind::If { condition, then_branch, else_branch } => {
+            resolve_functions(condition);
+            resolve_functions(then_branch);
+            if let Some(eb) = else_branch {
+                resolve_functions(eb);
+            }
+        }
+        ExprKind::While { condition, body } => {
+            resolve_functions(condition);
+            resolve_functions(body);
+        }
+        ExprKind::For { iterable, body, .. } => {
+            resolve_functions(iterable);
+            resolve_functions(body);
+        }
+        ExprKind::Call { function, args, block, .. } => {
+            resolve_functions(function);
+            for arg in args {
+                resolve_functions(arg);
+            }
+            if let Some(c) = block {
+                resolve_functions(&mut c.body);
+            }
+        }
+        ExprKind::Array(elements) => {
+            for e in elements {
+                resolve_functions(e);
+            }
+        }
+        ExprKind::ArrayGenerator { generator, size } => {
+            resolve_functions(generator);
+            resolve_functions(size);
+        }
+        ExprKind::Map(entries) => {
+            for (k, v) in entries {
+                resolve_functions(k);
+                resolve_functions(v);
+            }
+        }
+        ExprKind::Index { target, index } => {
+            resolve_functions(target);
+            resolve_functions(index);
+        }
+        ExprKind::Yield(args) => {
+            for a in args {
+                resolve_functions(a);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn uses_environment(expr: &Expr) -> bool {
     match &expr.kind {
         ExprKind::Identifier { slot: None, .. } => true,
@@ -452,76 +563,56 @@ impl Interpreter {
                 }
                 Ok(val)
             }
-            ExprKind::FunctionDef { name, params, body } => {
-                let func_env = self.env.clone();
+        ExprKind::FunctionDef { name, params, body, slots } => {
+            let func_env = self.env.clone();
+            let (resolved_body, slot_names) = if let Some(slot_names) = slots {
+                (body.clone(), slot_names.clone())
+            } else {
                 let mut locals = HashSet::new();
                 collect_declarations(body, &mut locals);
-
-                let mut slot_map = FxHashMap::default();
-                let mut slot_names = Vec::new();
-                for (p, _) in params {
-                    if !slot_map.contains_key(p) {
-                        slot_map.insert(p.clone(), slot_names.len());
-                        slot_names.push(p.clone());
-                    }
-                }
-                for l in locals {
-                    if !slot_map.contains_key(&l) {
-                        slot_map.insert(l.clone(), slot_names.len());
-                        slot_names.push(l);
-                    }
-                }
-
-                let mut resolved_body = body.clone();
-                resolve(&mut resolved_body, &slot_map);
-                let simple = is_simple(&resolved_body);
+                let (slot_map, slot_names) = build_slot_map(params, locals);
+                let mut resolved = body.clone();
+                resolve(resolved.as_mut(), &slot_map);
+                (resolved, Rc::new(slot_names))
+            };
+            let simple = is_simple(&resolved_body);
                 
-                let mut code = Vec::new();
-                let compiled = if simple { compile_to_instructions(&resolved_body, &mut code) } else { false };
+            let mut code = Vec::new();
+            let compiled = if simple { compile_to_instructions(&resolved_body, &mut code) } else { false };
 
-                let func = Value::Function(Rc::new(crate::value::FunctionData {
-                    params: params.clone(),
-                    body: *resolved_body,
-                    declarations: Rc::new(slot_names),
-                    param_offset: 0,
-                    is_simple: simple,
-                    code: if compiled { Some(Rc::new(code)) } else { None },
-                    env: func_env,
-                }));
+            let func = Value::Function(Rc::new(crate::value::FunctionData {
+                params: params.clone(),
+                body: *resolved_body,
+                declarations: slot_names,
+                param_offset: 0,
+                is_simple: simple,
+                code: if compiled { Some(Rc::new(code)) } else { None },
+                env: func_env,
+            }));
                 self.env.borrow_mut().define(name.clone(), func.clone());
                 Ok(func)
             }
-            ExprKind::AnonymousFunction { params, body } => {
-                let func_env = self.env.clone();
+        ExprKind::AnonymousFunction { params, body, slots } => {
+            let func_env = self.env.clone();
+            let (resolved_body, slot_names) = if let Some(slot_names) = slots {
+                (body.clone(), slot_names.clone())
+            } else {
                 let mut locals = HashSet::new();
                 collect_declarations(body, &mut locals);
-
-                let mut slot_map = FxHashMap::default();
-                let mut slot_names = Vec::new();
-                for (p, _) in params {
-                    if !slot_map.contains_key(p) {
-                        slot_map.insert(p.clone(), slot_names.len());
-                        slot_names.push(p.clone());
-                    }
-                }
-                for l in locals {
-                    if !slot_map.contains_key(&l) {
-                        slot_map.insert(l.clone(), slot_names.len());
-                        slot_names.push(l);
-                    }
-                }
-
-                let mut resolved_body = body.clone();
-                resolve(&mut resolved_body, &slot_map);
-                let simple = is_simple(&resolved_body);
+                let (slot_map, slot_names) = build_slot_map(params, locals);
+                let mut resolved = body.clone();
+                resolve(resolved.as_mut(), &slot_map);
+                (resolved, Rc::new(slot_names))
+            };
+            let simple = is_simple(&resolved_body);
                 
-                let mut code = Vec::new();
-                let compiled = if simple { compile_to_instructions(&resolved_body, &mut code) } else { false };
+            let mut code = Vec::new();
+            let compiled = if simple { compile_to_instructions(&resolved_body, &mut code) } else { false };
 
                 Ok(Value::Function(Rc::new(crate::value::FunctionData {
                     params: params.clone(),
                     body: *resolved_body,
-                    declarations: Rc::new(slot_names),
+                    declarations: slot_names,
                     param_offset: 0,
                     is_simple: simple,
                     code: if compiled { Some(Rc::new(code)) } else { None },

@@ -478,11 +478,13 @@ impl Parser
                 name,
                 params,
                 body: Box::new(body),
+                slots: None,
             }, line)
         } else {
             self.make_expr(ExprKind::AnonymousFunction {
                 params,
                 body: Box::new(body),
+                slots: None,
             }, line)
         }
     }
@@ -616,6 +618,6 @@ impl Parser
         }
         let body = self.parse_block();
         self.expect(Token::RightBrace);
-        self.make_expr(ExprKind::AnonymousFunction { params, body: Box::new(body) }, line)
+        self.make_expr(ExprKind::AnonymousFunction { params, body: Box::new(body), slots: None }, line)
     }
 }

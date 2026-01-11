@@ -79,6 +79,8 @@ fn run_file(path: &str, mut interpreter: eval::Interpreter)
     {
         Ok(ast) =>
         {
+            let mut ast = ast;
+            eval::resolve_slots(&mut ast);
             // 2. Evaluate
             let eval_result =
                 panic::catch_unwind(panic::AssertUnwindSafe(|| interpreter.eval(&ast, &mut [])));
@@ -176,6 +178,8 @@ fn run_repl(mut interpreter: eval::Interpreter) -> rustyline::Result<()>
                     {
                         Ok(ast) =>
                         {
+                                                        let mut ast = ast;
+                                                        eval::resolve_slots(&mut ast);
                                                         // 2. Evaluate
                                                         // We use catch_unwind to handle runtime errors
                                                         let eval_result = panic::catch_unwind(panic::AssertUnwindSafe(|| {

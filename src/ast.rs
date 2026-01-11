@@ -98,11 +98,13 @@ pub enum ExprKind
         name: String,
         params: Vec<(String, bool)>,
         body: Box<Expr>,
+        slots: Option<Rc<Vec<String>>>,
     },
     AnonymousFunction
     {
         params: Vec<(String, bool)>,
         body: Box<Expr>,
+        slots: Option<Rc<Vec<String>>>,
     },
 
     Array(Vec<Expr>),

@@ -247,10 +247,10 @@ impl Parser
                 self.eat();
                 self.make_expr(ExprKind::Integer(i), line)
             }
-            Token::Float(f) =>
+            Token::Float { value, kind } =>
             {
                 self.eat();
-                self.make_expr(ExprKind::Float(f), line)
+                self.make_expr(ExprKind::Float { value, kind }, line)
             }
             Token::StringLiteral(s) =>
             {

@@ -15,6 +15,13 @@ pub enum Op
     GreaterThan,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FloatKind {
+    F32,
+    F64,
+    F128,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Closure
 {
@@ -33,7 +40,7 @@ pub enum ExprKind
 {
     // Basic Values
     Integer(i64),
-    Float(f64),
+    Float { value: f64, kind: FloatKind },
     Identifier { name: SymbolId, slot: Option<usize> },
     Reference(SymbolId), // &x
     String(Rc<String>), // "hello"

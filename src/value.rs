@@ -1,4 +1,4 @@
-use crate::ast::Expr;
+use crate::ast::{Expr, FloatKind};
 use crate::intern::SymbolId;
 use rustc_hash::FxHashMap;
 use std::fmt;
@@ -224,7 +224,7 @@ pub struct FunctionData {
 pub enum Value
 {
     Integer(i64),
-    Float(f64),
+    Float { value: f64, kind: FloatKind },
     String(Rc<String>),
     Boolean(bool),
     Array(Rc<RefCell<Vec<Value>>>),
@@ -250,7 +250,7 @@ impl PartialEq for Value {
         
         match (left, right) {
             (Value::Integer(a), Value::Integer(b)) => a == b,
-            (Value::Float(a), Value::Float(b)) => a == b, // Note: NaN != NaN
+            (Value::Float { value: a, kind: ka }, Value::Float { value: b, kind: kb }) => a == b && ka == kb, // Note: NaN != NaN
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Boolean(a), Value::Boolean(b)) => a == b,
             (Value::Array(a), Value::Array(b)) => a == b, // RefCell PartialEq compares inner values
@@ -281,7 +281,7 @@ impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Value::Integer(i) => write!(f, "Integer({})", i),
-            Value::Float(n) => write!(f, "Float({})", n),
+            Value::Float { value, kind } => write!(f, "Float({:?}, {})", kind, value),
             Value::String(s) => write!(f, "String({:?})", s),
             Value::Boolean(b) => write!(f, "Boolean({})", b),
             Value::Array(a) => write!(f, "Array({:?})", a.borrow()),
@@ -303,7 +303,7 @@ impl Value
         match self
         {
             Value::Integer(i) => i.to_string(),
-            Value::Float(n) => n.to_string(),
+            Value::Float { value, .. } => value.to_string(),
             Value::String(s) => format!("\"{}\"", s),
             Value::Boolean(b) => b.to_string(),
             Value::Array(arr) =>
@@ -348,7 +348,7 @@ impl fmt::Display for Value
         match self
         {
             Value::Integer(i) => write!(f, "{}", i),
-            Value::Float(n) => write!(f, "{}", n),
+            Value::Float { value, .. } => write!(f, "{}", value),
             Value::String(s) => write!(f, "{}", s),
             Value::Boolean(b) => write!(f, "{}", b),
             Value::Array(arr) =>

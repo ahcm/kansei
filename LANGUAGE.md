@@ -13,6 +13,8 @@ x = 10 # Inline comment
 ### Primitives
 - **Integer**: `1`, `42`, `-10`
 - **Float**: `1.0`, `3.14`, `-0.01`
+  - Default float literals are `f64`.
+  - Use suffixes like `1.0f32`, `1.0f64`, `1.0f128` to pick other float sizes.
 - **String**: `"Hello"`, `"World"`
 - **Boolean**: `true`, `false`
 - **Nil**: `nil`
@@ -73,12 +75,18 @@ Kansei exposes native modules via the `std` namespace. The `use` keyword validat
 
 ```ruby
 use std::Int64
+use std::Float32
 use std::Float64
+use std::Float128
 
 Int64 = std::Int64
 value = Int64.parse("42")
+Float32 = std::Float32
+f = Float32.parse("1.25")
 Float64 = std::Float64
 pi = Float64.parse("3.14159")
+Float128 = std::Float128
+big = Float128.parse("1.2345678901234567")
 ```
 
 The `::` operator accesses module members, similar to map dot access.

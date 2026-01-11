@@ -1,8 +1,10 @@
+use crate::ast::FloatKind;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token
 {
     Integer(i64),
-    Float(f64),
+    Float { value: f64, kind: FloatKind },
     Identifier(String),
     Plus,
     Minus,
@@ -251,6 +253,7 @@ impl Lexer
     {
         let mut int_val: i64 = 0;
         let mut overflowed = false;
+        let mut saw_fraction = false;
         while self.position < self.input.len() && self.input[self.position].is_digit(10)
         {
             let digit = (self.input[self.position] as u8 - b'0') as i64;
@@ -262,11 +265,11 @@ impl Lexer
             self.position += 1;
         }
 
+        let mut frac_val: i64 = 0;
+        let mut divisor: f64 = 1.0;
         if self.position < self.input.len() && self.input[self.position] == '.' {
             if self.position + 1 < self.input.len() && self.input[self.position + 1].is_digit(10) {
                 self.position += 1; // Consume dot
-                let mut frac_val: i64 = 0;
-                let mut divisor: f64 = 1.0;
                 while self.position < self.input.len() && self.input[self.position].is_digit(10) {
                     let digit = (self.input[self.position] as u8 - b'0') as i64;
                     if let Some(next) = frac_val.checked_mul(10).and_then(|v| v.checked_add(digit)) {
@@ -275,12 +278,37 @@ impl Lexer
                     divisor *= 10.0;
                     self.position += 1;
                 }
-                let int_part = if overflowed { 0 } else { int_val };
-                return Token::Float(int_part as f64 + (frac_val as f64 / divisor));
+                saw_fraction = true;
             }
         }
 
-        if overflowed {
+        let mut kind = FloatKind::F64;
+        let mut has_suffix = false;
+        if self.position + 1 < self.input.len() && self.input[self.position] == 'f' && self.input[self.position + 1].is_digit(10) {
+            has_suffix = true;
+            self.position += 1; // Consume 'f'
+            let suffix_start = self.position;
+            while self.position < self.input.len() && self.input[self.position].is_digit(10) {
+                self.position += 1;
+            }
+            let suffix: String = self.input[suffix_start..self.position].iter().collect();
+            kind = match suffix.as_str() {
+                "32" => FloatKind::F32,
+                "64" => FloatKind::F64,
+                "128" => FloatKind::F128,
+                _ => panic!("Unknown float suffix: f{}", suffix),
+            };
+        }
+
+        if saw_fraction || has_suffix {
+            let int_part = if overflowed { 0 } else { int_val };
+            let value = if saw_fraction {
+                int_part as f64 + (frac_val as f64 / divisor)
+            } else {
+                int_part as f64
+            };
+            Token::Float { value, kind }
+        } else if overflowed {
             Token::Integer(0)
         } else {
             Token::Integer(int_val)

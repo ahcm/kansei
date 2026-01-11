@@ -1,4 +1,4 @@
-use crate::ast::{Closure, Expr, ExprKind, Op};
+use crate::ast::{Closure, Expr, ExprKind, FloatKind, Op};
 use crate::intern;
 use crate::intern::{SymbolId, symbol_name};
 use crate::value::{Builtin, Environment, Instruction, RangeEnd, Value};
@@ -34,9 +34,29 @@ fn native_float64_parse(args: &[Value]) -> Result<Value, String> {
     let arg = args.get(0).ok_or_else(|| "Float64.parse expects 1 argument".to_string())?;
     match arg {
         Value::String(s) => s.parse::<f64>()
-            .map(Value::Float)
+            .map(|value| make_float(value, FloatKind::F64))
             .map_err(|_| "Float64.parse failed to parse string".to_string()),
         _ => Err("Float64.parse expects a string argument".to_string()),
+    }
+}
+
+fn native_float32_parse(args: &[Value]) -> Result<Value, String> {
+    let arg = args.get(0).ok_or_else(|| "Float32.parse expects 1 argument".to_string())?;
+    match arg {
+        Value::String(s) => s.parse::<f32>()
+            .map(|value| make_float(value as f64, FloatKind::F32))
+            .map_err(|_| "Float32.parse failed to parse string".to_string()),
+        _ => Err("Float32.parse expects a string argument".to_string()),
+    }
+}
+
+fn native_float128_parse(args: &[Value]) -> Result<Value, String> {
+    let arg = args.get(0).ok_or_else(|| "Float128.parse expects 1 argument".to_string())?;
+    match arg {
+        Value::String(s) => s.parse::<f64>()
+            .map(|value| make_float(value, FloatKind::F128))
+            .map_err(|_| "Float128.parse failed to parse string".to_string()),
+        _ => Err("Float128.parse expects a string argument".to_string()),
     }
 }
 
@@ -46,19 +66,54 @@ fn build_int64_module() -> Value {
     Value::Map(Rc::new(RefCell::new(int64_map)))
 }
 
+fn build_float32_module() -> Value {
+    let mut float32_map = FxHashMap::default();
+    float32_map.insert(intern::intern("parse"), Value::NativeFunction(native_float32_parse));
+    Value::Map(Rc::new(RefCell::new(float32_map)))
+}
+
 fn build_float64_module() -> Value {
     let mut float64_map = FxHashMap::default();
     float64_map.insert(intern::intern("parse"), Value::NativeFunction(native_float64_parse));
     Value::Map(Rc::new(RefCell::new(float64_map)))
 }
 
+fn build_float128_module() -> Value {
+    let mut float128_map = FxHashMap::default();
+    float128_map.insert(intern::intern("parse"), Value::NativeFunction(native_float128_parse));
+    Value::Map(Rc::new(RefCell::new(float128_map)))
+}
+
 fn build_std_module() -> Value {
     let int64_val = build_int64_module();
     let mut std_map = FxHashMap::default();
     std_map.insert(intern::intern("Int64"), int64_val);
+    std_map.insert(intern::intern("Float32"), build_float32_module());
     std_map.insert(intern::intern("Float64"), build_float64_module());
+    std_map.insert(intern::intern("Float128"), build_float128_module());
     Value::Map(Rc::new(RefCell::new(std_map)))
 }
+
+fn normalize_float_value(value: f64, kind: FloatKind) -> f64 {
+    match kind {
+        FloatKind::F32 => (value as f32) as f64,
+        FloatKind::F64 | FloatKind::F128 => value,
+    }
+}
+
+fn promote_float_kind(left: FloatKind, right: FloatKind) -> FloatKind {
+    let rank = |kind| match kind {
+        FloatKind::F32 => 0,
+        FloatKind::F64 => 1,
+        FloatKind::F128 => 2,
+    };
+    if rank(left) >= rank(right) { left } else { right }
+}
+
+fn make_float(value: f64, kind: FloatKind) -> Value {
+    Value::Float { value: normalize_float_value(value, kind), kind }
+}
+
 
 fn collect_declarations(expr: &Expr, decls: &mut HashSet<SymbolId>) {
         match &expr.kind {
@@ -248,7 +303,7 @@ fn uses_environment(expr: &Expr) -> bool {
         ExprKind::Use(_) => true,
         // Simple functions (is_simple) only have these constructs roughly. 
         // We can be conservative.
-        ExprKind::Integer(_) | ExprKind::Float(_) | ExprKind::String(_) | ExprKind::Boolean(_) | ExprKind::Nil => false,
+        ExprKind::Integer(_) | ExprKind::Float { .. } | ExprKind::String(_) | ExprKind::Boolean(_) | ExprKind::Nil => false,
         _ => true, // Conservative fallback for blocks, loops, etc. if they slipped into is_simple
     }
 }
@@ -285,8 +340,8 @@ fn match_for_range(condition: &Expr, body: &Expr, consts: &mut Vec<Value>) -> Op
                     let idx = push_const(consts, Value::Integer(*i));
                     RangeEnd::Const(idx)
                 }
-                ExprKind::Float(f) => {
-                    let idx = push_const(consts, Value::Float(*f));
+                ExprKind::Float { value, kind } => {
+                    let idx = push_const(consts, make_float(*value, *kind));
                     RangeEnd::Const(idx)
                 }
                 _ => return None,
@@ -316,7 +371,7 @@ fn match_for_range(condition: &Expr, body: &Expr, consts: &mut Vec<Value>) -> Op
                     if left_slot != index_slot {
                         return None;
                     }
-                    let is_one = matches!(right.kind, ExprKind::Integer(1) | ExprKind::Float(1.0));
+                    let is_one = matches!(right.kind, ExprKind::Integer(1) | ExprKind::Float { value: 1.0, .. });
                     if !is_one {
                         return None;
                     }
@@ -393,8 +448,8 @@ fn match_range_end(expr: &Expr, consts: &mut Vec<Value>) -> Option<RangeEnd> {
             let idx = push_const(consts, Value::Integer(*i));
             Some(RangeEnd::Const(idx))
         }
-        ExprKind::Float(f) => {
-            let idx = push_const(consts, Value::Float(*f));
+        ExprKind::Float { value, kind } => {
+            let idx = push_const(consts, make_float(*value, *kind));
             Some(RangeEnd::Const(idx))
         }
         _ => None,
@@ -403,7 +458,7 @@ fn match_range_end(expr: &Expr, consts: &mut Vec<Value>) -> Option<RangeEnd> {
 
 fn is_pure_expr(expr: &Expr) -> bool {
     match &expr.kind {
-        ExprKind::Integer(_) | ExprKind::Float(_) | ExprKind::Boolean(_) | ExprKind::Nil => true,
+        ExprKind::Integer(_) | ExprKind::Float { .. } | ExprKind::Boolean(_) | ExprKind::Nil => true,
         ExprKind::Identifier { .. } => true,
         ExprKind::BinaryOp { left, right, .. } => is_pure_expr(left) && is_pure_expr(right),
         _ => false,
@@ -473,9 +528,9 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
                 code.push(Instruction::LoadConstIdx(idx));
             }
         }
-        ExprKind::Float(f) => {
+        ExprKind::Float { value, kind } => {
             if want_value {
-                let idx = push_const(consts, Value::Float(*f));
+                let idx = push_const(consts, make_float(*value, *kind));
                 code.push(Instruction::LoadConstIdx(idx));
             }
         }
@@ -558,7 +613,7 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
         ExprKind::BinaryOp { left, op, right } => {
             let mut handled = false;
             if *op == Op::Multiply {
-                let one = |expr: &Expr| matches!(expr.kind, ExprKind::Integer(1) | ExprKind::Float(1.0));
+                let one = |expr: &Expr| matches!(expr.kind, ExprKind::Integer(1) | ExprKind::Float { value: 1.0, .. });
                 if is_pure_expr(left) {
                     match &right.kind {
                         ExprKind::BinaryOp { left: r_left, op: Op::Add, right: r_right } => {
@@ -891,7 +946,7 @@ fn expr_size(expr: &Expr) -> usize {
 
 fn is_inline_safe_arg(expr: &Expr) -> bool {
     match &expr.kind {
-        ExprKind::Integer(_) | ExprKind::Float(_) | ExprKind::Boolean(_) | ExprKind::Nil => true,
+        ExprKind::Integer(_) | ExprKind::Float { .. } | ExprKind::Boolean(_) | ExprKind::Nil => true,
         ExprKind::Identifier { .. } => true,
         ExprKind::BinaryOp { left, right, .. } => is_inline_safe_arg(left) && is_inline_safe_arg(right),
         ExprKind::Index { target, index } => is_inline_safe_arg(target) && is_inline_safe_arg(index),
@@ -996,7 +1051,7 @@ fn execute_instructions(
                         for idx in 0..len {
                             let item = {
                                 let vec = arr.borrow();
-                                Value::Float(vec[idx])
+                                make_float(vec[idx], FloatKind::F64)
                             };
                             if let Some(slot) = slots.get_mut(*var_slot) {
                                 *slot = item;
@@ -1028,12 +1083,12 @@ fn execute_instructions(
                     };
                     let end_f = match end_val {
                         Value::Integer(i) => i as f64,
-                        Value::Float(f) => f,
+                        Value::Float { value, .. } => value,
                         _ => return Err(RuntimeError { message: "Range end must be a number".to_string(), line: 0 }),
                     };
                     let current = match slots.get(*index_slot) {
                         Some(Value::Integer(i)) => *i,
-                        Some(Value::Float(f)) => *f as i64,
+                        Some(Value::Float { value, .. }) => *value as i64,
                         _ => return Err(RuntimeError { message: "Range index must be a number".to_string(), line: 0 }),
                     };
                     if (current as f64) >= end_f {
@@ -1063,11 +1118,11 @@ fn execute_instructions(
                     let v = stack.pop().unwrap();
                     if all_f64 {
                         match v {
-                            Value::Float(f) => f64_vals.push(f),
+                            Value::Float { value, .. } => f64_vals.push(value),
                             Value::Integer(i) => f64_vals.push(i as f64),
                             _ => {
                                 all_f64 = false;
-                                elems.extend(f64_vals.drain(..).map(Value::Float));
+                                elems.extend(f64_vals.drain(..).map(|value| make_float(value, FloatKind::F64)));
                                 elems.push(v);
                             }
                         }
@@ -1133,7 +1188,7 @@ fn execute_instructions(
                             let i = idx as usize;
                             let vec = arr.borrow();
                             if idx >= 0 && i < vec.len() {
-                                Value::Float(vec[i])
+                                make_float(vec[i], FloatKind::F64)
                             } else {
                                 Value::Nil
                             }
@@ -1185,7 +1240,7 @@ fn execute_instructions(
                             let i = idx as usize;
                             if idx >= 0 && i < vec.len() {
                                 match value {
-                                    Value::Float(f) => vec[i] = f,
+                                    Value::Float { value, .. } => vec[i] = value,
                                     Value::Integer(int_val) => vec[i] = int_val as f64,
                                     _ => return Err(RuntimeError {
                                         message: "F64Array assignment requires a number".to_string(),
@@ -1253,11 +1308,11 @@ fn execute_instructions(
                         };
                         if all_f64 {
                             match result {
-                                Value::Float(f) => f64_vals.push(f),
+                                Value::Float { value, .. } => f64_vals.push(value),
                                 Value::Integer(i) => f64_vals.push(i as f64),
                                 _ => {
                                     all_f64 = false;
-                                    vals.extend(f64_vals.drain(..).map(Value::Float));
+                                    vals.extend(f64_vals.drain(..).map(|value| make_float(value, FloatKind::F64)));
                                     vals.push(result);
                                 }
                             }
@@ -1269,11 +1324,11 @@ fn execute_instructions(
                     for _ in 0..n {
                         if all_f64 {
                             match gen_val {
-                                Value::Float(f) => f64_vals.push(f),
+                                Value::Float { value, .. } => f64_vals.push(value),
                                 Value::Integer(i) => f64_vals.push(i as f64),
                                 _ => {
                                     all_f64 = false;
-                                    vals.extend(f64_vals.drain(..).map(Value::Float));
+                                    vals.extend(f64_vals.drain(..).map(|value| make_float(value, FloatKind::F64)));
                                     vals.push(gen_val.clone());
                                 }
                             }
@@ -1294,18 +1349,18 @@ fn execute_instructions(
                     line: 0,
                 })?;
                 let scalar = match scalar_val {
-                    Value::Float(f) => f,
+                    Value::Float { value, .. } => value,
                     Value::Integer(i) => i as f64,
                     _ => return Err(RuntimeError { message: "F64Axpy requires numeric scalar".to_string(), line: 0 }),
                 };
                 let dst_idx = match slots.get(*dst_index_slot) {
                     Some(Value::Integer(i)) => *i as usize,
-                    Some(Value::Float(f)) => *f as usize,
+                    Some(Value::Float { value, .. }) => *value as usize,
                     _ => return Err(RuntimeError { message: "F64Axpy dst index must be numeric".to_string(), line: 0 }),
                 };
                 let src_idx = match slots.get(*src_index_slot) {
                     Some(Value::Integer(i)) => *i as usize,
-                    Some(Value::Float(f)) => *f as usize,
+                    Some(Value::Float { value, .. }) => *value as usize,
                     _ => return Err(RuntimeError { message: "F64Axpy src index must be numeric".to_string(), line: 0 }),
                 };
                 let dst = match slots.get_mut(*dst_slot) {
@@ -1323,12 +1378,12 @@ fn execute_instructions(
                 }
                 let result = dst_vec[dst_idx] + scalar * src_vec[src_idx];
                 dst_vec[dst_idx] = result;
-                stack.push(Value::Float(result));
+                stack.push(make_float(result, FloatKind::F64));
             }
             Instruction::F64DotRange { acc_slot, a_slot, b_slot, index_slot, end } => {
                 let start = match slots.get(*index_slot) {
                     Some(Value::Integer(i)) => *i as usize,
-                    Some(Value::Float(f)) => *f as usize,
+                    Some(Value::Float { value, .. }) => *value as usize,
                     _ => 0,
                 };
                 let end_val = match end {
@@ -1337,11 +1392,11 @@ fn execute_instructions(
                 };
                 let end_idx = match end_val {
                     Value::Integer(i) if i >= 0 => i as usize,
-                    Value::Float(f) if f >= 0.0 => f as usize,
+                    Value::Float { value, .. } if value >= 0.0 => value as usize,
                     _ => return Err(RuntimeError { message: "Range end must be a non-negative number".to_string(), line: 0 }),
                 };
                 let acc = match slots.get(*acc_slot) {
-                    Some(Value::Float(f)) => *f,
+                    Some(Value::Float { value, .. }) => *value,
                     Some(Value::Integer(i)) => *i as f64,
                     _ => 0.0,
                 };
@@ -1372,12 +1427,12 @@ fn execute_instructions(
                     i += 1;
                 }
                 if let Some(slot) = slots.get_mut(*acc_slot) {
-                    *slot = Value::Float(total);
+                    *slot = make_float(total, FloatKind::F64);
                 }
                 if let Some(slot) = slots.get_mut(*index_slot) {
                     *slot = Value::Integer(end_idx as i64);
                 }
-                stack.push(Value::Float(total));
+                stack.push(make_float(total, FloatKind::F64));
             }
             Instruction::F64Dot2Range {
                 acc1_slot,
@@ -1391,7 +1446,7 @@ fn execute_instructions(
             } => {
                 let start = match slots.get(*index_slot) {
                     Some(Value::Integer(i)) => *i as usize,
-                    Some(Value::Float(f)) => *f as usize,
+                    Some(Value::Float { value, .. }) => *value as usize,
                     _ => 0,
                 };
                 let end_val = match end {
@@ -1400,16 +1455,16 @@ fn execute_instructions(
                 };
                 let end_idx = match end_val {
                     Value::Integer(i) if i >= 0 => i as usize,
-                    Value::Float(f) if f >= 0.0 => f as usize,
+                    Value::Float { value, .. } if value >= 0.0 => value as usize,
                     _ => return Err(RuntimeError { message: "Range end must be a non-negative number".to_string(), line: 0 }),
                 };
                 let acc1 = match slots.get(*acc1_slot) {
-                    Some(Value::Float(f)) => *f,
+                    Some(Value::Float { value, .. }) => *value,
                     Some(Value::Integer(i)) => *i as f64,
                     _ => 0.0,
                 };
                 let acc2 = match slots.get(*acc2_slot) {
-                    Some(Value::Float(f)) => *f,
+                    Some(Value::Float { value, .. }) => *value,
                     Some(Value::Integer(i)) => *i as f64,
                     _ => 0.0,
                 };
@@ -1460,15 +1515,15 @@ fn execute_instructions(
                     i += 1;
                 }
                 if let Some(slot) = slots.get_mut(*acc1_slot) {
-                    *slot = Value::Float(total1);
+                    *slot = make_float(total1, FloatKind::F64);
                 }
                 if let Some(slot) = slots.get_mut(*acc2_slot) {
-                    *slot = Value::Float(total2);
+                    *slot = make_float(total2, FloatKind::F64);
                 }
                 if let Some(slot) = slots.get_mut(*index_slot) {
                     *slot = Value::Integer(end_idx as i64);
                 }
-                stack.push(Value::Float(total2));
+                stack.push(make_float(total2, FloatKind::F64));
             }
             inst => {
                 let r = stack.pop().unwrap();
@@ -1484,42 +1539,45 @@ fn execute_instructions(
                         Instruction::Lt => Value::Boolean(i1 < i2),
                         _ => unreachable!(),
                     },
-                    (Value::Float(f1), Value::Float(f2)) => match inst {
-                        Instruction::Add => Value::Float(f1 + f2),
-                        Instruction::Sub => Value::Float(f1 - f2),
-                        Instruction::Mul => Value::Float(f1 * f2),
-                        Instruction::Div => Value::Float(f1 / f2),
-                        Instruction::Eq => Value::Boolean(f1 == f2),
-                        Instruction::Gt => Value::Boolean(f1 > f2),
-                        Instruction::Lt => Value::Boolean(f1 < f2),
-                        _ => unreachable!(),
-                    },
-                    (Value::Integer(i), Value::Float(f)) => {
+                    (Value::Float { value: f1, kind: k1 }, Value::Float { value: f2, kind: k2 }) => {
+                        let kind = promote_float_kind(k1, k2);
+                        match inst {
+                            Instruction::Add => make_float(f1 + f2, kind),
+                            Instruction::Sub => make_float(f1 - f2, kind),
+                            Instruction::Mul => make_float(f1 * f2, kind),
+                            Instruction::Div => make_float(f1 / f2, kind),
+                            Instruction::Eq => Value::Boolean(f1 == f2),
+                            Instruction::Gt => Value::Boolean(f1 > f2),
+                            Instruction::Lt => Value::Boolean(f1 < f2),
+                            _ => unreachable!(),
+                        }
+                    }
+                    (Value::Integer(i), Value::Float { value: f, kind }) => {
                         let f1 = i as f64;
                         match inst {
-                            Instruction::Add => Value::Float(f1 + f),
-                            Instruction::Sub => Value::Float(f1 - f),
-                            Instruction::Mul => Value::Float(f1 * f),
-                            Instruction::Div => Value::Float(f1 / f),
+                            Instruction::Add => make_float(f1 + f, kind),
+                            Instruction::Sub => make_float(f1 - f, kind),
+                            Instruction::Mul => make_float(f1 * f, kind),
+                            Instruction::Div => make_float(f1 / f, kind),
                             Instruction::Eq => Value::Boolean(f1 == f),
                             Instruction::Gt => Value::Boolean(f1 > f),
                             Instruction::Lt => Value::Boolean(f1 < f),
                             _ => unreachable!(),
                         }
-                    },
-                    (Value::Float(f), Value::Integer(i)) => {
+                    }
+                    (Value::Float { value: f, kind }, Value::Integer(i)) => {
                         let f2 = i as f64;
                         match inst {
-                            Instruction::Add => Value::Float(f + f2),
-                            Instruction::Sub => Value::Float(f - f2),
-                            Instruction::Mul => Value::Float(f * f2),
-                            Instruction::Div => Value::Float(f / f2),
+                            Instruction::Add => make_float(f + f2, kind),
+                            Instruction::Sub => make_float(f - f2, kind),
+                            Instruction::Mul => make_float(f * f2, kind),
+                            Instruction::Div => make_float(f / f2, kind),
                             Instruction::Eq => Value::Boolean(f == f2),
                             Instruction::Gt => Value::Boolean(f > f2),
                             Instruction::Lt => Value::Boolean(f < f2),
                             _ => unreachable!(),
                         }
-                    },
+                    }
                     (Value::String(s1), Value::String(s2)) => match inst {
                         Instruction::Add => {
                             let mut out = s1.clone();
@@ -1711,8 +1769,14 @@ impl Interpreter {
                 if !map_mut.contains_key(&intern::intern("Int64")) {
                     map_mut.insert(intern::intern("Int64"), build_int64_module());
                 }
+                if !map_mut.contains_key(&intern::intern("Float32")) {
+                    map_mut.insert(intern::intern("Float32"), build_float32_module());
+                }
                 if !map_mut.contains_key(&intern::intern("Float64")) {
                     map_mut.insert(intern::intern("Float64"), build_float64_module());
+                }
+                if !map_mut.contains_key(&intern::intern("Float128")) {
+                    map_mut.insert(intern::intern("Float128"), build_float128_module());
                 }
             }
             Some(_) | None => {
@@ -1920,7 +1984,7 @@ impl Interpreter {
         let line = expr.line;
         match &expr.kind {
             ExprKind::Integer(i) => Ok(Value::Integer(*i)),
-            ExprKind::Float(f) => Ok(Value::Float(*f)),
+            ExprKind::Float { value, kind } => Ok(make_float(*value, *kind)),
             ExprKind::String(s) => Ok(Value::String(s.clone())),
             ExprKind::Boolean(b) => Ok(Value::Boolean(*b)),
             ExprKind::Nil => Ok(Value::Nil),
@@ -2014,7 +2078,7 @@ impl Interpreter {
                             let i = idx as usize;
                             if idx >= 0 && i < vec.len() {
                                 match val {
-                                    Value::Float(f) => vec[i] = f,
+                                    Value::Float { value, .. } => vec[i] = value,
                                     Value::Integer(int_val) => vec[i] = int_val as f64,
                                     _ => return Err(RuntimeError {
                                         message: "F64Array assignment requires a number".to_string(),
@@ -2168,11 +2232,11 @@ impl Interpreter {
                     let v = self.eval(e, slots)?;
                     if all_f64 {
                         match v {
-                            Value::Float(f) => f64_vals.push(f),
+                            Value::Float { value, .. } => f64_vals.push(value),
                             Value::Integer(i) => f64_vals.push(i as f64),
                             _ => {
                                 all_f64 = false;
-                                vals.extend(f64_vals.drain(..).map(Value::Float));
+                                vals.extend(f64_vals.drain(..).map(|value| make_float(value, FloatKind::F64)));
                                 vals.push(v);
                             }
                         }
@@ -2221,11 +2285,11 @@ impl Interpreter {
                         };
                         if all_f64 {
                             match result {
-                                Value::Float(f) => f64_vals.push(f),
+                                Value::Float { value, .. } => f64_vals.push(value),
                                 Value::Integer(i) => f64_vals.push(i as f64),
                                 _ => {
                                     all_f64 = false;
-                                    vals.extend(f64_vals.drain(..).map(Value::Float));
+                                    vals.extend(f64_vals.drain(..).map(|value| make_float(value, FloatKind::F64)));
                                     vals.push(result);
                                 }
                             }
@@ -2237,11 +2301,11 @@ impl Interpreter {
                     for _ in 0..n {
                         if all_f64 {
                             match gen_val {
-                                Value::Float(f) => f64_vals.push(f),
+                                Value::Float { value, .. } => f64_vals.push(value),
                                 Value::Integer(i) => f64_vals.push(i as f64),
                                 _ => {
                                     all_f64 = false;
-                                    vals.extend(f64_vals.drain(..).map(Value::Float));
+                                    vals.extend(f64_vals.drain(..).map(|value| make_float(value, FloatKind::F64)));
                                     vals.push(gen_val.clone());
                                 }
                             }
@@ -2294,7 +2358,7 @@ impl Interpreter {
                             let i = idx as usize;
                             let vec = arr.borrow();
                             if idx >= 0 && i < vec.len() {
-                                Ok(Value::Float(vec[i]))
+                                Ok(make_float(vec[i], FloatKind::F64))
                             } else {
                                 Ok(Value::Nil)
                             }
@@ -2434,7 +2498,7 @@ impl Interpreter {
             ExprKind::BinaryOp { left, op, right } => {
                 let l = match &left.kind {
                     ExprKind::Integer(i) => Value::Integer(*i),
-                    ExprKind::Float(f) => Value::Float(*f),
+                    ExprKind::Float { value, kind } => make_float(*value, *kind),
                     ExprKind::Identifier { slot: Some(s), .. } => {
                         let v = &slots[*s];
                         if let Value::Uninitialized = v { self.eval(left, slots)? } else { v.clone() }
@@ -2443,7 +2507,7 @@ impl Interpreter {
                 };
                 let r = match &right.kind {
                     ExprKind::Integer(i) => Value::Integer(*i),
-                    ExprKind::Float(f) => Value::Float(*f),
+                    ExprKind::Float { value, kind } => make_float(*value, *kind),
                     ExprKind::Identifier { slot: Some(s), .. } => {
                         let v = &slots[*s];
                         if let Value::Uninitialized = v { self.eval(right, slots)? } else { v.clone() }
@@ -2461,42 +2525,45 @@ impl Interpreter {
                         Op::Equal => Ok(Value::Boolean(i1 == i2)),
                         Op::NotEqual => Ok(Value::Boolean(i1 != i2)),
                     },
-                    (Value::Float(f1), Value::Float(f2)) => match op {
-                        Op::Add => Ok(Value::Float(f1 + f2)),
-                        Op::Subtract => Ok(Value::Float(f1 - f2)),
-                        Op::Multiply => Ok(Value::Float(f1 * f2)),
-                        Op::Divide => Ok(Value::Float(f1 / f2)),
-                        Op::GreaterThan => Ok(Value::Boolean(f1 > f2)),
-                        Op::LessThan => Ok(Value::Boolean(f1 < f2)),
-                        Op::Equal => Ok(Value::Boolean(f1 == f2)),
-                        Op::NotEqual => Ok(Value::Boolean(f1 != f2)),
-                    },
-                    (Value::Integer(i), Value::Float(f)) => {
+                    (Value::Float { value: f1, kind: k1 }, Value::Float { value: f2, kind: k2 }) => {
+                        let kind = promote_float_kind(k1, k2);
+                        match op {
+                            Op::Add => Ok(make_float(f1 + f2, kind)),
+                            Op::Subtract => Ok(make_float(f1 - f2, kind)),
+                            Op::Multiply => Ok(make_float(f1 * f2, kind)),
+                            Op::Divide => Ok(make_float(f1 / f2, kind)),
+                            Op::GreaterThan => Ok(Value::Boolean(f1 > f2)),
+                            Op::LessThan => Ok(Value::Boolean(f1 < f2)),
+                            Op::Equal => Ok(Value::Boolean(f1 == f2)),
+                            Op::NotEqual => Ok(Value::Boolean(f1 != f2)),
+                        }
+                    }
+                    (Value::Integer(i), Value::Float { value: f, kind }) => {
                         let f1 = i as f64;
                         match op {
-                            Op::Add => Ok(Value::Float(f1 + f)),
-                            Op::Subtract => Ok(Value::Float(f1 - f)),
-                            Op::Multiply => Ok(Value::Float(f1 * f)),
-                            Op::Divide => Ok(Value::Float(f1 / f)),
+                            Op::Add => Ok(make_float(f1 + f, kind)),
+                            Op::Subtract => Ok(make_float(f1 - f, kind)),
+                            Op::Multiply => Ok(make_float(f1 * f, kind)),
+                            Op::Divide => Ok(make_float(f1 / f, kind)),
                             Op::GreaterThan => Ok(Value::Boolean(f1 > f)),
                             Op::LessThan => Ok(Value::Boolean(f1 < f)),
                             Op::Equal => Ok(Value::Boolean(f1 == f)),
                             Op::NotEqual => Ok(Value::Boolean(f1 != f)),
                         }
-                    },
-                    (Value::Float(f), Value::Integer(i)) => {
+                    }
+                    (Value::Float { value: f, kind }, Value::Integer(i)) => {
                         let f2 = i as f64;
                         match op {
-                            Op::Add => Ok(Value::Float(f + f2)),
-                            Op::Subtract => Ok(Value::Float(f - f2)),
-                            Op::Multiply => Ok(Value::Float(f * f2)),
-                            Op::Divide => Ok(Value::Float(f / f2)),
+                            Op::Add => Ok(make_float(f + f2, kind)),
+                            Op::Subtract => Ok(make_float(f - f2, kind)),
+                            Op::Multiply => Ok(make_float(f * f2, kind)),
+                            Op::Divide => Ok(make_float(f / f2, kind)),
                             Op::GreaterThan => Ok(Value::Boolean(f > f2)),
                             Op::LessThan => Ok(Value::Boolean(f < f2)),
                             Op::Equal => Ok(Value::Boolean(f == f2)),
                             Op::NotEqual => Ok(Value::Boolean(f != f2)),
                         }
-                    },
+                    }
                     (Value::String(s1), Value::String(s2)) => match op {
                         Op::Add => {
                             let mut out = s1.clone();
@@ -2560,7 +2627,7 @@ impl Interpreter {
                         for idx in 0..len {
                             let item = {
                                 let vec = arr.borrow();
-                                Value::Float(vec[idx])
+                                make_float(vec[idx], FloatKind::F64)
                             };
                             self.env.borrow_mut().assign(*var, item);
                             last_val = self.eval(body, slots)?;
@@ -2584,7 +2651,7 @@ impl Interpreter {
                 let count_val = self.eval(count, slots)?;
                 let n = match count_val {
                     Value::Integer(i) if i >= 0 => i as usize,
-                    Value::Float(f) if f >= 0.0 => f as usize,
+                    Value::Float { value, .. } if value >= 0.0 => value as usize,
                     _ => return Err(RuntimeError {
                         message: "Loop count must be a non-negative number".to_string(),
                         line,

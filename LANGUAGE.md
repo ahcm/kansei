@@ -93,10 +93,13 @@ Uint64 = std::Uint64
 u = Uint64.parse("42")
 Float32 = std::Float32
 f = Float32.parse("1.25")
+root32 = Float32.sqrt(9)
 Float64 = std::Float64
 pi = Float64.parse("3.14159")
+root64 = Float64.sqrt(9)
 Float128 = std::Float128
 big = Float128.parse("1.2345678901234567")
+root128 = Float128.sqrt(9)
 ```
 
 The `::` operator accesses module members, similar to map dot access.

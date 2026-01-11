@@ -34,6 +34,15 @@ fn native_float64_parse(args: &[Value]) -> Result<Value, String> {
     }
 }
 
+fn native_float64_sqrt(args: &[Value]) -> Result<Value, String> {
+    let arg = args.get(0).ok_or_else(|| "Float64.sqrt expects 1 argument".to_string())?;
+    let value = match arg {
+        Value::Float { value, .. } => *value,
+        v => int_value_as_f64(v).ok_or_else(|| "Float64.sqrt expects a number".to_string())?,
+    };
+    Ok(make_float(value.sqrt(), FloatKind::F64))
+}
+
 fn native_float32_parse(args: &[Value]) -> Result<Value, String> {
     let arg = args.get(0).ok_or_else(|| "Float32.parse expects 1 argument".to_string())?;
     match arg {
@@ -44,6 +53,15 @@ fn native_float32_parse(args: &[Value]) -> Result<Value, String> {
     }
 }
 
+fn native_float32_sqrt(args: &[Value]) -> Result<Value, String> {
+    let arg = args.get(0).ok_or_else(|| "Float32.sqrt expects 1 argument".to_string())?;
+    let value = match arg {
+        Value::Float { value, .. } => *value,
+        v => int_value_as_f64(v).ok_or_else(|| "Float32.sqrt expects a number".to_string())?,
+    };
+    Ok(make_float((value as f32).sqrt() as f64, FloatKind::F32))
+}
+
 fn native_float128_parse(args: &[Value]) -> Result<Value, String> {
     let arg = args.get(0).ok_or_else(|| "Float128.parse expects 1 argument".to_string())?;
     match arg {
@@ -52,6 +70,15 @@ fn native_float128_parse(args: &[Value]) -> Result<Value, String> {
             .map_err(|_| "Float128.parse failed to parse string".to_string()),
         _ => Err("Float128.parse expects a string argument".to_string()),
     }
+}
+
+fn native_float128_sqrt(args: &[Value]) -> Result<Value, String> {
+    let arg = args.get(0).ok_or_else(|| "Float128.sqrt expects 1 argument".to_string())?;
+    let value = match arg {
+        Value::Float { value, .. } => *value,
+        v => int_value_as_f64(v).ok_or_else(|| "Float128.sqrt expects a number".to_string())?,
+    };
+    Ok(make_float(value.sqrt(), FloatKind::F128))
 }
 
 fn signed_int_min(kind: IntKind) -> i128 {
@@ -190,18 +217,21 @@ fn build_uint128_module() -> Value {
 fn build_float32_module() -> Value {
     let mut float32_map = FxHashMap::default();
     float32_map.insert(intern::intern("parse"), Value::NativeFunction(native_float32_parse));
+    float32_map.insert(intern::intern("sqrt"), Value::NativeFunction(native_float32_sqrt));
     Value::Map(Rc::new(RefCell::new(float32_map)))
 }
 
 fn build_float64_module() -> Value {
     let mut float64_map = FxHashMap::default();
     float64_map.insert(intern::intern("parse"), Value::NativeFunction(native_float64_parse));
+    float64_map.insert(intern::intern("sqrt"), Value::NativeFunction(native_float64_sqrt));
     Value::Map(Rc::new(RefCell::new(float64_map)))
 }
 
 fn build_float128_module() -> Value {
     let mut float128_map = FxHashMap::default();
     float128_map.insert(intern::intern("parse"), Value::NativeFunction(native_float128_parse));
+    float128_map.insert(intern::intern("sqrt"), Value::NativeFunction(native_float128_sqrt));
     Value::Map(Rc::new(RefCell::new(float128_map)))
 }
 

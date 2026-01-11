@@ -466,14 +466,14 @@ impl Interpreter {
         match &expr.kind {
             ExprKind::Integer(i) => Ok(Value::Integer(*i)),
             ExprKind::Float(f) => Ok(Value::Float(*f)),
-            ExprKind::String(s) => Ok(Value::String(Rc::new(s.clone()))),
+            ExprKind::String(s) => Ok(Value::String(s.clone())),
             ExprKind::Boolean(b) => Ok(Value::Boolean(*b)),
             ExprKind::Nil => Ok(Value::Nil),
             ExprKind::Shell(cmd_str) => {
                 let output = if cfg!(target_os = "windows") {
-                    Command::new("cmd").args(&["/C", cmd_str]).output()
+                    Command::new("cmd").args(&["/C", cmd_str.as_str()]).output()
                 } else {
-                    Command::new("sh").arg("-c").arg(cmd_str).output()
+                    Command::new("sh").arg("-c").arg(cmd_str.as_str()).output()
                 };
 
                 match output {

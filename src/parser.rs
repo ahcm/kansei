@@ -173,7 +173,7 @@ impl Parser
                 self.eat();
                 expr = self.make_expr(ExprKind::Index {
                     target: Box::new(expr),
-                    index: Box::new(self.make_expr(ExprKind::String(name), name_line)),
+                    index: Box::new(self.make_expr(ExprKind::String(Rc::new(name)), name_line)),
                 }, line);
             } else if self.current_token.token == Token::LeftParen {
                 self.eat(); // (
@@ -254,12 +254,12 @@ impl Parser
             Token::StringLiteral(s) =>
             {
                 self.eat();
-                self.make_expr(ExprKind::String(s), line)
+                self.make_expr(ExprKind::String(Rc::new(s)), line)
             }
             Token::CommandLiteral(c) =>
             {
                 self.eat();
-                self.make_expr(ExprKind::Shell(c), line)
+                self.make_expr(ExprKind::Shell(Rc::new(c)), line)
             }
             Token::True =>
             {

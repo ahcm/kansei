@@ -35,10 +35,10 @@ pub enum ExprKind
     Float(f64),
     Identifier { name: String, slot: Option<usize> },
     Reference(String), // &x
-    String(String), // "hello"
+    String(Rc<String>), // "hello"
     Boolean(bool),
     Nil,
-    Shell(String), // `ls`
+    Shell(Rc<String>), // `ls`
 
     // Operations
     BinaryOp

@@ -3342,6 +3342,52 @@ fn execute_instructions(
                     }
                 };
                 let step_f = normalize_float_value(*step, kind);
+                if step_f > 0.0 {
+                    if let RangeEnd::Const(idx) = end {
+                        let end_val = const_pool.get(*idx).cloned().unwrap_or(Value::Nil);
+                        let end_f = match end_val {
+                            Value::Float { value, kind: end_kind } => normalize_float_value(value, end_kind),
+                            _ => int_value_as_f64(&end_val).ok_or_else(|| RuntimeError {
+                                message: "Range end must be a number".to_string(),
+                                line: 0,
+                            })?,
+                        };
+                        while current + (step_f * 3.0) < end_f {
+                            if let Some(slot) = slots.get_mut(*index_slot) {
+                                *slot = make_float(current, kind);
+                            }
+                            let _ = execute_instructions(interpreter, body, const_pool, slots)?;
+                            current += step_f;
+                            if let Some(slot) = slots.get_mut(*index_slot) {
+                                *slot = make_float(current, kind);
+                            }
+                            let _ = execute_instructions(interpreter, body, const_pool, slots)?;
+                            current += step_f;
+                            if let Some(slot) = slots.get_mut(*index_slot) {
+                                *slot = make_float(current, kind);
+                            }
+                            let _ = execute_instructions(interpreter, body, const_pool, slots)?;
+                            current += step_f;
+                            if let Some(slot) = slots.get_mut(*index_slot) {
+                                *slot = make_float(current, kind);
+                            }
+                            last = execute_instructions(interpreter, body, const_pool, slots)?;
+                            current += step_f;
+                        }
+                        while current < end_f {
+                            if let Some(slot) = slots.get_mut(*index_slot) {
+                                *slot = make_float(current, kind);
+                            }
+                            last = execute_instructions(interpreter, body, const_pool, slots)?;
+                            current += step_f;
+                        }
+                        if let Some(slot) = slots.get_mut(*index_slot) {
+                            *slot = make_float(current, kind);
+                        }
+                        stack.push(last);
+                        continue;
+                    }
+                }
                 loop {
                     let end_val = match end {
                         RangeEnd::Slot(s) => slots.get(*s).cloned().unwrap_or(Value::Nil),

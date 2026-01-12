@@ -172,6 +172,7 @@ pub enum Instruction {
     Index,
     IndexCached(Rc<RefCell<IndexCache>>),
     IndexAssign,
+    CloneValue,
     ArrayGen,
     Dup,
     F64Axpy { dst_slot: usize, dst_index_slot: usize, src_slot: usize, src_index_slot: usize },

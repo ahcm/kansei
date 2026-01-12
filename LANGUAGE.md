@@ -42,6 +42,7 @@ Arrays and Maps are **mutable** and use **reference semantics**. Assigning an ar
   evens = [{|i| i * 2 }; 5] # same
 
   a = [1, 2, 3]
+  copy = clone a
   a each  { |i| i + 1 } # [2, 3, 4]
   a apply { |i| i + 1 } # [1, 2, 3] original input
   ```

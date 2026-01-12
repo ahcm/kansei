@@ -287,6 +287,26 @@ fn normalize_float_value(value: f64, kind: FloatKind) -> f64 {
     }
 }
 
+fn clone_value(value: &Value) -> Value {
+    match value {
+        Value::Array(arr) => {
+            let vals = arr.borrow().clone();
+            Value::Array(Rc::new(RefCell::new(vals)))
+        }
+        Value::F64Array(arr) => {
+            let vals = arr.borrow().clone();
+            Value::F64Array(Rc::new(RefCell::new(vals)))
+        }
+        Value::Map(map) => {
+            let map_ref = map.borrow();
+            Value::Map(Rc::new(RefCell::new(MapValue::new(map_ref.data.clone()))))
+        }
+        Value::String(s) => Value::String(s.clone()),
+        Value::Reference(r) => clone_value(&r.borrow()),
+        v => v.clone(),
+    }
+}
+
 fn promote_float_kind(left: FloatKind, right: FloatKind) -> FloatKind {
     let rank = |kind| match kind {
         FloatKind::F32 => 0,
@@ -430,6 +450,9 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<SymbolId>) {
                 collect_declarations(v, decls);
             }
         }
+        ExprKind::Clone(expr) => {
+            collect_declarations(expr, decls);
+        }
         ExprKind::FormatString(parts) => {
             for part in parts {
                 if let crate::ast::FormatPart::Expr { expr, .. } = part {
@@ -495,6 +518,9 @@ fn resolve_functions(expr: &mut Expr) {
         ExprKind::BinaryOp { left, right, .. } => {
             resolve_functions(left);
             resolve_functions(right);
+        }
+        ExprKind::Clone(expr) => {
+            resolve_functions(expr);
         }
         ExprKind::Block(stmts) => {
             for stmt in stmts {
@@ -575,6 +601,7 @@ fn uses_environment(expr: &Expr) -> bool {
             uses_environment(condition) || uses_environment(then_branch) || else_branch.as_ref().map_or(false, |e| uses_environment(e))
         }
         ExprKind::Call { function, args, .. } => uses_environment(function) || args.iter().any(uses_environment),
+        ExprKind::Clone(expr) => uses_environment(expr),
         ExprKind::Use(_) => true,
         ExprKind::Load(_) => true,
         ExprKind::FormatString(parts) => parts.iter().any(|part| {
@@ -856,6 +883,13 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
         ExprKind::Assignment { value, slot: Some(s), .. } => {
             if !compile_expr(value, code, consts, true) { return false; }
             code.push(Instruction::StoreSlot(*s));
+            if !want_value {
+                code.push(Instruction::Pop);
+            }
+        }
+        ExprKind::Clone(expr) => {
+            if !compile_expr(expr, code, consts, true) { return false; }
+            code.push(Instruction::CloneValue);
             if !want_value {
                 code.push(Instruction::Pop);
             }
@@ -1207,6 +1241,7 @@ fn find_compile_failure(expr: &Expr) -> Option<String> {
                 .or_else(|| find_compile_failure(index))
                 .or_else(|| find_compile_failure(value))
         }
+        ExprKind::Clone(expr) => find_compile_failure(expr),
         ExprKind::Block(stmts) => stmts.iter().find_map(find_compile_failure),
         ExprKind::Assignment { value, .. } => find_compile_failure(value),
         ExprKind::Yield(args) => args.iter().find_map(find_compile_failure),
@@ -1287,6 +1322,9 @@ fn collect_function_exprs(expr: &Expr, out: &mut Vec<(Option<SymbolId>, Vec<(Sym
             collect_function_exprs(target, out);
             collect_function_exprs(index, out);
             collect_function_exprs(value, out);
+        }
+        ExprKind::Clone(expr) => {
+            collect_function_exprs(expr, out);
         }
         ExprKind::FormatString(parts) => {
             for part in parts {
@@ -1444,6 +1482,10 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr {
                 op: op.clone(),
                 right: Box::new(substitute(right, args)),
             },
+            line: expr.line,
+        },
+        ExprKind::Clone(expr) => Expr {
+            kind: ExprKind::Clone(Box::new(substitute(expr, args))),
             line: expr.line,
         },
         ExprKind::If { condition, then_branch, else_branch } => Expr {
@@ -1635,6 +1677,10 @@ fn execute_instructions(
                     line: 0,
                 })?;
                 stack.push(val);
+            }
+            Instruction::CloneValue => {
+                let val = stack.pop().unwrap_or(Value::Nil);
+                stack.push(clone_value(&val));
             }
             Instruction::JumpIfFalse(target) => {
                 let cond = stack.pop().unwrap_or(Value::Nil);
@@ -2420,6 +2466,7 @@ fn is_simple(expr: &Expr) -> bool {
         ExprKind::ArrayGenerator { generator, size } => is_simple(generator) && is_simple(size),
         ExprKind::Map(entries) => entries.iter().all(|(k, v)| is_simple(k) && is_simple(v)),
         ExprKind::Index { target, index } => is_simple(target) && is_simple(index),
+        ExprKind::Clone(expr) => is_simple(expr),
         ExprKind::IndexAssignment { target, index, value } => is_simple(target) && is_simple(index) && is_simple(value),
         _ => true,
     }
@@ -2509,6 +2556,9 @@ fn resolve(expr: &mut Expr, slot_map: &FxHashMap<SymbolId, usize>) {
         ExprKind::Index { target, index } => {
             resolve(target, slot_map);
             resolve(index, slot_map);
+        }
+        ExprKind::Clone(expr) => {
+            resolve(expr, slot_map);
         }
         ExprKind::IndexAssignment { target, index, value } => {
             resolve(target, slot_map);
@@ -3230,14 +3280,18 @@ impl Interpreter {
                 self.import_path(path, line)?;
                 Ok(Value::Nil)
             }
-            ExprKind::Load(path) => {
-                self.load_wasm_module(path, line)?;
-                Ok(Value::Nil)
-            }
-            ExprKind::FormatString(parts) => {
-                let mut out = String::new();
-                for part in parts {
-                    match part {
+        ExprKind::Load(path) => {
+            self.load_wasm_module(path, line)?;
+            Ok(Value::Nil)
+        }
+        ExprKind::Clone(expr) => {
+            let val = self.eval(expr, slots)?;
+            Ok(clone_value(&val))
+        }
+        ExprKind::FormatString(parts) => {
+            let mut out = String::new();
+            for part in parts {
+                match part {
                         crate::ast::FormatPart::Literal(s) => out.push_str(s.as_str()),
                         crate::ast::FormatPart::Expr { expr, spec } => {
                             let val = self.eval(expr, slots)?;

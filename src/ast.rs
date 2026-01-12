@@ -62,6 +62,7 @@ pub enum ExprKind
     Boolean(bool),
     Nil,
     Shell(Rc<String>), // `ls`
+    Clone(Box<Expr>),
 
     // Operations
     BinaryOp

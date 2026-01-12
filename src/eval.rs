@@ -3244,35 +3244,80 @@ fn execute_instructions(
                             message: "Range index must be a number".to_string(),
                             line: 0,
                         })?;
-                        loop {
-                            let end_val = match end {
-                                RangeEnd::Slot(s) => slots.get(*s).cloned().unwrap_or(Value::Nil),
-                                RangeEnd::Const(idx) => const_pool.get(*idx).cloned().unwrap_or(Value::Nil),
-                            };
-                            let should_stop = match end_val {
-                                Value::Float { value, kind: end_kind } => {
-                                    let end_f = normalize_float_value(value, end_kind);
-                                    (current as f64) >= end_f
+                        let mut used_unroll = false;
+                        if *step == 1 {
+                            if let RangeEnd::Const(idx) = end {
+                                let end_val = const_pool.get(*idx).cloned().unwrap_or(Value::Nil);
+                                if let Some(end_i) = int_value_as_i64(&end_val) {
+                                    used_unroll = true;
+                                    if let Some(limit) = end_i.checked_sub(3) {
+                                        while current < limit {
+                                            if let Some(slot) = slots.get_mut(*index_slot) {
+                                                *slot = default_int(current as i128);
+                                            }
+                                            let _ = execute_instructions(interpreter, body, const_pool, slots)?;
+                                            current += 1;
+                                            if let Some(slot) = slots.get_mut(*index_slot) {
+                                                *slot = default_int(current as i128);
+                                            }
+                                            let _ = execute_instructions(interpreter, body, const_pool, slots)?;
+                                            current += 1;
+                                            if let Some(slot) = slots.get_mut(*index_slot) {
+                                                *slot = default_int(current as i128);
+                                            }
+                                            let _ = execute_instructions(interpreter, body, const_pool, slots)?;
+                                            current += 1;
+                                            if let Some(slot) = slots.get_mut(*index_slot) {
+                                                *slot = default_int(current as i128);
+                                            }
+                                            last = execute_instructions(interpreter, body, const_pool, slots)?;
+                                            current += 1;
+                                        }
+                                    }
+                                    while current < end_i {
+                                        if let Some(slot) = slots.get_mut(*index_slot) {
+                                            *slot = default_int(current as i128);
+                                        }
+                                        last = execute_instructions(interpreter, body, const_pool, slots)?;
+                                        current += 1;
+                                    }
+                                    if let Some(slot) = slots.get_mut(*index_slot) {
+                                        *slot = default_int(current as i128);
+                                    }
                                 }
-                                _ => {
-                                    let end_i = int_value_as_i64(&end_val).ok_or_else(|| RuntimeError {
-                                        message: "Range end must be a number".to_string(),
-                                        line: 0,
-                                    })?;
-                                    current >= end_i
+                            }
+                        }
+                        if !used_unroll {
+                            loop {
+                                let end_val = match end {
+                                    RangeEnd::Slot(s) => slots.get(*s).cloned().unwrap_or(Value::Nil),
+                                    RangeEnd::Const(idx) => const_pool.get(*idx).cloned().unwrap_or(Value::Nil),
+                                };
+                                let should_stop = match end_val {
+                                    Value::Float { value, kind: end_kind } => {
+                                        let end_f = normalize_float_value(value, end_kind);
+                                        (current as f64) >= end_f
+                                    }
+                                    _ => {
+                                        let end_i = int_value_as_i64(&end_val).ok_or_else(|| RuntimeError {
+                                            message: "Range end must be a number".to_string(),
+                                            line: 0,
+                                        })?;
+                                        current >= end_i
+                                    }
+                                };
+                                if should_stop {
+                                    if let Some(slot) = slots.get_mut(*index_slot) {
+                                        *slot = default_int(current as i128);
+                                    }
+                                    break;
                                 }
-                            };
-                            if should_stop {
                                 if let Some(slot) = slots.get_mut(*index_slot) {
                                     *slot = default_int(current as i128);
                                 }
-                                break;
+                                last = execute_instructions(interpreter, body, const_pool, slots)?;
+                                current = current + *step;
                             }
-                            if let Some(slot) = slots.get_mut(*index_slot) {
-                                *slot = default_int(current as i128);
-                            }
-                            last = execute_instructions(interpreter, body, const_pool, slots)?;
-                            current = current + *step;
                         }
                     }
                 }

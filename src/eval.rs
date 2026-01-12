@@ -4886,6 +4886,122 @@ impl Interpreter {
         result
     }
 
+    fn apply_block_array(
+        &mut self,
+        method: &str,
+        arr: Rc<RefCell<Vec<Value>>>,
+        block: &Closure,
+        saved_env: Rc<RefCell<Environment>>,
+        line: usize,
+    ) -> EvalResult {
+        let collect_results = method == "each" || method == "map";
+        let is_filter = method == "filter";
+        let len = arr.borrow().len();
+        let mut results = Vec::new();
+        let mut f64_vals = Vec::new();
+        let mut all_f64 = true;
+        for idx in 0..len {
+            let val = arr.borrow()[idx].clone();
+            let result = self.call_block_with_args(
+                block,
+                saved_env.clone(),
+                std::slice::from_ref(&val),
+                line,
+            )?;
+            if is_filter {
+                let is_truthy = !matches!(result, Value::Boolean(false) | Value::Nil);
+                if is_truthy {
+                    if all_f64 {
+                        if let Some(num) = int_value_as_f64(&val) {
+                            f64_vals.push(num);
+                        } else {
+                            all_f64 = false;
+                            results.extend(f64_vals.drain(..).map(|v| make_float(v, FloatKind::F64)));
+                            results.push(val.clone());
+                        }
+                    } else {
+                        results.push(val.clone());
+                    }
+                }
+            } else if collect_results {
+                if all_f64 {
+                    if let Some(num) = int_value_as_f64(&result) {
+                        f64_vals.push(num);
+                    } else {
+                        all_f64 = false;
+                        results.extend(f64_vals.drain(..).map(|v| make_float(v, FloatKind::F64)));
+                        results.push(result);
+                    }
+                } else {
+                    results.push(result);
+                }
+            }
+        }
+        if collect_results || is_filter {
+            if all_f64 {
+                Ok(Value::F64Array(Rc::new(RefCell::new(f64_vals))))
+            } else {
+                Ok(Value::Array(Rc::new(RefCell::new(results))))
+            }
+        } else {
+            Ok(Value::Array(arr))
+        }
+    }
+
+    fn apply_block_f64_array(
+        &mut self,
+        method: &str,
+        arr: Rc<RefCell<Vec<f64>>>,
+        block: &Closure,
+        saved_env: Rc<RefCell<Environment>>,
+        line: usize,
+    ) -> EvalResult {
+        let collect_results = method == "each" || method == "map";
+        let is_filter = method == "filter";
+        let len = arr.borrow().len();
+        let mut results = Vec::new();
+        let mut f64_vals = Vec::new();
+        let mut all_f64 = true;
+        for idx in 0..len {
+            let arg = make_float(arr.borrow()[idx], FloatKind::F64);
+            let result = self.call_block_with_args(
+                block,
+                saved_env.clone(),
+                std::slice::from_ref(&arg),
+                line,
+            )?;
+            if is_filter {
+                let is_truthy = !matches!(result, Value::Boolean(false) | Value::Nil);
+                if is_truthy {
+                    if let Value::Float { value, .. } = arg {
+                        f64_vals.push(value);
+                    }
+                }
+            } else if collect_results {
+                if all_f64 {
+                    if let Some(num) = int_value_as_f64(&result) {
+                        f64_vals.push(num);
+                    } else {
+                        all_f64 = false;
+                        results.extend(f64_vals.drain(..).map(|v| make_float(v, FloatKind::F64)));
+                        results.push(result);
+                    }
+                } else {
+                    results.push(result);
+                }
+            }
+        }
+        if collect_results || is_filter {
+            if is_filter || all_f64 {
+                Ok(Value::F64Array(Rc::new(RefCell::new(f64_vals))))
+            } else {
+                Ok(Value::Array(Rc::new(RefCell::new(results))))
+            }
+        } else {
+            Ok(Value::F64Array(arr))
+        }
+    }
+
     fn call_wasm_function(
         &mut self,
         func: Rc<WasmFunction>,
@@ -5748,108 +5864,16 @@ impl Interpreter {
                             if let Value::String(name) = index_val {
                                 if matches!(name.as_str(), "each" | "apply" | "map" | "filter") {
                                     let method = name.as_str();
-                                    let collect_results = method == "each" || method == "map";
-                                    let is_filter = method == "filter";
                                     let saved_env = self.env.clone();
                                     match target_val {
                                         Value::Array(arr) => {
-                                            let len = arr.borrow().len();
-                                            let mut results = Vec::new();
-                                            let mut f64_vals = Vec::new();
-                                            let mut all_f64 = true;
-                                            for idx in 0..len {
-                                                let val = arr.borrow()[idx].clone();
-                                                let result = self.call_block_with_args(
-                                                    block,
-                                                    saved_env.clone(),
-                                                    std::slice::from_ref(&val),
-                                                    line,
-                                                )?;
-                                                if is_filter {
-                                                    let is_truthy = !matches!(result, Value::Boolean(false) | Value::Nil);
-                                                    if is_truthy {
-                                                        if all_f64 {
-                                                            if let Some(num) = int_value_as_f64(&val) {
-                                                                f64_vals.push(num);
-                                                            } else {
-                                                                all_f64 = false;
-                                                                results.extend(f64_vals.drain(..).map(|v| make_float(v, FloatKind::F64)));
-                                                                results.push(val.clone());
-                                                            }
-                                                        } else {
-                                                            results.push(val.clone());
-                                                        }
-                                                    }
-                                                } else if collect_results {
-                                                    if all_f64 {
-                                                        if let Some(num) = int_value_as_f64(&result) {
-                                                            f64_vals.push(num);
-                                                        } else {
-                                                            all_f64 = false;
-                                                            results.extend(f64_vals.drain(..).map(|v| make_float(v, FloatKind::F64)));
-                                                            results.push(result);
-                                                        }
-                                                    } else {
-                                                        results.push(result);
-                                                    }
-                                                }
-                                            }
-                                            return if collect_results || is_filter {
-                                                if all_f64 {
-                                                    Ok(Value::F64Array(Rc::new(RefCell::new(f64_vals))))
-                                                } else {
-                                                    Ok(Value::Array(Rc::new(RefCell::new(results))))
-                                                }
-                                            } else {
-                                                Ok(Value::Array(arr))
-                                            };
+                                            return self.apply_block_array(method, arr, block, saved_env, line);
                                         }
                                         Value::F64Array(arr) => {
-                                            let len = arr.borrow().len();
-                                            let mut results = Vec::new();
-                                            let mut f64_vals = Vec::new();
-                                            let mut all_f64 = true;
-                                            for idx in 0..len {
-                                                let arg = make_float(arr.borrow()[idx], FloatKind::F64);
-                                                let result = self.call_block_with_args(
-                                                    block,
-                                                    saved_env.clone(),
-                                                    std::slice::from_ref(&arg),
-                                                    line,
-                                                )?;
-                                                if is_filter {
-                                                    let is_truthy = !matches!(result, Value::Boolean(false) | Value::Nil);
-                                                    if is_truthy {
-                                                        f64_vals.push(match arg {
-                                                            Value::Float { value, .. } => value,
-                                                            _ => 0.0,
-                                                        });
-                                                    }
-                                                } else if collect_results {
-                                                    if all_f64 {
-                                                        if let Some(num) = int_value_as_f64(&result) {
-                                                            f64_vals.push(num);
-                                                        } else {
-                                                            all_f64 = false;
-                                                            results.extend(f64_vals.drain(..).map(|v| make_float(v, FloatKind::F64)));
-                                                            results.push(result);
-                                                        }
-                                                    } else {
-                                                        results.push(result);
-                                                    }
-                                                }
-                                            }
-                                            return if collect_results || is_filter {
-                                                if is_filter || all_f64 {
-                                                    Ok(Value::F64Array(Rc::new(RefCell::new(f64_vals))))
-                                                } else {
-                                                    Ok(Value::Array(Rc::new(RefCell::new(results))))
-                                                }
-                                            } else {
-                                                Ok(Value::F64Array(arr))
-                                            };
+                                            return self.apply_block_f64_array(method, arr, block, saved_env, line);
                                         }
                                         Value::Map(map) => {
+                                            let collect_results = method == "each" || method == "map";
                                             let keys: Vec<Rc<String>> = map.borrow().data.keys().cloned().collect();
                                             let mut results = Vec::new();
                                             for key in keys {

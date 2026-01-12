@@ -264,6 +264,54 @@ impl Parser
                     block: Some(Closure { params, body: Box::new(body) }),
                     inlined_body: Rc::new(RefCell::new(None)),
                 }, line);
+            } else if matches!(self.current_token.token, Token::Identifier(_)) {
+                let mut temp_lexer = self.lexer.clone();
+                if temp_lexer.next_token().token == Token::LeftBrace {
+                    let name = match &self.current_token.token {
+                        Token::Identifier(n) => intern::intern_owned(n.clone()),
+                        _ => unreachable!(),
+                    };
+                    self.eat(); // identifier
+                    self.eat(); // {
+                    let mut params = Vec::new();
+                    if self.current_token.token == Token::Pipe {
+                        self.eat(); // |
+                        loop {
+                            let is_ref = if self.current_token.token == Token::Ampersand {
+                                self.eat();
+                                true
+                            } else {
+                                false
+                            };
+                            match &self.current_token.token {
+                                Token::Identifier(p) => params.push((intern::intern_symbol_owned(p.clone()), is_ref)),
+                                _ => panic!("Expected param name at line {}", self.current_token.line),
+                            }
+                            self.eat();
+                            if self.current_token.token == Token::Comma {
+                                self.eat();
+                            } else {
+                                break;
+                            }
+                        }
+                        self.expect(Token::Pipe);
+                    }
+                    let body = self.parse_block();
+                    self.expect(Token::RightBrace);
+                    let index = self.make_expr(ExprKind::String(name), line);
+                    let function = self.make_expr(ExprKind::Index {
+                        target: Box::new(expr),
+                        index: Box::new(index),
+                    }, line);
+                    expr = self.make_expr(ExprKind::Call {
+                        function: Box::new(function),
+                        args: Vec::new(),
+                        block: Some(Closure { params, body: Box::new(body) }),
+                        inlined_body: Rc::new(RefCell::new(None)),
+                    }, line);
+                } else {
+                    break;
+                }
             } else {
                 break;
             }

@@ -2567,9 +2567,9 @@ fn resolve_method_value(
             }
         }
         Value::Array(_) | Value::F64Array(_) => {
-            return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
+            return Err(err_index_requires_int());
         }
-        _ => return Err(RuntimeError { message: "Index operator not supported on this type".to_string(), line: 0 }),
+        _ => return Err(err_index_unsupported()),
     };
     Ok(result)
 }
@@ -2590,7 +2590,7 @@ fn eval_index_cached_value(index_val: Value, target_val: Value, cache: &Rc<RefCe
                 let vec = arr.borrow();
                 if i < vec.len() { vec[i].clone() } else { Value::Nil }
             } else {
-                return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
+                return Err(err_index_requires_int());
             }
         }
         Value::F64Array(arr) => {
@@ -2607,7 +2607,7 @@ fn eval_index_cached_value(index_val: Value, target_val: Value, cache: &Rc<RefCe
                 let vec = arr.borrow();
                 if i < vec.len() { make_float(vec[i], FloatKind::F64) } else { Value::Nil }
             } else {
-                return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
+                return Err(err_index_requires_int());
             }
         }
         Value::Map(map) => {
@@ -2641,7 +2641,7 @@ fn eval_index_cached_value(index_val: Value, target_val: Value, cache: &Rc<RefCe
                 map.borrow().data.get(&key).cloned().unwrap_or(Value::Nil)
             }
         }
-        _ => return Err(RuntimeError { message: "Index operator not supported on this type".to_string(), line: 0 }),
+        _ => return Err(err_index_unsupported()),
     };
     Ok(result)
 }
@@ -2657,7 +2657,7 @@ fn eval_index_assign_value(target_val: Value, index_val: Value, value: Value) ->
                     return Err(RuntimeError { message: "Array index out of bounds".to_string(), line: 0 });
                 }
             } else {
-                return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
+                return Err(err_index_requires_int());
             }
         }
         Value::F64Array(arr) => {
@@ -2681,7 +2681,7 @@ fn eval_index_assign_value(target_val: Value, index_val: Value, value: Value) ->
                     return Err(RuntimeError { message: "Array index out of bounds".to_string(), line: 0 });
                 }
             } else {
-                return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
+                return Err(err_index_requires_int());
             }
         }
         Value::Map(map) => {
@@ -2956,10 +2956,10 @@ fn execute_reg_instructions(
                                 map.borrow().data.get(&key).cloned().unwrap_or(Value::Nil)
                             }
                         }
-                        Value::Array(_) | Value::F64Array(_) => {
-                            return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
-                        }
-                        _ => return Err(RuntimeError { message: "Index operator not supported on this type".to_string(), line: 0 }),
+        Value::Array(_) | Value::F64Array(_) => {
+            return Err(err_index_requires_int());
+        }
+        _ => return Err(err_index_unsupported()),
                     };
                     regs[*dst] = result;
                 }
@@ -2972,7 +2972,7 @@ fn execute_reg_instructions(
                                 Value::Integer { value, .. } if value >= 0 => value as usize,
                                 Value::Unsigned { value, .. } => value as usize,
                                 _ => {
-                                    return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
+                                    return Err(err_index_requires_int());
                                 }
                             };
                             let arr_ptr = Rc::as_ptr(&arr) as usize;
@@ -3156,6 +3156,14 @@ fn pop_method_target_and_resolve(
         line: 0,
     })?;
     resolve_method_value(target_val, name, map_cache)
+}
+
+fn err_index_requires_int() -> RuntimeError {
+    RuntimeError { message: "Array index must be an integer".to_string(), line: 0 }
+}
+
+fn err_index_unsupported() -> RuntimeError {
+    RuntimeError { message: "Index operator not supported on this type".to_string(), line: 0 }
 }
 
 fn execute_instructions(
@@ -3820,7 +3828,7 @@ fn execute_instructions(
                                 Value::Nil
                             }
                         } else {
-                            return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
+                            return Err(err_index_requires_int());
                         }
                     }
                     Value::F64Array(arr) => {
@@ -3832,7 +3840,7 @@ fn execute_instructions(
                                 Value::Nil
                             }
                         } else {
-                            return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
+                            return Err(err_index_requires_int());
                         }
                     }
                     Value::Map(map) => {
@@ -3850,7 +3858,7 @@ fn execute_instructions(
                             map_ref.data.get(&key).cloned().unwrap_or(Value::Nil)
                         }
                     }
-                    _ => return Err(RuntimeError { message: "Index operator not supported on this type".to_string(), line: 0 }),
+                    _ => return Err(err_index_unsupported()),
                 };
                 stack.push(result);
             }
@@ -3893,9 +3901,9 @@ fn execute_instructions(
                         }
                     }
                     Value::Array(_) | Value::F64Array(_) => {
-                        return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
+                        return Err(err_index_requires_int());
                     }
-                    _ => return Err(RuntimeError { message: "Index operator not supported on this type".to_string(), line: 0 }),
+                    _ => return Err(err_index_unsupported()),
                 };
                 stack.push(result);
             }
@@ -3914,7 +3922,7 @@ fn execute_instructions(
                             Value::Integer { value, .. } if value >= 0 => value as usize,
                             Value::Unsigned { value, .. } => value as usize,
                             _ => {
-                                return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
+                                return Err(err_index_requires_int());
                             }
                         };
                         let arr_ptr = Rc::as_ptr(&arr) as usize;
@@ -5749,7 +5757,7 @@ impl Interpreter {
                             }
                         } else {
                             Err(RuntimeError {
-                                message: "Array index must be an integer".to_string(),
+                                message: err_index_requires_int().message,
                                 line,
                             })
                         }
@@ -5764,7 +5772,7 @@ impl Interpreter {
                             }
                         } else {
                             Err(RuntimeError {
-                                message: "Array index must be an integer".to_string(),
+                                message: err_index_requires_int().message,
                                 line,
                             })
                         }
@@ -5784,7 +5792,7 @@ impl Interpreter {
                         }
                     }
                     _ => Err(RuntimeError {
-                        message: "Index operator not supported on this type".to_string(),
+                        message: err_index_unsupported().message,
                         line,
                     }),
                 }

@@ -24,6 +24,12 @@ pub struct RuntimeError {
 
 pub type EvalResult = Result<Value, RuntimeError>;
 
+enum BlockCollectionTarget {
+    Array(Rc<RefCell<Vec<Value>>>),
+    F64Array(Rc<RefCell<Vec<f64>>>),
+    Map(Rc<RefCell<MapValue>>),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BytecodeMode {
     Off,
@@ -4886,6 +4892,21 @@ impl Interpreter {
         result
     }
 
+    fn apply_block_collection(
+        &mut self,
+        method: &str,
+        target: BlockCollectionTarget,
+        block: &Closure,
+        saved_env: Rc<RefCell<Environment>>,
+        line: usize,
+    ) -> EvalResult {
+        match target {
+            BlockCollectionTarget::Array(arr) => self.apply_block_array(method, arr, block, saved_env, line),
+            BlockCollectionTarget::F64Array(arr) => self.apply_block_f64_array(method, arr, block, saved_env, line),
+            BlockCollectionTarget::Map(map) => self.apply_block_map(method, map, block, saved_env, line),
+        }
+    }
+
     fn apply_block_array(
         &mut self,
         method: &str,
@@ -5891,17 +5912,14 @@ impl Interpreter {
                                 if matches!(name.as_str(), "each" | "apply" | "map" | "filter") {
                                     let method = name.as_str();
                                     let saved_env = self.env.clone();
-                                    match target_val {
-                                        Value::Array(arr) => {
-                                            return self.apply_block_array(method, arr, block, saved_env, line);
-                                        }
-                                        Value::F64Array(arr) => {
-                                            return self.apply_block_f64_array(method, arr, block, saved_env, line);
-                                        }
-                                        Value::Map(map) => {
-                                            return self.apply_block_map(method, map, block, saved_env, line);
-                                        }
-                                        _ => {}
+                                    let target = match target_val {
+                                        Value::Array(arr) => Some(BlockCollectionTarget::Array(arr)),
+                                        Value::F64Array(arr) => Some(BlockCollectionTarget::F64Array(arr)),
+                                        Value::Map(map) => Some(BlockCollectionTarget::Map(map)),
+                                        _ => None,
+                                    };
+                                    if let Some(target) = target {
+                                        return self.apply_block_collection(method, target, block, saved_env, line);
                                     }
                                 }
                             }

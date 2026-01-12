@@ -1,7 +1,7 @@
 use crate::ast::{Closure, Expr, ExprKind, FloatKind, IntKind, Op};
 use crate::intern;
 use crate::intern::{SymbolId, symbol_name};
-use crate::value::{BinaryOpCache, BinaryOpCacheKind, Builtin, Environment, Instruction, MapValue, RangeEnd, Value};
+use crate::value::{BinaryOpCache, BinaryOpCacheKind, Builtin, Environment, IndexCache, Instruction, MapValue, RangeEnd, Value};
 use crate::wasm::{WasmFunction, WasmModule};
 use rustc_hash::FxHashMap;
 use std::collections::HashSet;
@@ -1019,6 +1019,7 @@ fn match_f64_index(expr: &Expr) -> Option<(usize, usize)> {
     }
 }
 
+
 fn match_f64_mul(expr: &Expr) -> Option<(Expr, usize, usize)> {
     match &expr.kind {
         ExprKind::BinaryOp { left, op: Op::Multiply, right } => {
@@ -1151,7 +1152,7 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
         ExprKind::Index { target, index } => {
             if !compile_expr(target, code, consts, true) { return false; }
             if !compile_expr(index, code, consts, true) { return false; }
-            code.push(Instruction::IndexCached(Rc::new(RefCell::new(crate::value::IndexCache::default()))));
+            code.push(Instruction::F64IndexCached(Rc::new(RefCell::new(crate::value::IndexCache::default()))));
             if !want_value {
                 code.push(Instruction::Pop);
             }
@@ -1166,7 +1167,7 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
                 if !compile_expr(target, code, consts, true) { return false; }
                 if !compile_expr(index, code, consts, true) { return false; }
                 if !compile_expr(value, code, consts, true) { return false; }
-                code.push(Instruction::IndexAssign);
+                code.push(Instruction::F64IndexAssignCached(Rc::new(RefCell::new(crate::value::IndexCache::default()))));
             }
             if !want_value {
                 code.push(Instruction::Pop);
@@ -1679,7 +1680,9 @@ pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String {
                         bin_hits += cache.hits;
                         bin_misses += cache.misses;
                     }
-                    Instruction::IndexCached(cache) => {
+                    Instruction::IndexCached(cache)
+                    | Instruction::F64IndexCached(cache)
+                    | Instruction::F64IndexAssignCached(cache) => {
                         let cache = cache.borrow();
                         idx_hits += cache.hits;
                         idx_misses += cache.misses;
@@ -1769,7 +1772,9 @@ pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String {
                             bin_hits += cache.hits;
                             bin_misses += cache.misses;
                         }
-                        Instruction::IndexCached(cache) => {
+                        Instruction::IndexCached(cache)
+                        | Instruction::F64IndexCached(cache)
+                        | Instruction::F64IndexAssignCached(cache) => {
                             let cache = cache.borrow();
                             idx_hits += cache.hits;
                             idx_misses += cache.misses;
@@ -1973,6 +1978,130 @@ fn is_inline_safe_arg(expr: &Expr) -> bool {
         }),
         _ => false,
     }
+}
+
+fn eval_index_cached_value(index_val: Value, target_val: Value, cache: &Rc<RefCell<IndexCache>>) -> EvalResult {
+    let result = match target_val {
+        Value::Array(arr) => {
+            if let Some(i) = int_value_as_usize(&index_val) {
+                let arr_ptr = Rc::as_ptr(&arr) as usize;
+                let mut cache_mut = cache.borrow_mut();
+                if cache_mut.array_ptr == Some(arr_ptr) && cache_mut.index_usize == Some(i) {
+                    cache_mut.hits += 1;
+                } else {
+                    cache_mut.array_ptr = Some(arr_ptr);
+                    cache_mut.index_usize = Some(i);
+                    cache_mut.misses += 1;
+                }
+                let vec = arr.borrow();
+                if i < vec.len() { vec[i].clone() } else { Value::Nil }
+            } else {
+                return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
+            }
+        }
+        Value::F64Array(arr) => {
+            if let Some(i) = int_value_as_usize(&index_val) {
+                let arr_ptr = Rc::as_ptr(&arr) as usize;
+                let mut cache_mut = cache.borrow_mut();
+                if cache_mut.array_ptr == Some(arr_ptr) && cache_mut.index_usize == Some(i) {
+                    cache_mut.hits += 1;
+                } else {
+                    cache_mut.array_ptr = Some(arr_ptr);
+                    cache_mut.index_usize = Some(i);
+                    cache_mut.misses += 1;
+                }
+                let vec = arr.borrow();
+                if i < vec.len() { make_float(vec[i], FloatKind::F64) } else { Value::Nil }
+            } else {
+                return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
+            }
+        }
+        Value::Map(map) => {
+            if let Value::String(s) = index_val {
+                if s.as_str() == "keys" {
+                    map_keys_array(&map.borrow())
+                } else if s.as_str() == "values" {
+                    map_values_array(&map.borrow())
+                } else {
+                    let map_ptr = Rc::as_ptr(&map) as usize;
+                    let map_ref = map.borrow();
+                    let mut cache_mut = cache.borrow_mut();
+                    if cache_mut.map_ptr == Some(map_ptr)
+                        && cache_mut.version == map_ref.version
+                        && cache_mut.key.as_ref() == Some(&s)
+                    {
+                        cache_mut.hits += 1;
+                        cache_mut.value.clone().unwrap_or(Value::Nil)
+                    } else {
+                        let value = map_ref.data.get(&s).cloned().unwrap_or(Value::Nil);
+                        cache_mut.map_ptr = Some(map_ptr);
+                        cache_mut.version = map_ref.version;
+                        cache_mut.key = Some(s.clone());
+                        cache_mut.value = Some(value.clone());
+                        cache_mut.misses += 1;
+                        value
+                    }
+                }
+            } else {
+                let key = intern::intern_owned(index_val.inspect());
+                map.borrow().data.get(&key).cloned().unwrap_or(Value::Nil)
+            }
+        }
+        _ => return Err(RuntimeError { message: "Index operator not supported on this type".to_string(), line: 0 }),
+    };
+    Ok(result)
+}
+
+fn eval_index_assign_value(target_val: Value, index_val: Value, value: Value) -> Result<Value, RuntimeError> {
+    match target_val {
+        Value::Array(arr) => {
+            if let Some(i) = int_value_as_usize(&index_val) {
+                let mut vec = arr.borrow_mut();
+                if i < vec.len() {
+                    vec[i] = value.clone();
+                } else {
+                    return Err(RuntimeError { message: "Array index out of bounds".to_string(), line: 0 });
+                }
+            } else {
+                return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
+            }
+        }
+        Value::F64Array(arr) => {
+            if let Some(i) = int_value_as_usize(&index_val) {
+                let mut vec = arr.borrow_mut();
+                if i < vec.len() {
+                    match &value {
+                        Value::Float { value, .. } => vec[i] = *value,
+                        v => {
+                            if let Some(num) = int_value_as_f64(v) {
+                                vec[i] = num;
+                            } else {
+                                return Err(RuntimeError {
+                                    message: "F64Array assignment requires a number".to_string(),
+                                    line: 0,
+                                });
+                            }
+                        }
+                    }
+                } else {
+                    return Err(RuntimeError { message: "Array index out of bounds".to_string(), line: 0 });
+                }
+            } else {
+                return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
+            }
+        }
+        Value::Map(map) => {
+            let key = match index_val {
+                Value::String(s) => s,
+                _ => intern::intern_owned(index_val.inspect()),
+            };
+            let mut map_mut = map.borrow_mut();
+            map_mut.data.insert(key, value.clone());
+            map_mut.version = map_mut.version.wrapping_add(1);
+        }
+        _ => return Err(RuntimeError { message: "Index assignment not supported on this type".to_string(), line: 0 }),
+    }
+    Ok(value)
 }
 
 fn execute_instructions(
@@ -2483,63 +2612,40 @@ fn execute_instructions(
                     message: "Missing target for index expression".to_string(),
                     line: 0,
                 })?;
+                let result = eval_index_cached_value(index_val, target_val, cache)?;
+                stack.push(result);
+            }
+            Instruction::F64IndexCached(cache) => {
+                let index_val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing index for index expression".to_string(),
+                    line: 0,
+                })?;
+                let target_val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing target for index expression".to_string(),
+                    line: 0,
+                })?;
                 let result = match target_val {
-                    Value::Array(arr) => {
-                        if let Some(i) = int_value_as_usize(&index_val) {
-                            let vec = arr.borrow();
-                            if i < vec.len() {
-                                vec[i].clone()
-                            } else {
-                                Value::Nil
-                            }
-                        } else {
-                            return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
-                        }
-                    }
                     Value::F64Array(arr) => {
-                        if let Some(i) = int_value_as_usize(&index_val) {
-                            let vec = arr.borrow();
-                            if i < vec.len() {
-                                make_float(vec[i], FloatKind::F64)
-                            } else {
-                                Value::Nil
+                        let idx = match index_val {
+                            Value::Integer { value, .. } if value >= 0 => value as usize,
+                            Value::Unsigned { value, .. } => value as usize,
+                            _ => {
+                                return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
                             }
+                        };
+                        let arr_ptr = Rc::as_ptr(&arr) as usize;
+                        let mut cache_mut = cache.borrow_mut();
+                        if cache_mut.array_ptr == Some(arr_ptr) && cache_mut.index_usize == Some(idx) {
+                            cache_mut.hits += 1;
                         } else {
-                            return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
+                            cache_mut.array_ptr = Some(arr_ptr);
+                            cache_mut.index_usize = Some(idx);
+                            cache_mut.misses += 1;
                         }
+                        let vec = arr.borrow();
+                        if idx < vec.len() { make_float(vec[idx], FloatKind::F64) } else { Value::Nil }
                     }
-                    Value::Map(map) => {
-                        if let Value::String(s) = index_val {
-                            if s.as_str() == "keys" {
-                                map_keys_array(&map.borrow())
-                            } else if s.as_str() == "values" {
-                                map_values_array(&map.borrow())
-                            } else {
-                                let map_ptr = Rc::as_ptr(&map) as usize;
-                                let map_ref = map.borrow();
-                                let mut cache_mut = cache.borrow_mut();
-                                if cache_mut.map_ptr == Some(map_ptr)
-                                    && cache_mut.version == map_ref.version
-                                    && cache_mut.key.as_ref() == Some(&s)
-                                {
-                                    cache_mut.hits += 1;
-                                    cache_mut.value.clone().unwrap_or(Value::Nil)
-                                } else {
-                                    let value = map_ref.data.get(&s).cloned().unwrap_or(Value::Nil);
-                                    cache_mut.map_ptr = Some(map_ptr);
-                                    cache_mut.version = map_ref.version;
-                                    cache_mut.key = Some(s.clone());
-                                    cache_mut.value = Some(value.clone());
-                                    cache_mut.misses += 1;
-                                    value
-                                }
-                            }
-                        } else {
-                            let key = intern::intern_owned(index_val.inspect());
-                            map.borrow().data.get(&key).cloned().unwrap_or(Value::Nil)
-                        }
-                    }
-                    _ => return Err(RuntimeError { message: "Index operator not supported on this type".to_string(), line: 0 }),
+                    other => eval_index_cached_value(index_val, other, cache)?,
                 };
                 stack.push(result);
             }
@@ -2556,61 +2662,62 @@ fn execute_instructions(
                     message: "Missing target for index assignment".to_string(),
                     line: 0,
                 })?;
-                match target_val {
-                    Value::Array(arr) => {
-                        if let Some(i) = int_value_as_usize(&index_val) {
-                            let mut vec = arr.borrow_mut();
-                            if i < vec.len() {
-                                vec[i] = value.clone();
-                            } else {
-                                return Err(RuntimeError { message: "Array index out of bounds".to_string(), line: 0 });
-                            }
-                        } else {
-                            return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
-                        }
-                    }
+                let result = eval_index_assign_value(target_val, index_val, value)?;
+                stack.push(result);
+            }
+            Instruction::F64IndexAssignCached(cache) => {
+                let value = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing value for index assignment".to_string(),
+                    line: 0,
+                })?;
+                let index_val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing index for index assignment".to_string(),
+                    line: 0,
+                })?;
+                let target_val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing target for index assignment".to_string(),
+                    line: 0,
+                })?;
+                let result = match target_val {
                     Value::F64Array(arr) => {
-                        if let Some(i) = int_value_as_usize(&index_val) {
-                            let mut vec = arr.borrow_mut();
-                            if i < vec.len() {
-                                match &value {
-                                    Value::Float { value, .. } => vec[i] = *value,
-                                    v => {
-                                        if let Some(num) = int_value_as_f64(v) {
-                                            vec[i] = num;
-                                        } else {
-                                            return Err(RuntimeError {
-                                                message: "F64Array assignment requires a number".to_string(),
-                                                line: 0,
-                                            });
-                                        }
-                                    }
-                                }
-                            } else {
-                                return Err(RuntimeError {
-                                    message: "Array index out of bounds".to_string(),
-                                    line: 0,
-                                });
+                        let out_value = value;
+                        let idx = match index_val {
+                            Value::Integer { value, .. } if value >= 0 => value as usize,
+                            Value::Unsigned { value, .. } => value as usize,
+                            _ => {
+                                let fallback = Value::F64Array(arr.clone());
+                                return eval_index_assign_value(fallback, index_val, out_value);
                             }
+                        };
+                        let num = match &out_value {
+                            Value::Float { value, .. } => *value,
+                            Value::Integer { value, .. } => *value as f64,
+                            Value::Unsigned { value, .. } => *value as f64,
+                            other => {
+                                let fallback = Value::F64Array(arr.clone());
+                                return eval_index_assign_value(fallback, index_val, other.clone());
+                            }
+                        };
+                        let arr_ptr = Rc::as_ptr(&arr) as usize;
+                        let mut cache_mut = cache.borrow_mut();
+                        if cache_mut.array_ptr == Some(arr_ptr) && cache_mut.index_usize == Some(idx) {
+                            cache_mut.hits += 1;
                         } else {
-                            return Err(RuntimeError {
-                                message: "Array index must be an integer".to_string(),
-                                line: 0,
-                            });
+                            cache_mut.array_ptr = Some(arr_ptr);
+                            cache_mut.index_usize = Some(idx);
+                            cache_mut.misses += 1;
+                        }
+                        let mut vec = arr.borrow_mut();
+                        if idx < vec.len() {
+                            vec[idx] = num;
+                            out_value
+                        } else {
+                            return Err(RuntimeError { message: "Array index out of bounds".to_string(), line: 0 });
                         }
                     }
-                    Value::Map(map) => {
-                        let key = match index_val {
-                             Value::String(s) => s,
-                             _ => intern::intern_owned(index_val.inspect()),
-                        };
-                        let mut map_mut = map.borrow_mut();
-                        map_mut.data.insert(key, value.clone());
-                        map_mut.version = map_mut.version.wrapping_add(1);
-                    }
-                    _ => return Err(RuntimeError { message: "Index assignment not supported on this type".to_string(), line: 0 }),
-                }
-                stack.push(value);
+                    other => eval_index_assign_value(other, index_val, value)?,
+                };
+                stack.push(result);
             }
             Instruction::F64ArrayGen { count } => {
                 let n = if let Some(count) = count {

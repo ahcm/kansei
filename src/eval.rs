@@ -3215,24 +3215,68 @@ impl Interpreter {
                             let target_val = self.eval(target, slots)?;
                             let index_val = self.eval(index, slots)?;
                             if let Value::String(name) = index_val {
-                                if name.as_str() == "each" {
+                                if name.as_str() == "each" || name.as_str() == "apply" {
+                                    let collect_results = name.as_str() == "each";
                                     let saved_env = self.env.clone();
                                     match target_val {
                                         Value::Array(arr) => {
                                             let len = arr.borrow().len();
+                                            let mut results = Vec::new();
                                             for idx in 0..len {
                                                 let val = arr.borrow()[idx].clone();
-                                                self.call_block_with_args(block, saved_env.clone(), std::slice::from_ref(&val), line)?;
+                                                let result = self.call_block_with_args(
+                                                    block,
+                                                    saved_env.clone(),
+                                                    std::slice::from_ref(&val),
+                                                    line,
+                                                )?;
+                                                if collect_results {
+                                                    results.push(result);
+                                                }
                                             }
-                                            return Ok(Value::Array(arr));
+                                            return if collect_results {
+                                                Ok(Value::Array(Rc::new(RefCell::new(results))))
+                                            } else {
+                                                Ok(Value::Array(arr))
+                                            };
                                         }
                                         Value::F64Array(arr) => {
                                             let len = arr.borrow().len();
+                                            let mut results = Vec::new();
                                             for idx in 0..len {
                                                 let arg = make_float(arr.borrow()[idx], FloatKind::F64);
-                                                self.call_block_with_args(block, saved_env.clone(), std::slice::from_ref(&arg), line)?;
+                                                let result = self.call_block_with_args(
+                                                    block,
+                                                    saved_env.clone(),
+                                                    std::slice::from_ref(&arg),
+                                                    line,
+                                                )?;
+                                                if collect_results {
+                                                    results.push(result);
+                                                }
                                             }
-                                            return Ok(Value::F64Array(arr));
+                                            return if collect_results {
+                                                Ok(Value::Array(Rc::new(RefCell::new(results))))
+                                            } else {
+                                                Ok(Value::F64Array(arr))
+                                            };
+                                        }
+                                        Value::Map(map) => {
+                                            let keys: Vec<Rc<String>> = map.borrow().keys().cloned().collect();
+                                            let mut results = Vec::new();
+                                            for key in keys {
+                                                let val = map.borrow().get(&key).cloned().unwrap_or(Value::Nil);
+                                                let args = [Value::String(key), val];
+                                                let result = self.call_block_with_args(block, saved_env.clone(), &args, line)?;
+                                                if collect_results {
+                                                    results.push(result);
+                                                }
+                                            }
+                                            return if collect_results {
+                                                Ok(Value::Array(Rc::new(RefCell::new(results))))
+                                            } else {
+                                                Ok(Value::Map(map))
+                                            };
                                         }
                                         _ => {}
                                     }

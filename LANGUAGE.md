@@ -28,7 +28,7 @@ Arrays and Maps are **mutable** and use **reference semantics**. Assigning an ar
 
 - **Array**: Ordered list of values.
   ```ruby
-  arr = [1, 2, 3]
+  a = [1, 2, 3]
   first = arr[0]
   
   # Modification
@@ -40,6 +40,10 @@ Arrays and Maps are **mutable** and use **reference semantics**. Assigning an ar
   # Initialization with generator function
   evens = [fn(i) i * 2 end; 5] # [0, 2, 4, 6, 8]
   evens = [{|i| i * 2 }; 5] # same
+
+  a = [1, 2, 3]
+  a each  { |i| i + 1 } # [2, 3, 4]
+  a apply { |i| i + 1 } # [1, 2, 3] original input
   ```
 - **Map**: Key-value pairs (keys are strings).
   ```ruby
@@ -55,8 +59,10 @@ Arrays and Maps are **mutable** and use **reference semantics**. Assigning an ar
 
   # Iterate
   h = {"a": 1, "b": 2}
-  h keys each { |k, &h| h[k] = h[k] + 1 }
+  h keys each { |k, &h| h[k] = h[k] + 1 }  # [2, 3]
+  h keys apply { |k, &h| h[k] = h[k] + 1 } # ["a", "b"] original input
   ```
+Use `each` or `apply` with blocks to iterate. `each` returns an array of block results, while `apply` is for side effects and returns the original collection.
 
 ### Dot Syntax
 Maps can be accessed and modified using dot notation if the key is a valid identifier.

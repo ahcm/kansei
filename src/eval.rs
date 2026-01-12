@@ -1163,6 +1163,21 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
             }
         }
         ExprKind::Call { function, args, block, .. } => {
+            if block.is_some() {
+                if !compile_expr(function, code, consts, true) { return false; }
+                for arg in args {
+                    if !compile_expr(arg, code, consts, true) { return false; }
+                }
+                code.push(Instruction::CallValueWithBlockCached(
+                    Rc::new(RefCell::new(crate::value::CallSiteCache::default())),
+                    Rc::new(block.as_ref().unwrap().clone()),
+                    args.len(),
+                ));
+                if !want_value {
+                    code.push(Instruction::Pop);
+                }
+                return true;
+            }
             if let ExprKind::Identifier { name, .. } = &function.kind {
                 if let Some(builtin) = builtin_from_symbol(*name) {
                     for arg in args {
@@ -1812,6 +1827,11 @@ pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String {
                         call_hits += cache.hits;
                         call_misses += cache.misses;
                     }
+                    Instruction::CallValueWithBlockCached(cache, _, _) => {
+                        let cache = cache.borrow();
+                        call_hits += cache.hits;
+                        call_misses += cache.misses;
+                    }
                     Instruction::CallGlobalCached(_, global_cache, call_cache, _) => {
                         let cache = call_cache.borrow();
                         call_hits += cache.hits;
@@ -1939,6 +1959,11 @@ pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String {
                             map_misses += cache.misses;
                         }
                         Instruction::CallValueCached(cache, _) => {
+                            let cache = cache.borrow();
+                            call_hits += cache.hits;
+                            call_misses += cache.misses;
+                        }
+                        Instruction::CallValueWithBlockCached(cache, _, _) => {
                             let cache = cache.borrow();
                             call_hits += cache.hits;
                             call_misses += cache.misses;
@@ -2783,6 +2808,38 @@ fn eval_call_value_cached(
     interpreter.call_value(func_val, arg_vals, 0, None)
 }
 
+fn eval_call_value_cached_with_block(
+    interpreter: &mut Interpreter,
+    func_val: Value,
+    arg_vals: smallvec::SmallVec<[Value; 8]>,
+    cache: &Rc<RefCell<CallSiteCache>>,
+    block: &Rc<Closure>,
+) -> EvalResult {
+    if let Value::Function(func_data) = &func_val {
+        let func_ptr = Rc::as_ptr(func_data) as usize;
+        let mut cache_mut = cache.borrow_mut();
+        if cache_mut.func_ptr == Some(func_ptr) {
+            cache_mut.hits += 1;
+            if arg_vals.len() < func_data.params.len() {
+                return Err(RuntimeError { message: "Too few arguments".to_string(), line: 0 });
+            }
+            if arg_vals.len() > func_data.params.len() {
+                return Err(RuntimeError { message: "Too many arguments".to_string(), line: 0 });
+            }
+            return interpreter.invoke_function(func_data.clone(), arg_vals, 0, Some((**block).clone()));
+        }
+        cache_mut.func_ptr = Some(func_ptr);
+        cache_mut.native_ptr = None;
+        cache_mut.misses += 1;
+    } else {
+        let mut cache_mut = cache.borrow_mut();
+        cache_mut.func_ptr = None;
+        cache_mut.native_ptr = None;
+        cache_mut.misses += 1;
+    }
+    interpreter.call_value(func_val, arg_vals, 0, Some((**block).clone()))
+}
+
 fn reg_binop_kind(op: RegBinOp) -> BinOpKind {
     match op {
         RegBinOp::Add => BinOpKind::Add,
@@ -3209,6 +3266,22 @@ fn execute_instructions(
                     line: 0,
                 })?;
                 let result = interpreter.call_value(func_val, args, 0, Some((**block).clone()))?;
+                stack.push(result);
+            }
+            Instruction::CallValueWithBlockCached(cache, block, argc) => {
+                if *argc > stack.len() {
+                    return Err(RuntimeError { message: "Invalid argument count".to_string(), line: 0 });
+                }
+                let mut args = smallvec::SmallVec::<[Value; 8]>::with_capacity(*argc);
+                for _ in 0..*argc {
+                    args.push(stack.pop().unwrap());
+                }
+                args.reverse();
+                let func_val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing function value for call".to_string(),
+                    line: 0,
+                })?;
+                let result = eval_call_value_cached_with_block(interpreter, func_val, args, cache, block)?;
                 stack.push(result);
             }
             Instruction::CallGlobalCached(name, global_cache, call_cache, argc) => {

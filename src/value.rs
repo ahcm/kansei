@@ -173,6 +173,7 @@ pub enum Instruction {
     CallBuiltin(Builtin, usize),
     CallValue(usize),
     CallValueWithBlock(Rc<Closure>, usize),
+    CallValueWithBlockCached(Rc<RefCell<CallSiteCache>>, Rc<Closure>, usize),
     ForEach { var_slot: usize, body: Rc<Vec<Instruction>> },
     ForEachArray { var_slot: usize, body: Rc<Vec<Instruction>> },
     ForEachF64Array { var_slot: usize, body: Rc<Vec<Instruction>> },

@@ -1163,9 +1163,6 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
             }
         }
         ExprKind::Call { function, args, block, .. } => {
-            if block.is_some() {
-                return false;
-            }
             if let ExprKind::Identifier { name, .. } = &function.kind {
                 if let Some(builtin) = builtin_from_symbol(*name) {
                     for arg in args {
@@ -1218,10 +1215,17 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
             for arg in args {
                 if !compile_expr(arg, code, consts, true) { return false; }
             }
-            code.push(Instruction::CallValueCached(
-                Rc::new(RefCell::new(crate::value::CallSiteCache::default())),
-                args.len(),
-            ));
+            if let Some(block) = block {
+                code.push(Instruction::CallValueWithBlock(
+                    Rc::new(block.clone()),
+                    args.len(),
+                ));
+            } else {
+                code.push(Instruction::CallValueCached(
+                    Rc::new(RefCell::new(crate::value::CallSiteCache::default())),
+                    args.len(),
+                ));
+            }
             if !want_value {
                 code.push(Instruction::Pop);
             }
@@ -1558,9 +1562,6 @@ fn find_compile_failure(expr: &Expr) -> Option<String> {
         }
         ExprKind::AnonymousFunction { .. } => {
             return Some("anonymous function not supported in bytecode".to_string());
-        }
-        ExprKind::Call { block: Some(_), .. } => {
-            return Some("call with block not supported in bytecode".to_string());
         }
         ExprKind::Use(_) => {
             return Some("use not supported in bytecode".to_string());
@@ -3192,6 +3193,22 @@ fn execute_instructions(
                     line: 0,
                 })?;
                 let result = eval_call_value_cached(interpreter, func_val, args, cache)?;
+                stack.push(result);
+            }
+            Instruction::CallValueWithBlock(block, argc) => {
+                if *argc > stack.len() {
+                    return Err(RuntimeError { message: "Invalid argument count".to_string(), line: 0 });
+                }
+                let mut args = smallvec::SmallVec::<[Value; 8]>::with_capacity(*argc);
+                for _ in 0..*argc {
+                    args.push(stack.pop().unwrap());
+                }
+                args.reverse();
+                let func_val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing function value for call".to_string(),
+                    line: 0,
+                })?;
+                let result = interpreter.call_value(func_val, args, 0, Some((**block).clone()))?;
                 stack.push(result);
             }
             Instruction::CallGlobalCached(name, global_cache, call_cache, argc) => {

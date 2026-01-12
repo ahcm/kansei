@@ -1,4 +1,4 @@
-use crate::ast::{Expr, FloatKind, IntKind};
+use crate::ast::{Closure, Expr, FloatKind, IntKind};
 use crate::wasm::WasmFunction;
 use crate::intern::SymbolId;
 use rustc_hash::FxHashMap;
@@ -172,6 +172,7 @@ pub enum Instruction {
     Jump(usize),
     CallBuiltin(Builtin, usize),
     CallValue(usize),
+    CallValueWithBlock(Rc<Closure>, usize),
     ForEach { var_slot: usize, body: Rc<Vec<Instruction>> },
     ForEachArray { var_slot: usize, body: Rc<Vec<Instruction>> },
     ForEachF64Array { var_slot: usize, body: Rc<Vec<Instruction>> },

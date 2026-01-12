@@ -442,6 +442,70 @@ fn eval_binop(op: BinOpKind, l: Value, r: Value) -> EvalResult {
     Ok(res)
 }
 
+fn eval_cached_binop(op: BinOpKind, cache: &Rc<RefCell<BinaryOpCache>>, l: Value, r: Value) -> EvalResult {
+    let cached = cache.borrow().kind.clone();
+    if let Some(kind) = cached.clone() {
+        match kind {
+            BinaryOpCacheKind::Float => {
+                if let (Value::Float { value: f1, kind: k1 }, Value::Float { value: f2, kind: k2 }) = (&l, &r) {
+                    let kind = promote_float_kind(*k1, *k2);
+                    let res = match op {
+                        BinOpKind::Add => make_float(f1 + f2, kind),
+                        BinOpKind::Sub => make_float(f1 - f2, kind),
+                        BinOpKind::Mul => make_float(f1 * f2, kind),
+                        BinOpKind::Div => make_float(f1 / f2, kind),
+                        BinOpKind::Eq => Value::Boolean(f1 == f2),
+                        BinOpKind::Gt => Value::Boolean(f1 > f2),
+                        BinOpKind::Lt => Value::Boolean(f1 < f2),
+                    };
+                    return Ok(res);
+                }
+            }
+            BinaryOpCacheKind::Int => {
+                if let (Value::Integer { value: i1, kind: k1 }, Value::Integer { value: i2, kind: k2 }) = (&l, &r) {
+                    let kind = signed_kind_for_bits(int_kind_bits(*k1).max(int_kind_bits(*k2)));
+                    let res = match op {
+                        BinOpKind::Add => make_signed_int(*i1 + *i2, kind),
+                        BinOpKind::Sub => make_signed_int(*i1 - *i2, kind),
+                        BinOpKind::Mul => make_signed_int(*i1 * *i2, kind),
+                        BinOpKind::Div => make_signed_int(*i1 / *i2, kind),
+                        BinOpKind::Eq => Value::Boolean(i1 == i2),
+                        BinOpKind::Gt => Value::Boolean(i1 > i2),
+                        BinOpKind::Lt => Value::Boolean(i1 < i2),
+                    };
+                    return Ok(res);
+                }
+            }
+            BinaryOpCacheKind::Uint => {
+                if let (Value::Unsigned { value: u1, kind: k1 }, Value::Unsigned { value: u2, kind: k2 }) = (&l, &r) {
+                    let kind = unsigned_kind_for_bits(int_kind_bits(*k1).max(int_kind_bits(*k2)));
+                    let res = match op {
+                        BinOpKind::Add => make_unsigned_int(*u1 + *u2, kind),
+                        BinOpKind::Sub => make_unsigned_int(*u1 - *u2, kind),
+                        BinOpKind::Mul => make_unsigned_int(*u1 * *u2, kind),
+                        BinOpKind::Div => make_unsigned_int(*u1 / *u2, kind),
+                        BinOpKind::Eq => Value::Boolean(u1 == u2),
+                        BinOpKind::Gt => Value::Boolean(u1 > u2),
+                        BinOpKind::Lt => Value::Boolean(u1 < u2),
+                    };
+                    return Ok(res);
+                }
+            }
+        }
+    }
+
+    let res = eval_binop(op, l, r)?;
+    let new_kind = match (&res, &cached) {
+        (Value::Float { .. }, _) => Some(BinaryOpCacheKind::Float),
+        (Value::Integer { .. }, _) => Some(BinaryOpCacheKind::Int),
+        (Value::Unsigned { .. }, _) => Some(BinaryOpCacheKind::Uint),
+        _ => None,
+    };
+    if let Some(kind) = new_kind {
+        cache.borrow_mut().kind = Some(kind);
+    }
+    Ok(res)
+}
 fn make_float(value: f64, kind: FloatKind) -> Value {
     Value::Float { value: normalize_float_value(value, kind), kind }
 }
@@ -1047,7 +1111,10 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
             for arg in args {
                 if !compile_expr(arg, code, consts, true) { return false; }
             }
-            code.push(Instruction::CallValue(args.len()));
+            code.push(Instruction::CallValueCached(
+                Rc::new(RefCell::new(crate::value::CallSiteCache::default())),
+                args.len(),
+            ));
             if !want_value {
                 code.push(Instruction::Pop);
             }
@@ -1811,73 +1878,25 @@ fn execute_instructions(
             Instruction::AddCached(cache) => {
                 let r = stack.pop().unwrap();
                 let l = stack.pop().unwrap();
-                if matches!(cache.borrow().kind, Some(BinaryOpCacheKind::Float)) {
-                    if let (Value::Float { value: f1, kind: k1 }, Value::Float { value: f2, kind: k2 }) = (&l, &r) {
-                        let kind = promote_float_kind(*k1, *k2);
-                        stack.push(make_float(f1 + f2, kind));
-                        ip += 1;
-                        continue;
-                    }
-                }
-                let float_operands = matches!((&l, &r), (Value::Float { .. }, Value::Float { .. }));
-                let res = eval_binop(BinOpKind::Add, l, r)?;
-                if float_operands {
-                    cache.borrow_mut().kind = Some(BinaryOpCacheKind::Float);
-                }
+                let res = eval_cached_binop(BinOpKind::Add, cache, l, r)?;
                 stack.push(res);
             }
             Instruction::SubCached(cache) => {
                 let r = stack.pop().unwrap();
                 let l = stack.pop().unwrap();
-                if matches!(cache.borrow().kind, Some(BinaryOpCacheKind::Float)) {
-                    if let (Value::Float { value: f1, kind: k1 }, Value::Float { value: f2, kind: k2 }) = (&l, &r) {
-                        let kind = promote_float_kind(*k1, *k2);
-                        stack.push(make_float(f1 - f2, kind));
-                        ip += 1;
-                        continue;
-                    }
-                }
-                let float_operands = matches!((&l, &r), (Value::Float { .. }, Value::Float { .. }));
-                let res = eval_binop(BinOpKind::Sub, l, r)?;
-                if float_operands {
-                    cache.borrow_mut().kind = Some(BinaryOpCacheKind::Float);
-                }
+                let res = eval_cached_binop(BinOpKind::Sub, cache, l, r)?;
                 stack.push(res);
             }
             Instruction::MulCached(cache) => {
                 let r = stack.pop().unwrap();
                 let l = stack.pop().unwrap();
-                if matches!(cache.borrow().kind, Some(BinaryOpCacheKind::Float)) {
-                    if let (Value::Float { value: f1, kind: k1 }, Value::Float { value: f2, kind: k2 }) = (&l, &r) {
-                        let kind = promote_float_kind(*k1, *k2);
-                        stack.push(make_float(f1 * f2, kind));
-                        ip += 1;
-                        continue;
-                    }
-                }
-                let float_operands = matches!((&l, &r), (Value::Float { .. }, Value::Float { .. }));
-                let res = eval_binop(BinOpKind::Mul, l, r)?;
-                if float_operands {
-                    cache.borrow_mut().kind = Some(BinaryOpCacheKind::Float);
-                }
+                let res = eval_cached_binop(BinOpKind::Mul, cache, l, r)?;
                 stack.push(res);
             }
             Instruction::DivCached(cache) => {
                 let r = stack.pop().unwrap();
                 let l = stack.pop().unwrap();
-                if matches!(cache.borrow().kind, Some(BinaryOpCacheKind::Float)) {
-                    if let (Value::Float { value: f1, kind: k1 }, Value::Float { value: f2, kind: k2 }) = (&l, &r) {
-                        let kind = promote_float_kind(*k1, *k2);
-                        stack.push(make_float(f1 / f2, kind));
-                        ip += 1;
-                        continue;
-                    }
-                }
-                let float_operands = matches!((&l, &r), (Value::Float { .. }, Value::Float { .. }));
-                let res = eval_binop(BinOpKind::Div, l, r)?;
-                if float_operands {
-                    cache.borrow_mut().kind = Some(BinaryOpCacheKind::Float);
-                }
+                let res = eval_cached_binop(BinOpKind::Div, cache, l, r)?;
                 stack.push(res);
             }
             Instruction::JumpIfFalse(target) => {
@@ -1917,6 +1936,47 @@ fn execute_instructions(
                     message: "Missing function value for call".to_string(),
                     line: 0,
                 })?;
+                let result = interpreter.call_value(func_val, args, 0, None)?;
+                stack.push(result);
+            }
+            Instruction::CallValueCached(cache, argc) => {
+                if *argc > stack.len() {
+                    return Err(RuntimeError { message: "Invalid argument count".to_string(), line: 0 });
+                }
+                let mut args = smallvec::SmallVec::<[Value; 8]>::with_capacity(*argc);
+                for _ in 0..*argc {
+                    args.push(stack.pop().unwrap());
+                }
+                args.reverse();
+                let func_val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing function value for call".to_string(),
+                    line: 0,
+                })?;
+                if let Value::Function(func) = &func_val {
+                    let func_ptr = Rc::as_ptr(func) as usize;
+                    let mut cache_mut = cache.borrow_mut();
+                    if cache_mut.func_ptr == Some(func_ptr) {
+                        if args.len() < func.params.len() {
+                            return Err(RuntimeError { message: "Too few arguments".to_string(), line: 0 });
+                        }
+                        if args.len() > func.params.len() {
+                            return Err(RuntimeError { message: "Too many arguments".to_string(), line: 0 });
+                        }
+                        if let Some(code) = &func.code {
+                            let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, func.declarations.len());
+                            for (i, val) in args.into_iter().enumerate() {
+                                new_slots[i + func.param_offset] = val;
+                            }
+                            let result = execute_instructions(interpreter, code, &func.const_pool, &mut new_slots)?;
+                            stack.push(result);
+                            continue;
+                        }
+                    } else {
+                        cache_mut.func_ptr = Some(func_ptr);
+                    }
+                } else {
+                    cache.borrow_mut().func_ptr = None;
+                }
                 let result = interpreter.call_value(func_val, args, 0, None)?;
                 stack.push(result);
             }

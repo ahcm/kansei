@@ -177,6 +177,7 @@ pub enum Instruction {
     SubCached(Rc<RefCell<BinaryOpCache>>),
     MulCached(Rc<RefCell<BinaryOpCache>>),
     DivCached(Rc<RefCell<BinaryOpCache>>),
+    CallValueCached(Rc<RefCell<CallSiteCache>>, usize),
     ArrayGen,
     Dup,
     F64Axpy { dst_slot: usize, dst_index_slot: usize, src_slot: usize, src_index_slot: usize },
@@ -204,6 +205,8 @@ pub enum Instruction {
 #[derive(Debug, Clone, PartialEq)]
 pub enum BinaryOpCacheKind {
     Float,
+    Int,
+    Uint,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -223,6 +226,19 @@ pub struct IndexCache {
     pub key: Option<Rc<String>>,
     pub value: Option<Value>,
     pub version: u64,
+    pub array_ptr: Option<usize>,
+    pub index_usize: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CallSiteCache {
+    pub func_ptr: Option<usize>,
+}
+
+impl Default for CallSiteCache {
+    fn default() -> Self {
+        Self { func_ptr: None }
+    }
 }
 
 impl Default for IndexCache {
@@ -232,6 +248,8 @@ impl Default for IndexCache {
             key: None,
             value: None,
             version: 0,
+            array_ptr: None,
+            index_usize: None,
         }
     }
 }

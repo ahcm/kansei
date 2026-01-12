@@ -24,18 +24,48 @@ fn main() -> rustyline::Result<()>
     let args: Vec<String> = env::args().collect();
     let mut dump_ast = false;
     let mut dump_bytecode = false;
+    let mut bytecode_mode = eval::BytecodeMode::Simple;
     let mut script_path: Option<String> = None;
     let mut script_args: Vec<String> = Vec::new();
 
     let mut idx = 1;
     while idx < args.len() {
+        let mut handled = false;
         match args[idx].as_str() {
             "--dump-ast" => dump_ast = true,
             "--dump-bytecode" => dump_bytecode = true,
+            "--bytecode" => {
+                if idx + 1 >= args.len() {
+                    eprintln!("--bytecode requires a value (off|simple|advanced).");
+                    return Ok(());
+                }
+                idx += 1;
+                bytecode_mode = match args[idx].as_str() {
+                    "off" => eval::BytecodeMode::Off,
+                    "simple" => eval::BytecodeMode::Simple,
+                    "advanced" => eval::BytecodeMode::Advanced,
+                    _ => {
+                        eprintln!("Unknown --bytecode value '{}'. Use off, simple, or advanced.", args[idx]);
+                        return Ok(());
+                    }
+                };
+            }
             arg => {
-                if script_path.is_none() {
+                if let Some(rest) = arg.strip_prefix("--bytecode=") {
+                    bytecode_mode = match rest {
+                        "off" => eval::BytecodeMode::Off,
+                        "simple" => eval::BytecodeMode::Simple,
+                        "advanced" => eval::BytecodeMode::Advanced,
+                        _ => {
+                            eprintln!("Unknown --bytecode value '{}'. Use off, simple, or advanced.", rest);
+                            return Ok(());
+                        }
+                    };
+                    handled = true;
+                }
+                if !handled && script_path.is_none() {
                     script_path = Some(arg.to_string());
-                } else {
+                } else if !handled {
                     script_args.push(arg.to_string());
                 }
             }
@@ -49,6 +79,7 @@ fn main() -> rustyline::Result<()>
     }
 
     let mut interpreter = eval::Interpreter::new();
+    interpreter.set_bytecode_mode(bytecode_mode);
 
     // Prepare program.args
     let args_val = value::Value::Array(
@@ -75,7 +106,7 @@ fn main() -> rustyline::Result<()>
 
     if let Some(path) = script_path
     {
-        run_file(&path, interpreter, dump_ast, dump_bytecode);
+        run_file(&path, interpreter, dump_ast, dump_bytecode, bytecode_mode);
         Ok(())
     }
     else
@@ -84,7 +115,13 @@ fn main() -> rustyline::Result<()>
     }
 }
 
-fn run_file(path: &str, mut interpreter: eval::Interpreter, dump_ast: bool, dump_bytecode: bool)
+fn run_file(
+    path: &str,
+    mut interpreter: eval::Interpreter,
+    dump_ast: bool,
+    dump_bytecode: bool,
+    bytecode_mode: eval::BytecodeMode,
+)
 {
     let source = match fs::read_to_string(path)
     {
@@ -110,7 +147,7 @@ fn run_file(path: &str, mut interpreter: eval::Interpreter, dump_ast: bool, dump
             let mut ast = ast;
             eval::resolve_slots(&mut ast);
             if dump_bytecode {
-                println!("{}", eval::dump_bytecode(&ast));
+                println!("{}", eval::dump_bytecode(&ast, bytecode_mode));
                 return;
             }
             if dump_ast {

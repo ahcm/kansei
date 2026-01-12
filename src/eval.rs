@@ -24,6 +24,13 @@ pub struct RuntimeError {
 
 pub type EvalResult = Result<Value, RuntimeError>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BytecodeMode {
+    Off,
+    Simple,
+    Advanced,
+}
+
 fn native_int64_parse(args: &[Value]) -> Result<Value, String> {
     parse_signed_int(args, IntKind::I64, "Int64")
 }
@@ -829,6 +836,11 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
                 code.push(Instruction::LoadSlot(*s));
             }
         }
+        ExprKind::Identifier { slot: None, name } => {
+            if want_value {
+                code.push(Instruction::LoadGlobal(*name));
+            }
+        }
         ExprKind::Boolean(b) => {
             if want_value {
                 let idx = push_const(consts, Value::Boolean(*b));
@@ -844,6 +856,13 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
         ExprKind::Assignment { value, slot: Some(s), .. } => {
             if !compile_expr(value, code, consts, true) { return false; }
             code.push(Instruction::StoreSlot(*s));
+            if !want_value {
+                code.push(Instruction::Pop);
+            }
+        }
+        ExprKind::Assignment { name, value, slot: None } => {
+            if !compile_expr(value, code, consts, true) { return false; }
+            code.push(Instruction::StoreGlobal(*name));
             if !want_value {
                 code.push(Instruction::Pop);
             }
@@ -1105,9 +1124,7 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
 
 fn find_compile_failure(expr: &Expr) -> Option<String> {
     match &expr.kind {
-        ExprKind::Identifier { slot: None, .. } => {
-            return Some("identifier without slot (global lookup) not supported in bytecode".to_string());
-        }
+        ExprKind::Identifier { slot: None, .. } => {}
         ExprKind::FunctionDef { .. } => {
             return Some("function definition not supported in bytecode dump; functions are dumped separately".to_string());
         }
@@ -1296,28 +1313,42 @@ fn collect_function_exprs(expr: &Expr, out: &mut Vec<(Option<SymbolId>, Vec<(Sym
     }
 }
 
-pub fn dump_bytecode(ast: &Expr) -> String {
+pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String {
     let mut out = String::new();
     out.push_str("AST:\n");
     out.push_str(&format!("{:#?}\n", ast));
 
     out.push_str("Top-level bytecode:\n");
     {
-        let mut code = Vec::new();
-        let mut consts = Vec::new();
-        if compile_expr(ast, &mut code, &mut consts, true) {
-            out.push_str("  Constants:\n");
-            for (idx, value) in consts.iter().enumerate() {
-                out.push_str(&format!("  [{idx}] {}\n", value.inspect()));
+        let simple = is_simple(ast);
+        let uses_env = uses_environment(ast);
+        if mode == BytecodeMode::Off {
+            out.push_str("  <bytecode disabled>\n");
+        } else if !should_compile(simple, uses_env, mode) {
+            if !simple {
+                out.push_str("  <not compiled: not simple>\n");
+            } else if uses_env {
+                out.push_str("  <not compiled: uses_env>\n");
+            } else {
+                out.push_str("  <not compiled>\n");
             }
-            out.push_str("  Bytecode:\n");
-            for (idx, inst) in code.iter().enumerate() {
-                out.push_str(&format!("  {idx:04} {:?}\n", inst));
-            }
-        } else if let Some(reason) = find_compile_failure(ast) {
-            out.push_str(&format!("  <compile failed: {reason}>\n"));
         } else {
-            out.push_str("  <compile failed: unknown reason>\n");
+            let mut code = Vec::new();
+            let mut consts = Vec::new();
+            if compile_expr(ast, &mut code, &mut consts, true) {
+                out.push_str("  Constants:\n");
+                for (idx, value) in consts.iter().enumerate() {
+                    out.push_str(&format!("  [{idx}] {}\n", value.inspect()));
+                }
+                out.push_str("  Bytecode:\n");
+                for (idx, inst) in code.iter().enumerate() {
+                    out.push_str(&format!("  {idx:04} {:?}\n", inst));
+                }
+            } else if let Some(reason) = find_compile_failure(ast) {
+                out.push_str(&format!("  <compile failed: {reason}>\n"));
+            } else {
+                out.push_str("  <compile failed: unknown reason>\n");
+            }
         }
     }
 
@@ -1349,7 +1380,17 @@ pub fn dump_bytecode(ast: &Expr) -> String {
         let uses_env = uses_environment(&resolved_body);
         out.push_str(&format!("  simple: {}, uses_env: {}\n", simple, uses_env));
 
-        if simple {
+        if mode == BytecodeMode::Off {
+            out.push_str("  <bytecode disabled>\n");
+        } else if !should_compile(simple, uses_env, mode) {
+            if !simple {
+                out.push_str("  <not compiled: not simple>\n");
+            } else if uses_env {
+                out.push_str("  <not compiled: uses_env>\n");
+            } else {
+                out.push_str("  <not compiled>\n");
+            }
+        } else {
             let mut code = Vec::new();
             let mut consts = Vec::new();
             if compile_expr(&resolved_body, &mut code, &mut consts, true) {
@@ -1366,8 +1407,6 @@ pub fn dump_bytecode(ast: &Expr) -> String {
             } else {
                 out.push_str("  <compile failed: unknown reason>\n");
             }
-        } else {
-            out.push_str("  <not compiled>\n");
         }
     }
 
@@ -1567,6 +1606,24 @@ fn execute_instructions(
                 if let Some(slot) = slots.get_mut(*s) {
                     *slot = val.clone();
                 }
+                stack.push(val);
+            }
+            Instruction::LoadGlobal(name) => {
+                let val = interpreter.env.borrow().get(*name).ok_or_else(|| RuntimeError {
+                    message: format!("Undefined variable: {}", symbol_name(*name).as_str()),
+                    line: 0,
+                })?;
+                if let Value::Uninitialized = val {
+                    return Err(RuntimeError {
+                        message: format!("Variable '{}' used before assignment", symbol_name(*name).as_str()),
+                        line: 0,
+                    });
+                }
+                stack.push(val);
+            }
+            Instruction::StoreGlobal(name) => {
+                let val = stack.pop().unwrap();
+                interpreter.env.borrow_mut().set(*name, val.clone());
                 stack.push(val);
             }
             Instruction::Pop => {
@@ -2340,7 +2397,6 @@ fn execute_instructions(
 fn is_simple(expr: &Expr) -> bool {
     match &expr.kind {
         ExprKind::Yield(_) | ExprKind::FunctionDef { .. } | ExprKind::AnonymousFunction { .. } | ExprKind::Use(_) | ExprKind::Load(_) => false,
-        ExprKind::Assignment { slot: None, .. } => false,
         ExprKind::Block(stmts) => stmts.iter().all(is_simple),
         ExprKind::FormatString(parts) => parts.iter().all(|part| {
             if let crate::ast::FormatPart::Expr { expr, .. } = part {
@@ -2366,6 +2422,14 @@ fn is_simple(expr: &Expr) -> bool {
         ExprKind::Index { target, index } => is_simple(target) && is_simple(index),
         ExprKind::IndexAssignment { target, index, value } => is_simple(target) && is_simple(index) && is_simple(value),
         _ => true,
+    }
+}
+
+fn should_compile(simple: bool, uses_env: bool, mode: BytecodeMode) -> bool {
+    match mode {
+        BytecodeMode::Off => false,
+        BytecodeMode::Simple => simple && !uses_env,
+        BytecodeMode::Advanced => simple,
     }
 }
 
@@ -2476,6 +2540,7 @@ pub struct Interpreter {
     block_stack: Vec<Option<(Closure, Rc<RefCell<Environment>>)>>,
     // Pool of spare environments for reuse
     env_pool: Vec<Rc<RefCell<Environment>>>,
+    bytecode_mode: BytecodeMode,
 }
 
 impl Interpreter {
@@ -2484,7 +2549,12 @@ impl Interpreter {
             env: Rc::new(RefCell::new(Environment::new(None))),
             block_stack: Vec::new(),
             env_pool: Vec::with_capacity(32),
+            bytecode_mode: BytecodeMode::Simple,
         }
+    }
+
+    pub fn set_bytecode_mode(&mut self, mode: BytecodeMode) {
+        self.bytecode_mode = mode;
     }
 
     fn get_env(&mut self, parent: Option<Rc<RefCell<Environment>>>, is_partial: bool) -> Rc<RefCell<Environment>> {
@@ -3328,12 +3398,16 @@ impl Interpreter {
                 resolve(resolved.as_mut(), &slot_map);
                 (resolved, Rc::new(slot_names))
             };
-            let simple = is_simple(&resolved_body);
-            let uses_env = uses_environment(&resolved_body);
+        let simple = is_simple(&resolved_body);
+        let uses_env = uses_environment(&resolved_body);
                 
             let mut code = Vec::new();
             let mut const_pool = Vec::new();
-            let compiled = if simple { compile_expr(&resolved_body, &mut code, &mut const_pool, true) } else { false };
+            let compiled = if should_compile(simple, uses_env, self.bytecode_mode) {
+                compile_expr(&resolved_body, &mut code, &mut const_pool, true)
+            } else {
+                false
+            };
 
             let func = Value::Function(Rc::new(crate::value::FunctionData {
                 params: params.clone(),
@@ -3366,7 +3440,11 @@ impl Interpreter {
                 
             let mut code = Vec::new();
             let mut const_pool = Vec::new();
-            let compiled = if simple { compile_expr(&resolved_body, &mut code, &mut const_pool, true) } else { false };
+            let compiled = if should_compile(simple, uses_env, self.bytecode_mode) {
+                compile_expr(&resolved_body, &mut code, &mut const_pool, true)
+            } else {
+                false
+            };
 
                 Ok(Value::Function(Rc::new(crate::value::FunctionData {
                     params: params.clone(),

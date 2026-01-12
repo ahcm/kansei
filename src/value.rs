@@ -157,6 +157,8 @@ impl Environment {
 pub enum Instruction {
     LoadSlot(usize),
     StoreSlot(usize),
+    LoadGlobal(SymbolId),
+    StoreGlobal(SymbolId),
     LoadConstIdx(usize),
     Pop,
     JumpIfFalse(usize),

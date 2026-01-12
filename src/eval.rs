@@ -3134,6 +3134,18 @@ fn try_execute_fast_float_reg(fast: &FastRegFunction, slots: &mut [Value]) -> Op
     Some(make_float(*value, FloatKind::F64))
 }
 
+fn pop_args_from_stack(stack: &mut Vec<Value>, argc: usize) -> Result<smallvec::SmallVec<[Value; 8]>, RuntimeError> {
+    if argc > stack.len() {
+        return Err(RuntimeError { message: "Invalid argument count".to_string(), line: 0 });
+    }
+    let mut args = smallvec::SmallVec::<[Value; 8]>::with_capacity(argc);
+    for _ in 0..argc {
+        args.push(stack.pop().unwrap());
+    }
+    args.reverse();
+    Ok(args)
+}
+
 fn execute_instructions(
     interpreter: &mut Interpreter,
     code: &[Instruction],
@@ -3230,14 +3242,7 @@ fn execute_instructions(
                 continue;
             }
             Instruction::CallBuiltin(builtin, argc) => {
-                if *argc > stack.len() {
-                    return Err(RuntimeError { message: "Invalid argument count".to_string(), line: 0 });
-                }
-                let mut args = Vec::with_capacity(*argc);
-                for _ in 0..*argc {
-                    args.push(stack.pop().unwrap());
-                }
-                args.reverse();
+                let args = pop_args_from_stack(&mut stack, *argc)?;
                 let result = interpreter.call_builtin(builtin, &args)?;
                 stack.push(result);
             }
@@ -3256,14 +3261,7 @@ fn execute_instructions(
                 stack.push(result);
             }
             Instruction::CallValue(argc) => {
-                if *argc > stack.len() {
-                    return Err(RuntimeError { message: "Invalid argument count".to_string(), line: 0 });
-                }
-                let mut args = smallvec::SmallVec::<[Value; 8]>::with_capacity(*argc);
-                for _ in 0..*argc {
-                    args.push(stack.pop().unwrap());
-                }
-                args.reverse();
+                let args = pop_args_from_stack(&mut stack, *argc)?;
                 let func_val = stack.pop().ok_or_else(|| RuntimeError {
                     message: "Missing function value for call".to_string(),
                     line: 0,
@@ -3294,14 +3292,7 @@ fn execute_instructions(
                 stack.push(result);
             }
             Instruction::CallValueCached(cache, argc) => {
-                if *argc > stack.len() {
-                    return Err(RuntimeError { message: "Invalid argument count".to_string(), line: 0 });
-                }
-                let mut args = smallvec::SmallVec::<[Value; 8]>::with_capacity(*argc);
-                for _ in 0..*argc {
-                    args.push(stack.pop().unwrap());
-                }
-                args.reverse();
+                let args = pop_args_from_stack(&mut stack, *argc)?;
                 let func_val = stack.pop().ok_or_else(|| RuntimeError {
                     message: "Missing function value for call".to_string(),
                     line: 0,
@@ -3310,14 +3301,7 @@ fn execute_instructions(
                 stack.push(result);
             }
             Instruction::CallValueWithBlock(block, argc) => {
-                if *argc > stack.len() {
-                    return Err(RuntimeError { message: "Invalid argument count".to_string(), line: 0 });
-                }
-                let mut args = smallvec::SmallVec::<[Value; 8]>::with_capacity(*argc);
-                for _ in 0..*argc {
-                    args.push(stack.pop().unwrap());
-                }
-                args.reverse();
+                let args = pop_args_from_stack(&mut stack, *argc)?;
                 let func_val = stack.pop().ok_or_else(|| RuntimeError {
                     message: "Missing function value for call".to_string(),
                     line: 0,
@@ -3326,14 +3310,7 @@ fn execute_instructions(
                 stack.push(result);
             }
             Instruction::CallValueWithBlockCached(cache, block, argc) => {
-                if *argc > stack.len() {
-                    return Err(RuntimeError { message: "Invalid argument count".to_string(), line: 0 });
-                }
-                let mut args = smallvec::SmallVec::<[Value; 8]>::with_capacity(*argc);
-                for _ in 0..*argc {
-                    args.push(stack.pop().unwrap());
-                }
-                args.reverse();
+                let args = pop_args_from_stack(&mut stack, *argc)?;
                 let func_val = stack.pop().ok_or_else(|| RuntimeError {
                     message: "Missing function value for call".to_string(),
                     line: 0,
@@ -3342,27 +3319,13 @@ fn execute_instructions(
                 stack.push(result);
             }
             Instruction::CallGlobalCached(name, global_cache, call_cache, argc) => {
-                if *argc > stack.len() {
-                    return Err(RuntimeError { message: "Invalid argument count".to_string(), line: 0 });
-                }
-                let mut args = smallvec::SmallVec::<[Value; 8]>::with_capacity(*argc);
-                for _ in 0..*argc {
-                    args.push(stack.pop().unwrap());
-                }
-                args.reverse();
+                let args = pop_args_from_stack(&mut stack, *argc)?;
                 let func_val = load_global_cached(interpreter, *name, global_cache)?;
                 let result = eval_call_value_cached(interpreter, func_val, args, call_cache)?;
                 stack.push(result);
             }
             Instruction::CallMethodCached(name, map_cache, call_cache, argc) => {
-                if *argc > stack.len() {
-                    return Err(RuntimeError { message: "Invalid argument count".to_string(), line: 0 });
-                }
-                let mut args = smallvec::SmallVec::<[Value; 8]>::with_capacity(*argc);
-                for _ in 0..*argc {
-                    args.push(stack.pop().unwrap());
-                }
-                args.reverse();
+                let args = pop_args_from_stack(&mut stack, *argc)?;
                 let target_val = stack.pop().ok_or_else(|| RuntimeError {
                     message: "Missing target for method call".to_string(),
                     line: 0,
@@ -3372,14 +3335,7 @@ fn execute_instructions(
                 stack.push(result);
             }
             Instruction::CallMethodWithBlockCached(name, map_cache, call_cache, block, argc) => {
-                if *argc > stack.len() {
-                    return Err(RuntimeError { message: "Invalid argument count".to_string(), line: 0 });
-                }
-                let mut args = smallvec::SmallVec::<[Value; 8]>::with_capacity(*argc);
-                for _ in 0..*argc {
-                    args.push(stack.pop().unwrap());
-                }
-                args.reverse();
+                let args = pop_args_from_stack(&mut stack, *argc)?;
                 let target_val = stack.pop().ok_or_else(|| RuntimeError {
                     message: "Missing target for method call".to_string(),
                     line: 0,

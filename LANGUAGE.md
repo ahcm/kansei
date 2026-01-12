@@ -160,7 +160,9 @@ end
 ```
 
 ## Functions
-Functions are first-class citizens. They capture their definition environment (closures).
+Functions are first-class citizens.
+By default, functions do not implicitly capture outer variables.
+Explicit reference capture using & is required to access or modify outer bindings.
 
 ### Definition
 ```ruby

@@ -230,6 +230,40 @@ impl Parser
                     block,
                     inlined_body: Rc::new(RefCell::new(None)),
                 }, line);
+            } else if self.current_token.token == Token::LeftBrace {
+                // Call with block and no parentheses: foo { |x| ... }
+                self.eat(); // {
+                let mut params = Vec::new();
+                if self.current_token.token == Token::Pipe {
+                    self.eat(); // |
+                    loop {
+                        let is_ref = if self.current_token.token == Token::Ampersand {
+                            self.eat();
+                            true
+                        } else {
+                            false
+                        };
+                        match &self.current_token.token {
+                            Token::Identifier(p) => params.push((intern::intern_symbol_owned(p.clone()), is_ref)),
+                            _ => panic!("Expected param name at line {}", self.current_token.line),
+                        }
+                        self.eat();
+                        if self.current_token.token == Token::Comma {
+                            self.eat();
+                        } else {
+                            break;
+                        }
+                    }
+                    self.expect(Token::Pipe);
+                }
+                let body = self.parse_block();
+                self.expect(Token::RightBrace);
+                expr = self.make_expr(ExprKind::Call {
+                    function: Box::new(expr),
+                    args: Vec::new(),
+                    block: Some(Closure { params, body: Box::new(body) }),
+                    inlined_body: Rc::new(RefCell::new(None)),
+                }, line);
             } else {
                 break;
             }

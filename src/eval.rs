@@ -2366,6 +2366,46 @@ impl Interpreter {
         }
     }
 
+    fn call_block_with_args(
+        &mut self,
+        closure: &Closure,
+        saved_env: Rc<RefCell<Environment>>,
+        args: &[Value],
+        line: usize,
+    ) -> EvalResult {
+        let new_env = self.get_env(Some(saved_env.clone()), false);
+        let mut arg_iter = args.iter();
+        for (param_name, is_ref) in &closure.params {
+            if *is_ref {
+                let ref_val = saved_env.borrow_mut().promote(*param_name)
+                    .ok_or_else(|| RuntimeError {
+                        message: format!("Undefined variable captured: {}", symbol_name(*param_name).as_str()),
+                        line,
+                    })?;
+                new_env.borrow_mut().define(*param_name, ref_val);
+            } else {
+                let val = arg_iter.next().cloned().unwrap_or(Value::Nil);
+                new_env.borrow_mut().define(*param_name, val);
+            }
+        }
+
+        let mut locals = HashSet::new();
+        collect_declarations(&closure.body, &mut locals);
+        for local in locals {
+            let idx = local as usize;
+            if idx >= new_env.borrow().values.len() {
+                new_env.borrow_mut().define(local, Value::Uninitialized);
+            }
+        }
+
+        let original_env = self.env.clone();
+        self.env = new_env.clone();
+        let result = self.eval(&closure.body, &mut []);
+        self.env = original_env;
+        self.recycle_env(new_env);
+        result
+    }
+
     fn call_wasm_function(
         &mut self,
         func: Rc<WasmFunction>,
@@ -2963,39 +3003,7 @@ impl Interpreter {
                      for a in args {
                          arg_vals.push(self.eval(a, slots)?);
                      }
-                     
-                     let new_env = self.get_env(Some(saved_env.clone()), false);
-                     
-                     let mut arg_iter = arg_vals.into_iter();
-                     for (param_name, is_ref) in &closure.params {
-                         if *is_ref {
-                             let ref_val = saved_env.borrow_mut().promote(*param_name)
-                                 .ok_or_else(|| RuntimeError {
-                                     message: format!("Undefined variable captured: {}", symbol_name(*param_name).as_str()),
-                                     line,
-                                 })?;
-                             new_env.borrow_mut().define(*param_name, ref_val);
-                         } else {
-                             let val = arg_iter.next().unwrap_or(Value::Nil);
-                             new_env.borrow_mut().define(*param_name, val);
-                         }
-                     }
-                     
-                     let mut locals = HashSet::new();
-                     collect_declarations(&closure.body, &mut locals);
-                     for local in locals {
-                         let idx = local as usize;
-                         if idx >= new_env.borrow().values.len() {
-                             new_env.borrow_mut().define(local, Value::Uninitialized);
-                         }
-                     }
-                     
-                     let original_env = self.env.clone();
-                     self.env = new_env.clone();
-                     let result = self.eval(&closure.body, &mut []);
-                     self.env = original_env;
-                     self.recycle_env(new_env);
-                     result
+                     self.call_block_with_args(&closure, saved_env, &arg_vals, line)
                 } else {
                     Err(RuntimeError {
                         message: "No block given for yield".to_string(),
@@ -3169,6 +3177,39 @@ impl Interpreter {
                 // 1. Check Cached Inlined Body
                 if let Some(inlined) = inlined_body.borrow().as_ref() {
                     return self.eval(inlined, slots);
+                }
+
+                if let Some(block) = block.as_ref() {
+                    if args.is_empty() {
+                        if let ExprKind::Index { target, index } = &function.kind {
+                            let target_val = self.eval(target, slots)?;
+                            let index_val = self.eval(index, slots)?;
+                            if let Value::String(name) = index_val {
+                                if name.as_str() == "each" {
+                                    let saved_env = self.env.clone();
+                                    match target_val {
+                                        Value::Array(arr) => {
+                                            let len = arr.borrow().len();
+                                            for idx in 0..len {
+                                                let val = arr.borrow()[idx].clone();
+                                                self.call_block_with_args(block, saved_env.clone(), std::slice::from_ref(&val), line)?;
+                                            }
+                                            return Ok(Value::Array(arr));
+                                        }
+                                        Value::F64Array(arr) => {
+                                            let len = arr.borrow().len();
+                                            for idx in 0..len {
+                                                let arg = make_float(arr.borrow()[idx], FloatKind::F64);
+                                                self.call_block_with_args(block, saved_env.clone(), std::slice::from_ref(&arg), line)?;
+                                            }
+                                            return Ok(Value::F64Array(arr));
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
 
                 if let ExprKind::Identifier { name, .. } = &function.kind {

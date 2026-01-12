@@ -2612,12 +2612,24 @@ fn execute_instructions(
                         }
                     }
                 } else {
+                    let num = match &gen_val {
+                        Value::Float { value, .. } => Some(*value),
+                        Value::Integer { value, .. } => Some(*value as f64),
+                        Value::Unsigned { value, .. } => Some(*value as f64),
+                        _ => None,
+                    };
+                    if let Some(num) = num {
+                        let vals = vec![num; n];
+                        stack.push(Value::F64Array(Rc::new(RefCell::new(vals))));
+                        ip += 1;
+                        continue;
+                    }
                     for _ in 0..n {
                         if all_f64 {
-                            match gen_val {
-                                Value::Float { value, .. } => f64_vals.push(value),
-                                Value::Integer { value, .. } => f64_vals.push(value as f64),
-                                Value::Unsigned { value, .. } => f64_vals.push(value as f64),
+                            match &gen_val {
+                                Value::Float { value, .. } => f64_vals.push(*value),
+                                Value::Integer { value, .. } => f64_vals.push(*value as f64),
+                                Value::Unsigned { value, .. } => f64_vals.push(*value as f64),
                                 _ => {
                                     all_f64 = false;
                                     vals.extend(f64_vals.drain(..).map(|value| make_float(value, FloatKind::F64)));
@@ -4019,6 +4031,15 @@ impl Interpreter {
                         }
                     }
                 } else {
+                    let num = match &gen_val {
+                        Value::Float { value, .. } => Some(*value),
+                        Value::Integer { value, .. } => Some(*value as f64),
+                        Value::Unsigned { value, .. } => Some(*value as f64),
+                        _ => None,
+                    };
+                    if let Some(num) = num {
+                        return Ok(Value::F64Array(Rc::new(RefCell::new(vec![num; n]))));
+                    }
                     for _ in 0..n {
                         if all_f64 {
                             match &gen_val {

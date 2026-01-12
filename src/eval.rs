@@ -1,7 +1,7 @@
 use crate::ast::{Closure, Expr, ExprKind, FloatKind, IntKind, Op};
 use crate::intern;
 use crate::intern::{SymbolId, symbol_name};
-use crate::value::{Builtin, Environment, Instruction, RangeEnd, Value};
+use crate::value::{Builtin, Environment, Instruction, MapValue, RangeEnd, Value};
 use crate::wasm::{WasmFunction, WasmModule};
 use rustc_hash::FxHashMap;
 use std::collections::HashSet;
@@ -118,17 +118,17 @@ fn unsigned_int_max(kind: IntKind) -> u128 {
     }
 }
 
-fn map_keys_array(map: &FxHashMap<Rc<String>, Value>) -> Value {
-    let mut vals = Vec::with_capacity(map.len());
-    for key in map.keys() {
+fn map_keys_array(map: &MapValue) -> Value {
+    let mut vals = Vec::with_capacity(map.data.len());
+    for key in map.data.keys() {
         vals.push(Value::String(key.clone()));
     }
     Value::Array(Rc::new(RefCell::new(vals)))
 }
 
-fn map_values_array(map: &FxHashMap<Rc<String>, Value>) -> Value {
-    let mut vals = Vec::with_capacity(map.len());
-    for val in map.values() {
+fn map_values_array(map: &MapValue) -> Value {
+    let mut vals = Vec::with_capacity(map.data.len());
+    for val in map.data.values() {
         vals.push(val.clone());
     }
     Value::Array(Rc::new(RefCell::new(vals)))
@@ -177,82 +177,82 @@ fn native_uint128_parse(args: &[Value]) -> Result<Value, String> { parse_unsigne
 fn build_int64_module() -> Value {
     let mut int64_map = FxHashMap::default();
     int64_map.insert(intern::intern("parse"), Value::NativeFunction(native_int64_parse));
-    Value::Map(Rc::new(RefCell::new(int64_map)))
+    Value::Map(Rc::new(RefCell::new(MapValue::new(int64_map))))
 }
 
 fn build_int8_module() -> Value {
     let mut map = FxHashMap::default();
     map.insert(intern::intern("parse"), Value::NativeFunction(native_int8_parse));
-    Value::Map(Rc::new(RefCell::new(map)))
+    Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
 }
 
 fn build_int16_module() -> Value {
     let mut map = FxHashMap::default();
     map.insert(intern::intern("parse"), Value::NativeFunction(native_int16_parse));
-    Value::Map(Rc::new(RefCell::new(map)))
+    Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
 }
 
 fn build_int32_module() -> Value {
     let mut map = FxHashMap::default();
     map.insert(intern::intern("parse"), Value::NativeFunction(native_int32_parse));
-    Value::Map(Rc::new(RefCell::new(map)))
+    Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
 }
 
 fn build_int128_module() -> Value {
     let mut map = FxHashMap::default();
     map.insert(intern::intern("parse"), Value::NativeFunction(native_int128_parse));
-    Value::Map(Rc::new(RefCell::new(map)))
+    Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
 }
 
 fn build_uint8_module() -> Value {
     let mut map = FxHashMap::default();
     map.insert(intern::intern("parse"), Value::NativeFunction(native_uint8_parse));
-    Value::Map(Rc::new(RefCell::new(map)))
+    Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
 }
 
 fn build_uint16_module() -> Value {
     let mut map = FxHashMap::default();
     map.insert(intern::intern("parse"), Value::NativeFunction(native_uint16_parse));
-    Value::Map(Rc::new(RefCell::new(map)))
+    Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
 }
 
 fn build_uint32_module() -> Value {
     let mut map = FxHashMap::default();
     map.insert(intern::intern("parse"), Value::NativeFunction(native_uint32_parse));
-    Value::Map(Rc::new(RefCell::new(map)))
+    Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
 }
 
 fn build_uint64_module() -> Value {
     let mut map = FxHashMap::default();
     map.insert(intern::intern("parse"), Value::NativeFunction(native_uint64_parse));
-    Value::Map(Rc::new(RefCell::new(map)))
+    Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
 }
 
 fn build_uint128_module() -> Value {
     let mut map = FxHashMap::default();
     map.insert(intern::intern("parse"), Value::NativeFunction(native_uint128_parse));
-    Value::Map(Rc::new(RefCell::new(map)))
+    Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
 }
 
 fn build_float32_module() -> Value {
     let mut float32_map = FxHashMap::default();
     float32_map.insert(intern::intern("parse"), Value::NativeFunction(native_float32_parse));
     float32_map.insert(intern::intern("sqrt"), Value::NativeFunction(native_float32_sqrt));
-    Value::Map(Rc::new(RefCell::new(float32_map)))
+    Value::Map(Rc::new(RefCell::new(MapValue::new(float32_map))))
 }
 
 fn build_float64_module() -> Value {
     let mut float64_map = FxHashMap::default();
     float64_map.insert(intern::intern("parse"), Value::NativeFunction(native_float64_parse));
     float64_map.insert(intern::intern("sqrt"), Value::NativeFunction(native_float64_sqrt));
-    Value::Map(Rc::new(RefCell::new(float64_map)))
+    Value::Map(Rc::new(RefCell::new(MapValue::new(float64_map))))
 }
 
 fn build_float128_module() -> Value {
     let mut float128_map = FxHashMap::default();
     float128_map.insert(intern::intern("parse"), Value::NativeFunction(native_float128_parse));
     float128_map.insert(intern::intern("sqrt"), Value::NativeFunction(native_float128_sqrt));
-    Value::Map(Rc::new(RefCell::new(float128_map)))
+    Value::Map(Rc::new(RefCell::new(MapValue::new(float128_map))))
 }
 
 fn build_std_module() -> Value {
@@ -270,7 +270,7 @@ fn build_std_module() -> Value {
     std_map.insert(intern::intern("Float32"), build_float32_module());
     std_map.insert(intern::intern("Float64"), build_float64_module());
     std_map.insert(intern::intern("Float128"), build_float128_module());
-    Value::Map(Rc::new(RefCell::new(std_map)))
+    Value::Map(Rc::new(RefCell::new(MapValue::new(std_map))))
 }
 
 fn normalize_float_value(value: f64, kind: FloatKind) -> f64 {
@@ -876,7 +876,7 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
         ExprKind::Index { target, index } => {
             if !compile_expr(target, code, consts, true) { return false; }
             if !compile_expr(index, code, consts, true) { return false; }
-            code.push(Instruction::Index);
+            code.push(Instruction::IndexCached(Rc::new(RefCell::new(crate::value::IndexCache::default()))));
             if !want_value {
                 code.push(Instruction::Pop);
             }
@@ -1383,8 +1383,8 @@ fn execute_instructions(
                     }
                     Value::Map(map) => {
                         let map_ref = map.borrow();
-                        let mut keys = Vec::with_capacity(map_ref.len());
-                        keys.extend(map_ref.keys().cloned());
+                        let mut keys = Vec::with_capacity(map_ref.data.len());
+                        keys.extend(map_ref.data.keys().cloned());
                         for key in keys {
                             if let Some(slot) = slots.get_mut(*var_slot) {
                                 *slot = Value::String(key);
@@ -1487,9 +1487,62 @@ fn execute_instructions(
                     };
                     map.insert(key, v_val);
                 }
-                stack.push(Value::Map(Rc::new(RefCell::new(map))));
+                stack.push(Value::Map(Rc::new(RefCell::new(MapValue::new(map)))));
             }
             Instruction::Index => {
+                let index_val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing index for index expression".to_string(),
+                    line: 0,
+                })?;
+                let target_val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing target for index expression".to_string(),
+                    line: 0,
+                })?;
+                let result = match target_val {
+                    Value::Array(arr) => {
+                        if let Some(i) = int_value_as_usize(&index_val) {
+                            let vec = arr.borrow();
+                            if i < vec.len() {
+                                vec[i].clone()
+                            } else {
+                                Value::Nil
+                            }
+                        } else {
+                            return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
+                        }
+                    }
+                    Value::F64Array(arr) => {
+                        if let Some(i) = int_value_as_usize(&index_val) {
+                            let vec = arr.borrow();
+                            if i < vec.len() {
+                                make_float(vec[i], FloatKind::F64)
+                            } else {
+                                Value::Nil
+                            }
+                        } else {
+                            return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
+                        }
+                    }
+                    Value::Map(map) => {
+                        let map_ref = map.borrow();
+                        if let Value::String(s) = index_val {
+                            if s.as_str() == "keys" {
+                                map_keys_array(&map_ref)
+                            } else if s.as_str() == "values" {
+                                map_values_array(&map_ref)
+                            } else {
+                                map_ref.data.get(&s).cloned().unwrap_or(Value::Nil)
+                            }
+                        } else {
+                            let key = intern::intern_owned(index_val.inspect());
+                            map_ref.data.get(&key).cloned().unwrap_or(Value::Nil)
+                        }
+                    }
+                    _ => return Err(RuntimeError { message: "Index operator not supported on this type".to_string(), line: 0 }),
+                };
+                stack.push(result);
+            }
+            Instruction::IndexCached(cache) => {
                 let index_val = stack.pop().ok_or_else(|| RuntimeError {
                     message: "Missing index for index expression".to_string(),
                     line: 0,
@@ -1530,11 +1583,26 @@ fn execute_instructions(
                             } else if s.as_str() == "values" {
                                 map_values_array(&map.borrow())
                             } else {
-                                map.borrow().get(&s).cloned().unwrap_or(Value::Nil)
+                                let map_ptr = Rc::as_ptr(&map) as usize;
+                                let map_ref = map.borrow();
+                                let mut cache_mut = cache.borrow_mut();
+                                if cache_mut.map_ptr == Some(map_ptr)
+                                    && cache_mut.version == map_ref.version
+                                    && cache_mut.key.as_ref() == Some(&s)
+                                {
+                                    cache_mut.value.clone().unwrap_or(Value::Nil)
+                                } else {
+                                    let value = map_ref.data.get(&s).cloned().unwrap_or(Value::Nil);
+                                    cache_mut.map_ptr = Some(map_ptr);
+                                    cache_mut.version = map_ref.version;
+                                    cache_mut.key = Some(s.clone());
+                                    cache_mut.value = Some(value.clone());
+                                    value
+                                }
                             }
                         } else {
                             let key = intern::intern_owned(index_val.inspect());
-                            map.borrow().get(&key).cloned().unwrap_or(Value::Nil)
+                            map.borrow().data.get(&key).cloned().unwrap_or(Value::Nil)
                         }
                     }
                     _ => return Err(RuntimeError { message: "Index operator not supported on this type".to_string(), line: 0 }),
@@ -1602,7 +1670,9 @@ fn execute_instructions(
                              Value::String(s) => s,
                              _ => intern::intern_owned(index_val.inspect()),
                         };
-                        map.borrow_mut().insert(key, value.clone());
+                        let mut map_mut = map.borrow_mut();
+                        map_mut.data.insert(key, value.clone());
+                        map_mut.version = map_mut.version.wrapping_add(1);
                     }
                     _ => return Err(RuntimeError { message: "Index assignment not supported on this type".to_string(), line: 0 }),
                 }
@@ -2173,44 +2243,61 @@ impl Interpreter {
         match existing {
             Some(Value::Map(map)) => {
                 let mut map_mut = map.borrow_mut();
-                if !map_mut.contains_key(&intern::intern("Int8")) {
-                    map_mut.insert(intern::intern("Int8"), build_int8_module());
+                let mut changed = false;
+                if !map_mut.data.contains_key(&intern::intern("Int8")) {
+                    map_mut.data.insert(intern::intern("Int8"), build_int8_module());
+                    changed = true;
                 }
-                if !map_mut.contains_key(&intern::intern("Int16")) {
-                    map_mut.insert(intern::intern("Int16"), build_int16_module());
+                if !map_mut.data.contains_key(&intern::intern("Int16")) {
+                    map_mut.data.insert(intern::intern("Int16"), build_int16_module());
+                    changed = true;
                 }
-                if !map_mut.contains_key(&intern::intern("Int32")) {
-                    map_mut.insert(intern::intern("Int32"), build_int32_module());
+                if !map_mut.data.contains_key(&intern::intern("Int32")) {
+                    map_mut.data.insert(intern::intern("Int32"), build_int32_module());
+                    changed = true;
                 }
-                if !map_mut.contains_key(&intern::intern("Int64")) {
-                    map_mut.insert(intern::intern("Int64"), build_int64_module());
+                if !map_mut.data.contains_key(&intern::intern("Int64")) {
+                    map_mut.data.insert(intern::intern("Int64"), build_int64_module());
+                    changed = true;
                 }
-                if !map_mut.contains_key(&intern::intern("Int128")) {
-                    map_mut.insert(intern::intern("Int128"), build_int128_module());
+                if !map_mut.data.contains_key(&intern::intern("Int128")) {
+                    map_mut.data.insert(intern::intern("Int128"), build_int128_module());
+                    changed = true;
                 }
-                if !map_mut.contains_key(&intern::intern("Uint8")) {
-                    map_mut.insert(intern::intern("Uint8"), build_uint8_module());
+                if !map_mut.data.contains_key(&intern::intern("Uint8")) {
+                    map_mut.data.insert(intern::intern("Uint8"), build_uint8_module());
+                    changed = true;
                 }
-                if !map_mut.contains_key(&intern::intern("Uint16")) {
-                    map_mut.insert(intern::intern("Uint16"), build_uint16_module());
+                if !map_mut.data.contains_key(&intern::intern("Uint16")) {
+                    map_mut.data.insert(intern::intern("Uint16"), build_uint16_module());
+                    changed = true;
                 }
-                if !map_mut.contains_key(&intern::intern("Uint32")) {
-                    map_mut.insert(intern::intern("Uint32"), build_uint32_module());
+                if !map_mut.data.contains_key(&intern::intern("Uint32")) {
+                    map_mut.data.insert(intern::intern("Uint32"), build_uint32_module());
+                    changed = true;
                 }
-                if !map_mut.contains_key(&intern::intern("Uint64")) {
-                    map_mut.insert(intern::intern("Uint64"), build_uint64_module());
+                if !map_mut.data.contains_key(&intern::intern("Uint64")) {
+                    map_mut.data.insert(intern::intern("Uint64"), build_uint64_module());
+                    changed = true;
                 }
-                if !map_mut.contains_key(&intern::intern("Uint128")) {
-                    map_mut.insert(intern::intern("Uint128"), build_uint128_module());
+                if !map_mut.data.contains_key(&intern::intern("Uint128")) {
+                    map_mut.data.insert(intern::intern("Uint128"), build_uint128_module());
+                    changed = true;
                 }
-                if !map_mut.contains_key(&intern::intern("Float32")) {
-                    map_mut.insert(intern::intern("Float32"), build_float32_module());
+                if !map_mut.data.contains_key(&intern::intern("Float32")) {
+                    map_mut.data.insert(intern::intern("Float32"), build_float32_module());
+                    changed = true;
                 }
-                if !map_mut.contains_key(&intern::intern("Float64")) {
-                    map_mut.insert(intern::intern("Float64"), build_float64_module());
+                if !map_mut.data.contains_key(&intern::intern("Float64")) {
+                    map_mut.data.insert(intern::intern("Float64"), build_float64_module());
+                    changed = true;
                 }
-                if !map_mut.contains_key(&intern::intern("Float128")) {
-                    map_mut.insert(intern::intern("Float128"), build_float128_module());
+                if !map_mut.data.contains_key(&intern::intern("Float128")) {
+                    map_mut.data.insert(intern::intern("Float128"), build_float128_module());
+                    changed = true;
+                }
+                if changed {
+                    map_mut.version = map_mut.version.wrapping_add(1);
                 }
             }
             Some(_) | None => {
@@ -2219,13 +2306,13 @@ impl Interpreter {
         }
     }
 
-    fn ensure_wasm_namespace(&mut self) -> Rc<RefCell<FxHashMap<Rc<String>, Value>>> {
+    fn ensure_wasm_namespace(&mut self) -> Rc<RefCell<MapValue>> {
         let wasm_sym = intern::intern_symbol("wasm");
         let existing = { self.env.borrow().get(wasm_sym) };
         match existing {
             Some(Value::Map(map)) => map,
             _ => {
-                let map = Rc::new(RefCell::new(FxHashMap::default()));
+                let map = Rc::new(RefCell::new(MapValue::new(FxHashMap::default())));
                 self.define_global(wasm_sym, Value::Map(map.clone()));
                 map
             }
@@ -2264,7 +2351,9 @@ impl Interpreter {
         }
 
         let wasm_map = self.ensure_wasm_namespace();
-        wasm_map.borrow_mut().insert(module_name, Value::Map(Rc::new(RefCell::new(exports))));
+        let mut wasm_mut = wasm_map.borrow_mut();
+        wasm_mut.data.insert(module_name, Value::Map(Rc::new(RefCell::new(MapValue::new(exports)))));
+        wasm_mut.version = wasm_mut.version.wrapping_add(1);
         Ok(Value::Nil)
     }
 
@@ -2288,7 +2377,7 @@ impl Interpreter {
             let seg_name = symbol_name(*segment);
             match current {
                 Value::Map(map) => {
-                    if let Some(next) = map.borrow().get(&seg_name).cloned() {
+                    if let Some(next) = map.borrow().data.get(&seg_name).cloned() {
                         current = next;
                         current_name = seg_name;
                     } else {
@@ -2339,7 +2428,7 @@ impl Interpreter {
                     Value::String(s) => Ok(default_int(s.len() as i128)),
                     Value::Array(arr) => Ok(default_int(arr.borrow().len() as i128)),
                     Value::F64Array(arr) => Ok(default_int(arr.borrow().len() as i128)),
-                    Value::Map(map) => Ok(default_int(map.borrow().len() as i128)),
+                    Value::Map(map) => Ok(default_int(map.borrow().data.len() as i128)),
                     _ => Ok(default_int(0)),
                 }
             }
@@ -2945,7 +3034,9 @@ impl Interpreter {
                              Value::String(s) => s,
                              _ => intern::intern_owned(index_val.inspect()),
                         };
-                        map.borrow_mut().insert(key, val.clone());
+                        let mut map_mut = map.borrow_mut();
+                        map_mut.data.insert(key, val.clone());
+                        map_mut.version = map_mut.version.wrapping_add(1);
                     }
                     _ => return Err(RuntimeError {
                         message: "Index assignment not supported on this type".to_string(),
@@ -3147,7 +3238,7 @@ impl Interpreter {
                     };
                     map.insert(k_str, v_val);
                 }
-                Ok(Value::Map(Rc::new(RefCell::new(map))))
+                Ok(Value::Map(Rc::new(RefCell::new(MapValue::new(map)))))
             }
             ExprKind::Index { target, index } => {
                 let target_val = self.eval(target, slots)?;
@@ -3190,11 +3281,11 @@ impl Interpreter {
                             } else if s.as_str() == "values" {
                                 Ok(map_values_array(&map.borrow()))
                             } else {
-                                Ok(map.borrow().get(&s).cloned().unwrap_or(Value::Nil))
+                                Ok(map.borrow().data.get(&s).cloned().unwrap_or(Value::Nil))
                             }
                         } else {
                             let key = intern::intern_owned(index_val.inspect());
-                            Ok(map.borrow().get(&key).cloned().unwrap_or(Value::Nil))
+                            Ok(map.borrow().data.get(&key).cloned().unwrap_or(Value::Nil))
                         }
                     }
                     _ => Err(RuntimeError {
@@ -3262,10 +3353,10 @@ impl Interpreter {
                                             };
                                         }
                                         Value::Map(map) => {
-                                            let keys: Vec<Rc<String>> = map.borrow().keys().cloned().collect();
+                                            let keys: Vec<Rc<String>> = map.borrow().data.keys().cloned().collect();
                                             let mut results = Vec::new();
                                             for key in keys {
-                                                let val = map.borrow().get(&key).cloned().unwrap_or(Value::Nil);
+                                                let val = map.borrow().data.get(&key).cloned().unwrap_or(Value::Nil);
                                                 let args = [Value::String(key), val];
                                                 let result = self.call_block_with_args(block, saved_env.clone(), &args, line)?;
                                                 if collect_results {
@@ -3308,7 +3399,7 @@ impl Interpreter {
                                 Value::String(s) => Ok(default_int(s.len() as i128)),
                                 Value::Array(arr) => Ok(default_int(arr.borrow().len() as i128)),
                                 Value::F64Array(arr) => Ok(default_int(arr.borrow().len() as i128)),
-                                Value::Map(map) => Ok(default_int(map.borrow().len() as i128)),
+                                Value::Map(map) => Ok(default_int(map.borrow().data.len() as i128)),
                                 _ => Ok(default_int(0)),
                             };
                         }
@@ -3601,8 +3692,8 @@ impl Interpreter {
                     }
                     Value::Map(map) => {
                         let map_ref = map.borrow();
-                        let mut keys = Vec::with_capacity(map_ref.len());
-                        keys.extend(map_ref.keys().cloned());
+                        let mut keys = Vec::with_capacity(map_ref.data.len());
+                        keys.extend(map_ref.data.keys().cloned());
                         for key in keys {
                             self.env.borrow_mut().assign(*var, Value::String(key));
                             last_val = self.eval(body, slots)?;

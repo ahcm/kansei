@@ -168,6 +168,7 @@ pub enum Instruction {
     MakeArray(usize),
     MakeMap(usize),
     Index,
+    IndexCached(Rc<RefCell<IndexCache>>),
     IndexAssign,
     ArrayGen,
     Dup,
@@ -191,6 +192,25 @@ pub enum Instruction {
     Gt,
     Lt,
     // Add more if needed
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndexCache {
+    pub map_ptr: Option<usize>,
+    pub key: Option<Rc<String>>,
+    pub value: Option<Value>,
+    pub version: u64,
+}
+
+impl Default for IndexCache {
+    fn default() -> Self {
+        Self {
+            map_ptr: None,
+            key: None,
+            value: None,
+            version: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -231,13 +251,25 @@ pub enum Value
     Boolean(bool),
     Array(Rc<RefCell<Vec<Value>>>),
     F64Array(Rc<RefCell<Vec<f64>>>),
-    Map(Rc<RefCell<FxHashMap<Rc<String>, Value>>>),
+    Map(Rc<RefCell<MapValue>>),
     Nil,
     Function(Rc<FunctionData>),
     NativeFunction(NativeFunction),
     WasmFunction(Rc<WasmFunction>),
     Reference(Rc<RefCell<Value>>),
     Uninitialized,
+}
+
+#[derive(Debug, Clone)]
+pub struct MapValue {
+    pub data: FxHashMap<Rc<String>, Value>,
+    pub version: u64,
+}
+
+impl MapValue {
+    pub fn new(data: FxHashMap<Rc<String>, Value>) -> Self {
+        Self { data, version: 0 }
+    }
 }
 
 
@@ -263,9 +295,9 @@ impl PartialEq for Value {
             (Value::Map(a), Value::Map(b)) => {
                 let map_a = a.borrow();
                 let map_b = b.borrow();
-                if map_a.len() != map_b.len() { return false; }
-                for (k, v) in map_a.iter() {
-                    if let Some(other_v) = map_b.get(k) {
+                if map_a.data.len() != map_b.data.len() { return false; }
+                for (k, v) in map_a.data.iter() {
+                    if let Some(other_v) = map_b.data.get(k) {
                         if v != other_v { return false; }
                     } else {
                         return false;
@@ -293,7 +325,7 @@ impl fmt::Debug for Value {
             Value::Boolean(b) => write!(f, "Boolean({})", b),
             Value::Array(a) => write!(f, "Array({:?})", a.borrow()),
             Value::F64Array(a) => write!(f, "F64Array({:?})", a.borrow()),
-            Value::Map(m) => write!(f, "Map({:?})", m.borrow()),
+            Value::Map(m) => write!(f, "Map({:?})", m.borrow().data),
             Value::Nil => write!(f, "Nil"),
             Value::Function(_) => write!(f, "Function(...)"),
             Value::NativeFunction(_) => write!(f, "NativeFunction(...)"),
@@ -327,7 +359,7 @@ impl Value
             }
             Value::Map(map) =>
             {
-                let entries: Vec<String> = map.borrow()
+                let entries: Vec<String> = map.borrow().data
                     .iter()
                     .map(|(k, v)| format!("\"{}\": {}\"", k, v.inspect()))
                     .collect();
@@ -374,7 +406,7 @@ impl fmt::Display for Value
             }
             Value::Map(map) =>
             {
-                let entries: Vec<String> = map.borrow()
+                let entries: Vec<String> = map.borrow().data
                     .iter()
                     .map(|(k, v)| format!("\"{}\": {}\"", k, v.inspect()))
                     .collect();

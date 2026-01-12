@@ -42,14 +42,17 @@ fn main() -> rustyline::Result<()>
     for (key, val) in env::vars() {
         env_map.insert(intern::intern_owned(key), value::Value::String(intern::intern_owned(val)));
     }
-    let env_val = value::Value::Map(Rc::new(RefCell::new(env_map)));
+    let env_val = value::Value::Map(Rc::new(RefCell::new(value::MapValue::new(env_map))));
 
     let mut program_map = FxHashMap::default();
     program_map.insert(intern::intern("name"), value::Value::String(intern::intern_owned(args[0].clone())));
     program_map.insert(intern::intern("args"), args_val);
     program_map.insert(intern::intern("env"), env_val);
 
-    interpreter.define_global(intern::intern_symbol("program"), value::Value::Map(Rc::new(RefCell::new(program_map))));
+    interpreter.define_global(
+        intern::intern_symbol("program"),
+        value::Value::Map(Rc::new(RefCell::new(value::MapValue::new(program_map)))),
+    );
 
     if args.len() > 1
     {

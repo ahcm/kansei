@@ -1,6 +1,7 @@
 # Kansei Language Reference
 
-Kansei is an intuitive scripting language designed for simplicity and flexibility.
+Kansei to be an intuitive scripting language designed for simplicity and flexibility.
+Inspired by Ruby 1.8 and functional programming.
 
 ## Comments
 ```ruby
@@ -38,6 +39,7 @@ Arrays and Maps are **mutable** and use **reference semantics**. Assigning an ar
 
   # Initialization with generator function
   evens = [fn(i) i * 2 end; 5] # [0, 2, 4, 6, 8]
+  evens = [{|i| i * 2 }; 5] # same
   ```
 - **Map**: Key-value pairs (keys are strings).
   ```ruby
@@ -196,10 +198,8 @@ Functions can accept a block of code using `{ |params| ... }`. The function can 
 
 ```ruby
 fn repeater(n)
-  i = 0
-  while i < n
+  loop n
     yield(i)
-    i = i + 1
   end
 end
 
@@ -272,9 +272,9 @@ Use `{{` and `}}` to include literal braces. Precision formatting uses `{expr:.N
 Use `load wasm::name` to load a WebAssembly module from `wasm/name.wasm`. The module is exposed under the `wasm` namespace.
 
 ```ruby
-load wasm::json
-json = wasm.json
-result = json.parse(f"{1 + 2}")
+load wasm::Json
+Json = wasm.json
+result = Json.parse(f"{1 + 2}")
 ```
 
 ### WASM ABI

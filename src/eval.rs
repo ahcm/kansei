@@ -1,7 +1,7 @@
 use crate::ast::{Closure, Expr, ExprKind, FloatKind, IntKind, Op};
 use crate::intern;
 use crate::intern::{SymbolId, symbol_name};
-use crate::value::{BinaryOpCache, BinaryOpCacheKind, Builtin, Environment, GlobalCache, IndexCache, Instruction, MapAccessCache, MapAccessCacheEntry, MapValue, RangeEnd, RegBinOp, RegFunction, RegInstruction, Value};
+use crate::value::{BinaryOpCache, BinaryOpCacheKind, Builtin, CallSiteCache, Environment, GlobalCache, IndexCache, Instruction, MapAccessCache, MapAccessCacheEntry, MapValue, RangeEnd, RegBinOp, RegFunction, RegInstruction, Value};
 use crate::wasm::{WasmFunction, WasmModule};
 use rustc_hash::FxHashMap;
 use std::collections::HashSet;
@@ -2230,17 +2230,35 @@ fn compile_reg_expr(
                 }
             }
             let func = compile_reg_expr(function, code, consts, alloc)?;
-            let mut arg_regs = Vec::with_capacity(args.len());
-            for arg in args {
-                arg_regs.push(compile_reg_expr(arg, code, consts, alloc)?);
-            }
             let dst = alloc.alloc();
-            code.push(RegInstruction::CallValueCached {
-                dst,
-                func,
-                args: arg_regs,
-                cache: Rc::new(RefCell::new(crate::value::CallSiteCache::default())),
-            });
+            let cache = Rc::new(RefCell::new(crate::value::CallSiteCache::default()));
+            match args.len() {
+                0 => {
+                    code.push(RegInstruction::CallValueCached0 { dst, func, cache });
+                }
+                1 => {
+                    let arg0 = compile_reg_expr(&args[0], code, consts, alloc)?;
+                    code.push(RegInstruction::CallValueCached1 { dst, func, arg0, cache });
+                }
+                2 => {
+                    let arg0 = compile_reg_expr(&args[0], code, consts, alloc)?;
+                    let arg1 = compile_reg_expr(&args[1], code, consts, alloc)?;
+                    code.push(RegInstruction::CallValueCached2 { dst, func, arg0, arg1, cache });
+                }
+                3 => {
+                    let arg0 = compile_reg_expr(&args[0], code, consts, alloc)?;
+                    let arg1 = compile_reg_expr(&args[1], code, consts, alloc)?;
+                    let arg2 = compile_reg_expr(&args[2], code, consts, alloc)?;
+                    code.push(RegInstruction::CallValueCached3 { dst, func, arg0, arg1, arg2, cache });
+                }
+                _ => {
+                    let mut arg_regs = Vec::with_capacity(args.len());
+                    for arg in args {
+                        arg_regs.push(compile_reg_expr(arg, code, consts, alloc)?);
+                    }
+                    code.push(RegInstruction::CallValueCached { dst, func, args: arg_regs, cache });
+                }
+            }
             Some(dst)
         }
         ExprKind::Block(stmts) => {
@@ -2513,6 +2531,62 @@ fn execute_reg_instructions(
     reg: &RegFunction,
     slots: &mut [Value],
 ) -> EvalResult {
+    fn eval_call_value_cached(
+        interpreter: &mut Interpreter,
+        func_val: Value,
+        arg_vals: smallvec::SmallVec<[Value; 8]>,
+        cache: &Rc<RefCell<CallSiteCache>>,
+    ) -> EvalResult {
+        if let Value::Function(func_data) = &func_val {
+            let func_ptr = Rc::as_ptr(func_data) as usize;
+            let mut cache_mut = cache.borrow_mut();
+            if cache_mut.func_ptr == Some(func_ptr) {
+                cache_mut.hits += 1;
+                if arg_vals.len() < func_data.params.len() {
+                    return Err(RuntimeError { message: "Too few arguments".to_string(), line: 0 });
+                }
+                if arg_vals.len() > func_data.params.len() {
+                    return Err(RuntimeError { message: "Too many arguments".to_string(), line: 0 });
+                }
+                if let Some(reg_code) = &func_data.reg_code {
+                    let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, func_data.declarations.len());
+                    for (i, val) in arg_vals.into_iter().enumerate() {
+                        new_slots[i + func_data.param_offset] = val;
+                    }
+                    return execute_reg_instructions(interpreter, reg_code, &mut new_slots);
+                }
+                if let Some(code) = &func_data.code {
+                    let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, func_data.declarations.len());
+                    for (i, val) in arg_vals.into_iter().enumerate() {
+                        new_slots[i + func_data.param_offset] = val;
+                    }
+                    return execute_instructions(interpreter, code, &func_data.const_pool, &mut new_slots);
+                }
+            } else {
+                cache_mut.func_ptr = Some(func_ptr);
+                cache_mut.native_ptr = None;
+                cache_mut.misses += 1;
+            }
+        } else if let Value::NativeFunction(func) = &func_val {
+            let func_ptr = *func as usize;
+            let mut cache_mut = cache.borrow_mut();
+            if cache_mut.native_ptr == Some(func_ptr) {
+                cache_mut.hits += 1;
+                return func(&arg_vals).map_err(|message| RuntimeError { message, line: 0 });
+            } else {
+                cache_mut.native_ptr = Some(func_ptr);
+                cache_mut.func_ptr = None;
+                cache_mut.misses += 1;
+            }
+        } else {
+            let mut cache_mut = cache.borrow_mut();
+            cache_mut.func_ptr = None;
+            cache_mut.native_ptr = None;
+            cache_mut.misses += 1;
+        }
+        interpreter.call_value(func_val, arg_vals, 0, None)
+    }
+
     let mut regs = interpreter.get_reg_buffer(reg.reg_count);
     let result = (|| {
         for inst in &reg.code {
@@ -2634,63 +2708,39 @@ fn execute_reg_instructions(
                     };
                     regs[*dst] = result;
                 }
+                RegInstruction::CallValueCached0 { dst, func, cache } => {
+                    let func_val = regs[*func].clone();
+                    let arg_vals: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
+                    regs[*dst] = eval_call_value_cached(interpreter, func_val, arg_vals, cache)?;
+                }
+                RegInstruction::CallValueCached1 { dst, func, arg0, cache } => {
+                    let func_val = regs[*func].clone();
+                    let mut arg_vals: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
+                    arg_vals.push(regs[*arg0].clone());
+                    regs[*dst] = eval_call_value_cached(interpreter, func_val, arg_vals, cache)?;
+                }
+                RegInstruction::CallValueCached2 { dst, func, arg0, arg1, cache } => {
+                    let func_val = regs[*func].clone();
+                    let mut arg_vals: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
+                    arg_vals.push(regs[*arg0].clone());
+                    arg_vals.push(regs[*arg1].clone());
+                    regs[*dst] = eval_call_value_cached(interpreter, func_val, arg_vals, cache)?;
+                }
+                RegInstruction::CallValueCached3 { dst, func, arg0, arg1, arg2, cache } => {
+                    let func_val = regs[*func].clone();
+                    let mut arg_vals: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
+                    arg_vals.push(regs[*arg0].clone());
+                    arg_vals.push(regs[*arg1].clone());
+                    arg_vals.push(regs[*arg2].clone());
+                    regs[*dst] = eval_call_value_cached(interpreter, func_val, arg_vals, cache)?;
+                }
                 RegInstruction::CallValueCached { dst, func, args, cache } => {
                     let func_val = regs[*func].clone();
                     let mut arg_vals: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
                     for reg_idx in args {
                         arg_vals.push(regs[*reg_idx].clone());
                     }
-                    if let Value::Function(func_data) = &func_val {
-                        let func_ptr = Rc::as_ptr(func_data) as usize;
-                        let mut cache_mut = cache.borrow_mut();
-                        if cache_mut.func_ptr == Some(func_ptr) {
-                            cache_mut.hits += 1;
-                            if arg_vals.len() < func_data.params.len() {
-                                return Err(RuntimeError { message: "Too few arguments".to_string(), line: 0 });
-                            }
-                            if arg_vals.len() > func_data.params.len() {
-                                return Err(RuntimeError { message: "Too many arguments".to_string(), line: 0 });
-                            }
-                            if let Some(reg_code) = &func_data.reg_code {
-                                let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, func_data.declarations.len());
-                                for (i, val) in arg_vals.into_iter().enumerate() {
-                                    new_slots[i + func_data.param_offset] = val;
-                                }
-                                regs[*dst] = execute_reg_instructions(interpreter, reg_code, &mut new_slots)?;
-                                continue;
-                            }
-                            if let Some(code) = &func_data.code {
-                                let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, func_data.declarations.len());
-                                for (i, val) in arg_vals.into_iter().enumerate() {
-                                    new_slots[i + func_data.param_offset] = val;
-                                }
-                                regs[*dst] = execute_instructions(interpreter, code, &func_data.const_pool, &mut new_slots)?;
-                                continue;
-                            }
-                        } else {
-                            cache_mut.func_ptr = Some(func_ptr);
-                            cache_mut.native_ptr = None;
-                            cache_mut.misses += 1;
-                        }
-                    } else if let Value::NativeFunction(func) = &func_val {
-                        let func_ptr = *func as usize;
-                        let mut cache_mut = cache.borrow_mut();
-                        if cache_mut.native_ptr == Some(func_ptr) {
-                            cache_mut.hits += 1;
-                            regs[*dst] = func(&arg_vals).map_err(|message| RuntimeError { message, line: 0 })?;
-                            continue;
-                        } else {
-                            cache_mut.native_ptr = Some(func_ptr);
-                            cache_mut.func_ptr = None;
-                            cache_mut.misses += 1;
-                        }
-                    } else {
-                        let mut cache_mut = cache.borrow_mut();
-                        cache_mut.func_ptr = None;
-                        cache_mut.native_ptr = None;
-                        cache_mut.misses += 1;
-                    }
-                    regs[*dst] = interpreter.call_value(func_val, arg_vals, 0, None)?;
+                    regs[*dst] = eval_call_value_cached(interpreter, func_val, arg_vals, cache)?;
                 }
                 RegInstruction::Len { dst, src } => {
                     let val = regs[*src].clone();

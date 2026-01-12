@@ -5002,6 +5002,32 @@ impl Interpreter {
         }
     }
 
+    fn apply_block_map(
+        &mut self,
+        method: &str,
+        map: Rc<RefCell<MapValue>>,
+        block: &Closure,
+        saved_env: Rc<RefCell<Environment>>,
+        line: usize,
+    ) -> EvalResult {
+        let collect_results = method == "each" || method == "map";
+        let keys: Vec<Rc<String>> = map.borrow().data.keys().cloned().collect();
+        let mut results = Vec::new();
+        for key in keys {
+            let val = map.borrow().data.get(&key).cloned().unwrap_or(Value::Nil);
+            let args = [Value::String(key), val];
+            let result = self.call_block_with_args(block, saved_env.clone(), &args, line)?;
+            if collect_results {
+                results.push(result);
+            }
+        }
+        if collect_results {
+            Ok(Value::Array(Rc::new(RefCell::new(results))))
+        } else {
+            Ok(Value::Map(map))
+        }
+    }
+
     fn call_wasm_function(
         &mut self,
         func: Rc<WasmFunction>,
@@ -5873,22 +5899,7 @@ impl Interpreter {
                                             return self.apply_block_f64_array(method, arr, block, saved_env, line);
                                         }
                                         Value::Map(map) => {
-                                            let collect_results = method == "each" || method == "map";
-                                            let keys: Vec<Rc<String>> = map.borrow().data.keys().cloned().collect();
-                                            let mut results = Vec::new();
-                                            for key in keys {
-                                                let val = map.borrow().data.get(&key).cloned().unwrap_or(Value::Nil);
-                                                let args = [Value::String(key), val];
-                                                let result = self.call_block_with_args(block, saved_env.clone(), &args, line)?;
-                                                if collect_results {
-                                                    results.push(result);
-                                                }
-                                            }
-                                            return if collect_results {
-                                                Ok(Value::Array(Rc::new(RefCell::new(results))))
-                                            } else {
-                                                Ok(Value::Map(map))
-                                            };
+                                            return self.apply_block_map(method, map, block, saved_env, line);
                                         }
                                         _ => {}
                                     }

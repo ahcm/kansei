@@ -4900,48 +4900,30 @@ impl Interpreter {
         saved_env: Rc<RefCell<Environment>>,
         line: usize,
     ) -> EvalResult {
-        match target {
-            BlockCollectionTarget::Array(arr) => self.apply_block_array(method, arr, block, saved_env, line),
-            BlockCollectionTarget::F64Array(arr) => self.apply_block_f64_array(method, arr, block, saved_env, line),
-            BlockCollectionTarget::Map(map) => self.apply_block_map(method, map, block, saved_env, line),
-        }
-    }
-
-    fn apply_block_array(
-        &mut self,
-        method: &str,
-        arr: Rc<RefCell<Vec<Value>>>,
-        block: &Closure,
-        saved_env: Rc<RefCell<Environment>>,
-        line: usize,
-    ) -> EvalResult {
         let collect_results = method == "each" || method == "map";
-        let is_filter = method == "filter";
-        let len = arr.borrow().len();
+        let is_map = matches!(&target, BlockCollectionTarget::Map(_));
+        let use_filter = method == "filter" && !is_map;
         let mut results = Vec::new();
         let mut f64_vals = Vec::new();
         let mut all_f64 = true;
-        for idx in 0..len {
-            let val = arr.borrow()[idx].clone();
-            let result = self.call_block_with_args(
-                block,
-                saved_env.clone(),
-                std::slice::from_ref(&val),
-                line,
-            )?;
-            if is_filter {
-                let is_truthy = !matches!(result, Value::Boolean(false) | Value::Nil);
-                if is_truthy {
-                    if all_f64 {
-                        if let Some(num) = int_value_as_f64(&val) {
-                            f64_vals.push(num);
+
+        let mut visit = |args: &[Value], keep: Option<&Value>, use_filter: bool| -> Result<(), RuntimeError> {
+            let result = self.call_block_with_args(block, saved_env.clone(), args, line)?;
+            if use_filter {
+                if let Some(keep_val) = keep {
+                    let is_truthy = !matches!(result, Value::Boolean(false) | Value::Nil);
+                    if is_truthy {
+                        if all_f64 {
+                            if let Some(num) = int_value_as_f64(keep_val) {
+                                f64_vals.push(num);
+                            } else {
+                                all_f64 = false;
+                                results.extend(f64_vals.drain(..).map(|v| make_float(v, FloatKind::F64)));
+                                results.push(keep_val.clone());
+                            }
                         } else {
-                            all_f64 = false;
-                            results.extend(f64_vals.drain(..).map(|v| make_float(v, FloatKind::F64)));
-                            results.push(val.clone());
+                            results.push(keep_val.clone());
                         }
-                    } else {
-                        results.push(val.clone());
                     }
                 }
             } else if collect_results {
@@ -4957,95 +4939,45 @@ impl Interpreter {
                     results.push(result);
                 }
             }
-        }
-        if collect_results || is_filter {
-            if all_f64 {
+            Ok(())
+        };
+
+        let original = match target {
+            BlockCollectionTarget::Array(arr) => {
+                let len = arr.borrow().len();
+                for idx in 0..len {
+                    let val = arr.borrow()[idx].clone();
+                    visit(std::slice::from_ref(&val), Some(&val), use_filter)?;
+                }
+                Value::Array(arr)
+            }
+            BlockCollectionTarget::F64Array(arr) => {
+                let len = arr.borrow().len();
+                for idx in 0..len {
+                    let val = make_float(arr.borrow()[idx], FloatKind::F64);
+                    visit(std::slice::from_ref(&val), Some(&val), use_filter)?;
+                }
+                Value::F64Array(arr)
+            }
+            BlockCollectionTarget::Map(map) => {
+                let keys: Vec<Rc<String>> = map.borrow().data.keys().cloned().collect();
+                for key in keys {
+                    let val = map.borrow().data.get(&key).cloned().unwrap_or(Value::Nil);
+                    let args = [Value::String(key), val];
+                    visit(&args, None, false)?;
+                }
+                Value::Map(map)
+            }
+        };
+
+        if collect_results || use_filter {
+            if all_f64 && !matches!(original, Value::Map(_)) {
                 Ok(Value::F64Array(Rc::new(RefCell::new(f64_vals))))
             } else {
                 Ok(Value::Array(Rc::new(RefCell::new(results))))
             }
         } else {
-            Ok(Value::Array(arr))
-        }
-    }
-
-    fn apply_block_f64_array(
-        &mut self,
-        method: &str,
-        arr: Rc<RefCell<Vec<f64>>>,
-        block: &Closure,
-        saved_env: Rc<RefCell<Environment>>,
-        line: usize,
-    ) -> EvalResult {
-        let collect_results = method == "each" || method == "map";
-        let is_filter = method == "filter";
-        let len = arr.borrow().len();
-        let mut results = Vec::new();
-        let mut f64_vals = Vec::new();
-        let mut all_f64 = true;
-        for idx in 0..len {
-            let arg = make_float(arr.borrow()[idx], FloatKind::F64);
-            let result = self.call_block_with_args(
-                block,
-                saved_env.clone(),
-                std::slice::from_ref(&arg),
-                line,
-            )?;
-            if is_filter {
-                let is_truthy = !matches!(result, Value::Boolean(false) | Value::Nil);
-                if is_truthy {
-                    if let Value::Float { value, .. } = arg {
-                        f64_vals.push(value);
-                    }
-                }
-            } else if collect_results {
-                if all_f64 {
-                    if let Some(num) = int_value_as_f64(&result) {
-                        f64_vals.push(num);
-                    } else {
-                        all_f64 = false;
-                        results.extend(f64_vals.drain(..).map(|v| make_float(v, FloatKind::F64)));
-                        results.push(result);
-                    }
-                } else {
-                    results.push(result);
-                }
-            }
-        }
-        if collect_results || is_filter {
-            if is_filter || all_f64 {
-                Ok(Value::F64Array(Rc::new(RefCell::new(f64_vals))))
-            } else {
-                Ok(Value::Array(Rc::new(RefCell::new(results))))
-            }
-        } else {
-            Ok(Value::F64Array(arr))
-        }
-    }
-
-    fn apply_block_map(
-        &mut self,
-        method: &str,
-        map: Rc<RefCell<MapValue>>,
-        block: &Closure,
-        saved_env: Rc<RefCell<Environment>>,
-        line: usize,
-    ) -> EvalResult {
-        let collect_results = method == "each" || method == "map";
-        let keys: Vec<Rc<String>> = map.borrow().data.keys().cloned().collect();
-        let mut results = Vec::new();
-        for key in keys {
-            let val = map.borrow().data.get(&key).cloned().unwrap_or(Value::Nil);
-            let args = [Value::String(key), val];
-            let result = self.call_block_with_args(block, saved_env.clone(), &args, line)?;
-            if collect_results {
-                results.push(result);
-            }
-        }
-        if collect_results {
-            Ok(Value::Array(Rc::new(RefCell::new(results))))
-        } else {
-            Ok(Value::Map(map))
+            Ok(original)
         }
     }
 

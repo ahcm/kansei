@@ -309,6 +309,17 @@ impl Parser
                         block: Some(Closure { params, body: Box::new(body) }),
                         inlined_body: Rc::new(RefCell::new(None)),
                     }, line);
+                } else if let Token::Identifier(n) = &self.current_token.token {
+                    if self.current_token.line == expr.line && (n == "keys" || n == "values") {
+                        let name = intern::intern_owned(n.clone());
+                        self.eat(); // identifier
+                        expr = self.make_expr(ExprKind::Index {
+                            target: Box::new(expr),
+                            index: Box::new(self.make_expr(ExprKind::String(name), line)),
+                        }, line);
+                    } else {
+                        break;
+                    }
                 } else {
                     break;
                 }

@@ -49,6 +49,13 @@ Arrays and Maps are **mutable** and use **reference semantics**. Assigning an ar
   # Modification
   user["age"] = 31
   user.age = 32 # Dot syntax works for assignment too
+
+  keys = user keys
+  values = user values
+
+  # Iterate
+  h = {"a": 1, "b": 2}
+  h keys each { |k, &h| h[k] = h[k] + 1 }
   ```
 
 ### Dot Syntax

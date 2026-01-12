@@ -118,6 +118,22 @@ fn unsigned_int_max(kind: IntKind) -> u128 {
     }
 }
 
+fn map_keys_array(map: &FxHashMap<Rc<String>, Value>) -> Value {
+    let mut vals = Vec::with_capacity(map.len());
+    for key in map.keys() {
+        vals.push(Value::String(key.clone()));
+    }
+    Value::Array(Rc::new(RefCell::new(vals)))
+}
+
+fn map_values_array(map: &FxHashMap<Rc<String>, Value>) -> Value {
+    let mut vals = Vec::with_capacity(map.len());
+    for val in map.values() {
+        vals.push(val.clone());
+    }
+    Value::Array(Rc::new(RefCell::new(vals)))
+}
+
 fn parse_signed_int(args: &[Value], kind: IntKind, label: &str) -> Result<Value, String> {
     let arg = args.get(0).ok_or_else(|| format!("{}.parse expects 1 argument", label))?;
     let s = match arg {
@@ -1508,11 +1524,18 @@ fn execute_instructions(
                         }
                     }
                     Value::Map(map) => {
-                        let key = match index_val {
-                             Value::String(s) => s,
-                             _ => intern::intern_owned(index_val.inspect()),
-                        };
-                        map.borrow().get(&key).cloned().unwrap_or(Value::Nil)
+                        if let Value::String(s) = index_val {
+                            if s.as_str() == "keys" {
+                                map_keys_array(&map.borrow())
+                            } else if s.as_str() == "values" {
+                                map_values_array(&map.borrow())
+                            } else {
+                                map.borrow().get(&s).cloned().unwrap_or(Value::Nil)
+                            }
+                        } else {
+                            let key = intern::intern_owned(index_val.inspect());
+                            map.borrow().get(&key).cloned().unwrap_or(Value::Nil)
+                        }
                     }
                     _ => return Err(RuntimeError { message: "Index operator not supported on this type".to_string(), line: 0 }),
                 };
@@ -3161,11 +3184,18 @@ impl Interpreter {
                         }
                     }
                     Value::Map(map) => {
-                        let key = match index_val {
-                             Value::String(s) => s,
-                             _ => intern::intern_owned(index_val.inspect()),
-                        };
-                        Ok(map.borrow().get(&key).cloned().unwrap_or(Value::Nil))
+                        if let Value::String(s) = index_val {
+                            if s.as_str() == "keys" {
+                                Ok(map_keys_array(&map.borrow()))
+                            } else if s.as_str() == "values" {
+                                Ok(map_values_array(&map.borrow()))
+                            } else {
+                                Ok(map.borrow().get(&s).cloned().unwrap_or(Value::Nil))
+                            }
+                        } else {
+                            let key = intern::intern_owned(index_val.inspect());
+                            Ok(map.borrow().get(&key).cloned().unwrap_or(Value::Nil))
+                        }
                     }
                     _ => Err(RuntimeError {
                         message: "Index operator not supported on this type".to_string(),

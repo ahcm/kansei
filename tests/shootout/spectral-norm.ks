@@ -4,7 +4,7 @@ end
 
 fn eval_A_times_u(n, u, au)
    loop n |i|
-      au[i]=0.0
+      au[i] = 0.0
       loop n |j|
          au[i] = au[i] + eval_A(i,j) * u[j]
       end
@@ -13,11 +13,11 @@ end
 
 fn eval_At_times_u(n, u, au)
    loop n |i|
-      au[i] = 0
+      au[i] = 0.0
        loop n |j|
          au[i] = au[i] + eval_A(j,i) * u[j]
       end
-   end      
+   end
 end
 
 fn eval_AtA_times_u(n, u, atAu)
@@ -33,8 +33,8 @@ fn main(n)
       eval_AtA_times_u(n,u,v)
       eval_AtA_times_u(n,v,u)   
    end
-   vBv = 0
-   vv = 0
+   vBv = 0.0
+   vv = 0.0
    loop n |i|
      vBv = u[i] * v[i] + vBv
      vv  = v[i] * v[i] + vv
@@ -43,8 +43,8 @@ fn main(n)
    use std::Float64
    Float64 = std::Float64
    res = Float64.sqrt(vBv/vv)
-   puts f"{res:.9}" 
-end  
+   puts f"{res:.9}"
+end
 
 n = program.args[0]
 use std::Int64

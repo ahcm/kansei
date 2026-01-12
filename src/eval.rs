@@ -1071,6 +1071,31 @@ fn match_f64_axpy(target: &Expr, value: &Expr) -> Option<(usize, usize, usize, u
     None
 }
 
+fn array_expr_is_f64(expr: &Expr) -> Option<bool> {
+    match &expr.kind {
+        ExprKind::Array(elements) => {
+            let mut all_f64 = true;
+            for e in elements {
+                match &e.kind {
+                    ExprKind::Float { .. } | ExprKind::Integer { .. } | ExprKind::Unsigned { .. } => {}
+                    _ => {
+                        all_f64 = false;
+                        break;
+                    }
+                }
+            }
+            Some(all_f64)
+        }
+        ExprKind::ArrayGenerator { generator, .. } => {
+            match &generator.kind {
+                ExprKind::Float { .. } | ExprKind::Integer { .. } | ExprKind::Unsigned { .. } => Some(true),
+                _ => Some(false),
+            }
+        }
+        _ => None,
+    }
+}
+
 fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value>, want_value: bool) -> bool {
     match &expr.kind {
         ExprKind::Integer { value, kind } => {
@@ -1412,7 +1437,15 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
             if !compile_expr(iterable, code, consts, true) { return false; }
             let mut body_code = Vec::new();
             if !compile_expr(body, &mut body_code, consts, true) { return false; }
-            code.push(Instruction::ForEach { var_slot: *var_slot, body: Rc::new(body_code) });
+            if let Some(is_f64) = array_expr_is_f64(iterable) {
+                if is_f64 {
+                    code.push(Instruction::ForEachF64Array { var_slot: *var_slot, body: Rc::new(body_code) });
+                } else {
+                    code.push(Instruction::ForEachArray { var_slot: *var_slot, body: Rc::new(body_code) });
+                }
+            } else {
+                code.push(Instruction::ForEach { var_slot: *var_slot, body: Rc::new(body_code) });
+            }
             if !want_value {
                 code.push(Instruction::Pop);
             }
@@ -3252,6 +3285,52 @@ fn execute_instructions(
                         }
                     }
                     _ => return Err(RuntimeError { message: "Type is not iterable".to_string(), line: 0 }),
+                }
+                stack.push(last);
+            }
+            Instruction::ForEachArray { var_slot, body } => {
+                let iter_val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing iterable for for-loop".to_string(),
+                    line: 0,
+                })?;
+                let arr = match iter_val {
+                    Value::Array(arr) => arr,
+                    _ => return Err(RuntimeError { message: "Type is not iterable".to_string(), line: 0 }),
+                };
+                let len = arr.borrow().len();
+                let mut last = Value::Nil;
+                for idx in 0..len {
+                    let item = {
+                        let vec = arr.borrow();
+                        vec[idx].clone()
+                    };
+                    if let Some(slot) = slots.get_mut(*var_slot) {
+                        *slot = item;
+                    }
+                    last = execute_instructions(interpreter, body, const_pool, slots)?;
+                }
+                stack.push(last);
+            }
+            Instruction::ForEachF64Array { var_slot, body } => {
+                let iter_val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing iterable for for-loop".to_string(),
+                    line: 0,
+                })?;
+                let arr = match iter_val {
+                    Value::F64Array(arr) => arr,
+                    _ => return Err(RuntimeError { message: "Type is not iterable".to_string(), line: 0 }),
+                };
+                let len = arr.borrow().len();
+                let mut last = Value::Nil;
+                for idx in 0..len {
+                    let item = {
+                        let vec = arr.borrow();
+                        make_float(vec[idx], FloatKind::F64)
+                    };
+                    if let Some(slot) = slots.get_mut(*var_slot) {
+                        *slot = item;
+                    }
+                    last = execute_instructions(interpreter, body, const_pool, slots)?;
                 }
                 stack.push(last);
             }

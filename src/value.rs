@@ -173,6 +173,8 @@ pub enum Instruction {
     CallBuiltin(Builtin, usize),
     CallValue(usize),
     ForEach { var_slot: usize, body: Rc<Vec<Instruction>> },
+    ForEachArray { var_slot: usize, body: Rc<Vec<Instruction>> },
+    ForEachF64Array { var_slot: usize, body: Rc<Vec<Instruction>> },
     ForRange { index_slot: usize, end: RangeEnd, body: Rc<Vec<Instruction>> },
     ForRangeInt { index_slot: usize, end: RangeEnd, step: i64, body: Rc<Vec<Instruction>> },
     ForRangeFloat { index_slot: usize, end: RangeEnd, step: f64, kind: FloatKind, body: Rc<Vec<Instruction>> },

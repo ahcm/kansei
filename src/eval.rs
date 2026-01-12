@@ -5454,7 +5454,7 @@ impl Interpreter {
                             }
                         } else {
                             return Err(RuntimeError {
-                                message: "Array index must be an integer".to_string(),
+                                message: err_index_requires_int().message,
                                 line,
                             });
                         }
@@ -5484,7 +5484,7 @@ impl Interpreter {
                             }
                         } else {
                             return Err(RuntimeError {
-                                message: "Array index must be an integer".to_string(),
+                                message: err_index_requires_int().message,
                                 line,
                             });
                         }

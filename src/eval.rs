@@ -2054,6 +2054,7 @@ fn execute_instructions(
                     message: "Missing function value for call".to_string(),
                     line: 0,
                 })?;
+                let func_val = func_val;
                 if let Value::Function(func) = &func_val {
                     let func_ptr = Rc::as_ptr(func) as usize;
                     let mut cache_mut = cache.borrow_mut();
@@ -2070,7 +2071,15 @@ fn execute_instructions(
                             for (i, val) in args.into_iter().enumerate() {
                                 new_slots[i + func.param_offset] = val;
                             }
-                            let result = execute_instructions(interpreter, code, &func.const_pool, &mut new_slots)?;
+                            let result = if func.uses_env {
+                                let original_env = interpreter.env.clone();
+                                interpreter.env = func.env.clone();
+                                let result = execute_instructions(interpreter, code, &func.const_pool, &mut new_slots);
+                                interpreter.env = original_env;
+                                result?
+                            } else {
+                                execute_instructions(interpreter, code, &func.const_pool, &mut new_slots)?
+                            };
                             stack.push(result);
                             continue;
                         }
@@ -2874,7 +2883,7 @@ fn should_compile(simple: bool, uses_env: bool, mode: BytecodeMode) -> bool {
     match mode {
         BytecodeMode::Off => false,
         BytecodeMode::Simple => simple && !uses_env,
-        BytecodeMode::Advanced => simple,
+        BytecodeMode::Advanced => simple && !uses_env,
     }
 }
 
@@ -3619,6 +3628,13 @@ impl Interpreter {
             let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, data.declarations.len());
             for (i, val) in arg_vals.into_iter().enumerate() {
                 new_slots[i + data.param_offset] = val;
+            }
+            if data.uses_env {
+                let original_env = self.env.clone();
+                self.env = data.env.clone();
+                let result = execute_instructions(self, code, &data.const_pool, &mut new_slots);
+                self.env = original_env;
+                return result;
             }
             return execute_instructions(self, code, &data.const_pool, &mut new_slots);
         }

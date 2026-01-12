@@ -1,7 +1,7 @@
 use crate::ast::{Closure, Expr, ExprKind, FloatKind, IntKind, Op};
 use crate::intern;
 use crate::intern::{SymbolId, symbol_name};
-use crate::value::{Builtin, Environment, Instruction, MapValue, RangeEnd, Value};
+use crate::value::{BinaryOpCache, BinaryOpCacheKind, Builtin, Environment, Instruction, MapValue, RangeEnd, Value};
 use crate::wasm::{WasmFunction, WasmModule};
 use rustc_hash::FxHashMap;
 use std::collections::HashSet;
@@ -314,6 +314,132 @@ fn promote_float_kind(left: FloatKind, right: FloatKind) -> FloatKind {
         FloatKind::F128 => 2,
     };
     if rank(left) >= rank(right) { left } else { right }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum BinOpKind {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Eq,
+    Gt,
+    Lt,
+}
+
+fn eval_binop(op: BinOpKind, l: Value, r: Value) -> EvalResult {
+    let res = match (l, r) {
+        (Value::Integer { value: i1, kind: k1 }, Value::Integer { value: i2, kind: k2 }) => {
+            let kind = signed_kind_for_bits(int_kind_bits(k1).max(int_kind_bits(k2)));
+            match op {
+                BinOpKind::Add => make_signed_int(i1 + i2, kind),
+                BinOpKind::Sub => make_signed_int(i1 - i2, kind),
+                BinOpKind::Mul => make_signed_int(i1 * i2, kind),
+                BinOpKind::Div => make_signed_int(i1 / i2, kind),
+                BinOpKind::Eq => Value::Boolean(i1 == i2),
+                BinOpKind::Gt => Value::Boolean(i1 > i2),
+                BinOpKind::Lt => Value::Boolean(i1 < i2),
+            }
+        }
+        (Value::Unsigned { value: u1, kind: k1 }, Value::Unsigned { value: u2, kind: k2 }) => {
+            let kind = unsigned_kind_for_bits(int_kind_bits(k1).max(int_kind_bits(k2)));
+            match op {
+                BinOpKind::Add => make_unsigned_int(u1 + u2, kind),
+                BinOpKind::Sub => make_unsigned_int(u1 - u2, kind),
+                BinOpKind::Mul => make_unsigned_int(u1 * u2, kind),
+                BinOpKind::Div => make_unsigned_int(u1 / u2, kind),
+                BinOpKind::Eq => Value::Boolean(u1 == u2),
+                BinOpKind::Gt => Value::Boolean(u1 > u2),
+                BinOpKind::Lt => Value::Boolean(u1 < u2),
+            }
+        }
+        (Value::Integer { value: i1, .. }, Value::Unsigned { value: u2, .. }) => {
+            let u2_i = i128::try_from(u2).map_err(|_| RuntimeError {
+                message: "Unsigned value too large for signed operation".to_string(),
+                line: 0,
+            })?;
+            match op {
+                BinOpKind::Add => make_signed_int(i1 + u2_i, IntKind::I128),
+                BinOpKind::Sub => make_signed_int(i1 - u2_i, IntKind::I128),
+                BinOpKind::Mul => make_signed_int(i1 * u2_i, IntKind::I128),
+                BinOpKind::Div => make_signed_int(i1 / u2_i, IntKind::I128),
+                BinOpKind::Eq => Value::Boolean(i1 == u2_i),
+                BinOpKind::Gt => Value::Boolean(i1 > u2_i),
+                BinOpKind::Lt => Value::Boolean(i1 < u2_i),
+            }
+        }
+        (Value::Unsigned { value: u1, .. }, Value::Integer { value: i2, .. }) => {
+            let u1_i = i128::try_from(u1).map_err(|_| RuntimeError {
+                message: "Unsigned value too large for signed operation".to_string(),
+                line: 0,
+            })?;
+            match op {
+                BinOpKind::Add => make_signed_int(u1_i + i2, IntKind::I128),
+                BinOpKind::Sub => make_signed_int(u1_i - i2, IntKind::I128),
+                BinOpKind::Mul => make_signed_int(u1_i * i2, IntKind::I128),
+                BinOpKind::Div => make_signed_int(u1_i / i2, IntKind::I128),
+                BinOpKind::Eq => Value::Boolean(u1_i == i2),
+                BinOpKind::Gt => Value::Boolean(u1_i > i2),
+                BinOpKind::Lt => Value::Boolean(u1_i < i2),
+            }
+        }
+        (Value::Float { value: f1, kind: k1 }, Value::Float { value: f2, kind: k2 }) => {
+            let kind = promote_float_kind(k1, k2);
+            match op {
+                BinOpKind::Add => make_float(f1 + f2, kind),
+                BinOpKind::Sub => make_float(f1 - f2, kind),
+                BinOpKind::Mul => make_float(f1 * f2, kind),
+                BinOpKind::Div => make_float(f1 / f2, kind),
+                BinOpKind::Eq => Value::Boolean(f1 == f2),
+                BinOpKind::Gt => Value::Boolean(f1 > f2),
+                BinOpKind::Lt => Value::Boolean(f1 < f2),
+            }
+        }
+        (v @ Value::Integer { .. }, Value::Float { value: f, kind })
+        | (v @ Value::Unsigned { .. }, Value::Float { value: f, kind }) => {
+            let f1 = int_value_as_f64(&v).unwrap_or(0.0);
+            match op {
+                BinOpKind::Add => make_float(f1 + f, kind),
+                BinOpKind::Sub => make_float(f1 - f, kind),
+                BinOpKind::Mul => make_float(f1 * f, kind),
+                BinOpKind::Div => make_float(f1 / f, kind),
+                BinOpKind::Eq => Value::Boolean(f1 == f),
+                BinOpKind::Gt => Value::Boolean(f1 > f),
+                BinOpKind::Lt => Value::Boolean(f1 < f),
+            }
+        }
+        (Value::Float { value: f, kind }, v @ Value::Integer { .. })
+        | (Value::Float { value: f, kind }, v @ Value::Unsigned { .. }) => {
+            let f2 = int_value_as_f64(&v).unwrap_or(0.0);
+            match op {
+                BinOpKind::Add => make_float(f + f2, kind),
+                BinOpKind::Sub => make_float(f - f2, kind),
+                BinOpKind::Mul => make_float(f * f2, kind),
+                BinOpKind::Div => make_float(f / f2, kind),
+                BinOpKind::Eq => Value::Boolean(f == f2),
+                BinOpKind::Gt => Value::Boolean(f > f2),
+                BinOpKind::Lt => Value::Boolean(f < f2),
+            }
+        }
+        (Value::String(s1), Value::String(s2)) => match op {
+            BinOpKind::Add => {
+                let mut out = s1.clone();
+                Rc::make_mut(&mut out).push_str(&s2);
+                Value::String(out)
+            }
+            _ => return Err(RuntimeError { message: "Invalid types for operation".to_string(), line: 0 }),
+        },
+        (Value::String(s), v2) => match op {
+            BinOpKind::Add => {
+                let mut out = s.clone();
+                Rc::make_mut(&mut out).push_str(&v2.inspect());
+                Value::String(out)
+            }
+            _ => return Err(RuntimeError { message: "Invalid types for operation".to_string(), line: 0 }),
+        },
+        _ => return Err(RuntimeError { message: "Invalid types for operation".to_string(), line: 0 }),
+    };
+    Ok(res)
 }
 
 fn make_float(value: f64, kind: FloatKind) -> Value {
@@ -973,8 +1099,8 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
                                 code.push(Instruction::Dup);
                                 let idx = push_const(consts, default_int(1));
                                 code.push(Instruction::LoadConstIdx(idx));
-                                code.push(Instruction::Add);
-                                code.push(Instruction::Mul);
+                                code.push(Instruction::AddCached(Rc::new(RefCell::new(BinaryOpCache::default()))));
+                                code.push(Instruction::MulCached(Rc::new(RefCell::new(BinaryOpCache::default()))));
                                 handled = true;
                             }
                         }
@@ -991,8 +1117,8 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
                                 code.push(Instruction::Dup);
                                 let idx = push_const(consts, default_int(1));
                                 code.push(Instruction::LoadConstIdx(idx));
-                                code.push(Instruction::Add);
-                                code.push(Instruction::Mul);
+                                code.push(Instruction::AddCached(Rc::new(RefCell::new(BinaryOpCache::default()))));
+                                code.push(Instruction::MulCached(Rc::new(RefCell::new(BinaryOpCache::default()))));
                                 handled = true;
                             }
                         }
@@ -1004,10 +1130,10 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
                 if !compile_expr(left, code, consts, true) { return false; }
                 if !compile_expr(right, code, consts, true) { return false; }
                 match op {
-                    Op::Add => code.push(Instruction::Add),
-                    Op::Subtract => code.push(Instruction::Sub),
-                    Op::Multiply => code.push(Instruction::Mul),
-                    Op::Divide => code.push(Instruction::Div),
+                    Op::Add => code.push(Instruction::AddCached(Rc::new(RefCell::new(BinaryOpCache::default())))),
+                    Op::Subtract => code.push(Instruction::SubCached(Rc::new(RefCell::new(BinaryOpCache::default())))),
+                    Op::Multiply => code.push(Instruction::MulCached(Rc::new(RefCell::new(BinaryOpCache::default())))),
+                    Op::Divide => code.push(Instruction::DivCached(Rc::new(RefCell::new(BinaryOpCache::default())))),
                     Op::Equal => code.push(Instruction::Eq),
                     Op::GreaterThan => code.push(Instruction::Gt),
                     Op::LessThan => code.push(Instruction::Lt),
@@ -1682,6 +1808,78 @@ fn execute_instructions(
                 let val = stack.pop().unwrap_or(Value::Nil);
                 stack.push(clone_value(&val));
             }
+            Instruction::AddCached(cache) => {
+                let r = stack.pop().unwrap();
+                let l = stack.pop().unwrap();
+                if matches!(cache.borrow().kind, Some(BinaryOpCacheKind::Float)) {
+                    if let (Value::Float { value: f1, kind: k1 }, Value::Float { value: f2, kind: k2 }) = (&l, &r) {
+                        let kind = promote_float_kind(*k1, *k2);
+                        stack.push(make_float(f1 + f2, kind));
+                        ip += 1;
+                        continue;
+                    }
+                }
+                let float_operands = matches!((&l, &r), (Value::Float { .. }, Value::Float { .. }));
+                let res = eval_binop(BinOpKind::Add, l, r)?;
+                if float_operands {
+                    cache.borrow_mut().kind = Some(BinaryOpCacheKind::Float);
+                }
+                stack.push(res);
+            }
+            Instruction::SubCached(cache) => {
+                let r = stack.pop().unwrap();
+                let l = stack.pop().unwrap();
+                if matches!(cache.borrow().kind, Some(BinaryOpCacheKind::Float)) {
+                    if let (Value::Float { value: f1, kind: k1 }, Value::Float { value: f2, kind: k2 }) = (&l, &r) {
+                        let kind = promote_float_kind(*k1, *k2);
+                        stack.push(make_float(f1 - f2, kind));
+                        ip += 1;
+                        continue;
+                    }
+                }
+                let float_operands = matches!((&l, &r), (Value::Float { .. }, Value::Float { .. }));
+                let res = eval_binop(BinOpKind::Sub, l, r)?;
+                if float_operands {
+                    cache.borrow_mut().kind = Some(BinaryOpCacheKind::Float);
+                }
+                stack.push(res);
+            }
+            Instruction::MulCached(cache) => {
+                let r = stack.pop().unwrap();
+                let l = stack.pop().unwrap();
+                if matches!(cache.borrow().kind, Some(BinaryOpCacheKind::Float)) {
+                    if let (Value::Float { value: f1, kind: k1 }, Value::Float { value: f2, kind: k2 }) = (&l, &r) {
+                        let kind = promote_float_kind(*k1, *k2);
+                        stack.push(make_float(f1 * f2, kind));
+                        ip += 1;
+                        continue;
+                    }
+                }
+                let float_operands = matches!((&l, &r), (Value::Float { .. }, Value::Float { .. }));
+                let res = eval_binop(BinOpKind::Mul, l, r)?;
+                if float_operands {
+                    cache.borrow_mut().kind = Some(BinaryOpCacheKind::Float);
+                }
+                stack.push(res);
+            }
+            Instruction::DivCached(cache) => {
+                let r = stack.pop().unwrap();
+                let l = stack.pop().unwrap();
+                if matches!(cache.borrow().kind, Some(BinaryOpCacheKind::Float)) {
+                    if let (Value::Float { value: f1, kind: k1 }, Value::Float { value: f2, kind: k2 }) = (&l, &r) {
+                        let kind = promote_float_kind(*k1, *k2);
+                        stack.push(make_float(f1 / f2, kind));
+                        ip += 1;
+                        continue;
+                    }
+                }
+                let float_operands = matches!((&l, &r), (Value::Float { .. }, Value::Float { .. }));
+                let res = eval_binop(BinOpKind::Div, l, r)?;
+                if float_operands {
+                    cache.borrow_mut().kind = Some(BinaryOpCacheKind::Float);
+                }
+                stack.push(res);
+            }
             Instruction::JumpIfFalse(target) => {
                 let cond = stack.pop().unwrap_or(Value::Nil);
                 let is_false = matches!(cond, Value::Boolean(false) | Value::Nil);
@@ -2311,127 +2509,26 @@ fn execute_instructions(
                 }
                 stack.push(make_float(total2, FloatKind::F64));
             }
-            inst => {
+            Instruction::Add
+            | Instruction::Sub
+            | Instruction::Mul
+            | Instruction::Div
+            | Instruction::Eq
+            | Instruction::Gt
+            | Instruction::Lt => {
                 let r = stack.pop().unwrap();
                 let l = stack.pop().unwrap();
-                let res = match (l, r) {
-                    (Value::Integer { value: i1, kind: k1 }, Value::Integer { value: i2, kind: k2 }) => {
-                        let kind = signed_kind_for_bits(int_kind_bits(k1).max(int_kind_bits(k2)));
-                        match inst {
-                            Instruction::Add => make_signed_int(i1 + i2, kind),
-                            Instruction::Sub => make_signed_int(i1 - i2, kind),
-                            Instruction::Mul => make_signed_int(i1 * i2, kind),
-                            Instruction::Div => make_signed_int(i1 / i2, kind),
-                            Instruction::Eq => Value::Boolean(i1 == i2),
-                            Instruction::Gt => Value::Boolean(i1 > i2),
-                            Instruction::Lt => Value::Boolean(i1 < i2),
-                            _ => unreachable!(),
-                        }
-                    }
-                    (Value::Unsigned { value: u1, kind: k1 }, Value::Unsigned { value: u2, kind: k2 }) => {
-                        let kind = unsigned_kind_for_bits(int_kind_bits(k1).max(int_kind_bits(k2)));
-                        match inst {
-                            Instruction::Add => make_unsigned_int(u1 + u2, kind),
-                            Instruction::Sub => make_unsigned_int(u1 - u2, kind),
-                            Instruction::Mul => make_unsigned_int(u1 * u2, kind),
-                            Instruction::Div => make_unsigned_int(u1 / u2, kind),
-                            Instruction::Eq => Value::Boolean(u1 == u2),
-                            Instruction::Gt => Value::Boolean(u1 > u2),
-                            Instruction::Lt => Value::Boolean(u1 < u2),
-                            _ => unreachable!(),
-                        }
-                    }
-                    (Value::Integer { value: i1, .. }, Value::Unsigned { value: u2, .. }) => {
-                        let u2_i = i128::try_from(u2).map_err(|_| RuntimeError {
-                            message: "Unsigned value too large for signed operation".to_string(),
-                            line: 0,
-                        })?;
-                        match inst {
-                            Instruction::Add => make_signed_int(i1 + u2_i, IntKind::I128),
-                            Instruction::Sub => make_signed_int(i1 - u2_i, IntKind::I128),
-                            Instruction::Mul => make_signed_int(i1 * u2_i, IntKind::I128),
-                            Instruction::Div => make_signed_int(i1 / u2_i, IntKind::I128),
-                            Instruction::Eq => Value::Boolean(i1 == u2_i),
-                            Instruction::Gt => Value::Boolean(i1 > u2_i),
-                            Instruction::Lt => Value::Boolean(i1 < u2_i),
-                            _ => unreachable!(),
-                        }
-                    }
-                    (Value::Unsigned { value: u1, .. }, Value::Integer { value: i2, .. }) => {
-                        let u1_i = i128::try_from(u1).map_err(|_| RuntimeError {
-                            message: "Unsigned value too large for signed operation".to_string(),
-                            line: 0,
-                        })?;
-                        match inst {
-                            Instruction::Add => make_signed_int(u1_i + i2, IntKind::I128),
-                            Instruction::Sub => make_signed_int(u1_i - i2, IntKind::I128),
-                            Instruction::Mul => make_signed_int(u1_i * i2, IntKind::I128),
-                            Instruction::Div => make_signed_int(u1_i / i2, IntKind::I128),
-                            Instruction::Eq => Value::Boolean(u1_i == i2),
-                            Instruction::Gt => Value::Boolean(u1_i > i2),
-                            Instruction::Lt => Value::Boolean(u1_i < i2),
-                            _ => unreachable!(),
-                        }
-                    }
-                    (Value::Float { value: f1, kind: k1 }, Value::Float { value: f2, kind: k2 }) => {
-                        let kind = promote_float_kind(k1, k2);
-                        match inst {
-                            Instruction::Add => make_float(f1 + f2, kind),
-                            Instruction::Sub => make_float(f1 - f2, kind),
-                            Instruction::Mul => make_float(f1 * f2, kind),
-                            Instruction::Div => make_float(f1 / f2, kind),
-                            Instruction::Eq => Value::Boolean(f1 == f2),
-                            Instruction::Gt => Value::Boolean(f1 > f2),
-                            Instruction::Lt => Value::Boolean(f1 < f2),
-                            _ => unreachable!(),
-                        }
-                    }
-                    (v @ Value::Integer { .. }, Value::Float { value: f, kind })
-                    | (v @ Value::Unsigned { .. }, Value::Float { value: f, kind }) => {
-                        let f1 = int_value_as_f64(&v).unwrap_or(0.0);
-                        match inst {
-                            Instruction::Add => make_float(f1 + f, kind),
-                            Instruction::Sub => make_float(f1 - f, kind),
-                            Instruction::Mul => make_float(f1 * f, kind),
-                            Instruction::Div => make_float(f1 / f, kind),
-                            Instruction::Eq => Value::Boolean(f1 == f),
-                            Instruction::Gt => Value::Boolean(f1 > f),
-                            Instruction::Lt => Value::Boolean(f1 < f),
-                            _ => unreachable!(),
-                        }
-                    }
-                    (Value::Float { value: f, kind }, v @ Value::Integer { .. })
-                    | (Value::Float { value: f, kind }, v @ Value::Unsigned { .. }) => {
-                        let f2 = int_value_as_f64(&v).unwrap_or(0.0);
-                        match inst {
-                            Instruction::Add => make_float(f + f2, kind),
-                            Instruction::Sub => make_float(f - f2, kind),
-                            Instruction::Mul => make_float(f * f2, kind),
-                            Instruction::Div => make_float(f / f2, kind),
-                            Instruction::Eq => Value::Boolean(f == f2),
-                            Instruction::Gt => Value::Boolean(f > f2),
-                            Instruction::Lt => Value::Boolean(f < f2),
-                            _ => unreachable!(),
-                        }
-                    }
-                    (Value::String(s1), Value::String(s2)) => match inst {
-                        Instruction::Add => {
-                            let mut out = s1.clone();
-                            Rc::make_mut(&mut out).push_str(&s2);
-                            Value::String(out)
-                        }
-                        _ => return Err(RuntimeError { message: "Invalid types for operation".to_string(), line: 0 }),
-                    },
-                    (Value::String(s), v2) => match inst {
-                        Instruction::Add => {
-                            let mut out = s.clone();
-                            Rc::make_mut(&mut out).push_str(&v2.inspect());
-                            Value::String(out)
-                        }
-                        _ => return Err(RuntimeError { message: "Invalid types for operation".to_string(), line: 0 }),
-                    },
-                    _ => return Err(RuntimeError { message: "Invalid types for operation".to_string(), line: 0 }),
+                let op = match &code[ip] {
+                    Instruction::Add => BinOpKind::Add,
+                    Instruction::Sub => BinOpKind::Sub,
+                    Instruction::Mul => BinOpKind::Mul,
+                    Instruction::Div => BinOpKind::Div,
+                    Instruction::Eq => BinOpKind::Eq,
+                    Instruction::Gt => BinOpKind::Gt,
+                    Instruction::Lt => BinOpKind::Lt,
+                    _ => unreachable!(),
                 };
+                let res = eval_binop(op, l, r)?;
                 stack.push(res);
             }
         }

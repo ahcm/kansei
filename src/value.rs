@@ -173,6 +173,10 @@ pub enum Instruction {
     IndexCached(Rc<RefCell<IndexCache>>),
     IndexAssign,
     CloneValue,
+    AddCached(Rc<RefCell<BinaryOpCache>>),
+    SubCached(Rc<RefCell<BinaryOpCache>>),
+    MulCached(Rc<RefCell<BinaryOpCache>>),
+    DivCached(Rc<RefCell<BinaryOpCache>>),
     ArrayGen,
     Dup,
     F64Axpy { dst_slot: usize, dst_index_slot: usize, src_slot: usize, src_index_slot: usize },
@@ -195,6 +199,22 @@ pub enum Instruction {
     Gt,
     Lt,
     // Add more if needed
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BinaryOpCacheKind {
+    Float,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BinaryOpCache {
+    pub kind: Option<BinaryOpCacheKind>,
+}
+
+impl Default for BinaryOpCache {
+    fn default() -> Self {
+        Self { kind: None }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

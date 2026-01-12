@@ -212,11 +212,17 @@ pub enum BinaryOpCacheKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinaryOpCache {
     pub kind: Option<BinaryOpCacheKind>,
+    pub hits: u64,
+    pub misses: u64,
 }
 
 impl Default for BinaryOpCache {
     fn default() -> Self {
-        Self { kind: None }
+        Self {
+            kind: None,
+            hits: 0,
+            misses: 0,
+        }
     }
 }
 
@@ -228,16 +234,24 @@ pub struct IndexCache {
     pub version: u64,
     pub array_ptr: Option<usize>,
     pub index_usize: Option<usize>,
+    pub hits: u64,
+    pub misses: u64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CallSiteCache {
     pub func_ptr: Option<usize>,
+    pub hits: u64,
+    pub misses: u64,
 }
 
 impl Default for CallSiteCache {
     fn default() -> Self {
-        Self { func_ptr: None }
+        Self {
+            func_ptr: None,
+            hits: 0,
+            misses: 0,
+        }
     }
 }
 
@@ -250,6 +264,8 @@ impl Default for IndexCache {
             version: 0,
             array_ptr: None,
             index_usize: None,
+            hits: 0,
+            misses: 0,
         }
     }
 }

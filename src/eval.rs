@@ -458,6 +458,7 @@ fn eval_cached_binop(op: BinOpKind, cache: &Rc<RefCell<BinaryOpCache>>, l: Value
                         BinOpKind::Gt => Value::Boolean(f1 > f2),
                         BinOpKind::Lt => Value::Boolean(f1 < f2),
                     };
+                    cache.borrow_mut().hits += 1;
                     return Ok(res);
                 }
             }
@@ -473,6 +474,7 @@ fn eval_cached_binop(op: BinOpKind, cache: &Rc<RefCell<BinaryOpCache>>, l: Value
                         BinOpKind::Gt => Value::Boolean(i1 > i2),
                         BinOpKind::Lt => Value::Boolean(i1 < i2),
                     };
+                    cache.borrow_mut().hits += 1;
                     return Ok(res);
                 }
             }
@@ -488,12 +490,14 @@ fn eval_cached_binop(op: BinOpKind, cache: &Rc<RefCell<BinaryOpCache>>, l: Value
                         BinOpKind::Gt => Value::Boolean(u1 > u2),
                         BinOpKind::Lt => Value::Boolean(u1 < u2),
                     };
+                    cache.borrow_mut().hits += 1;
                     return Ok(res);
                 }
             }
         }
     }
 
+    cache.borrow_mut().misses += 1;
     let res = eval_binop(op, l, r)?;
     let new_kind = match (&res, &cached) {
         (Value::Float { .. }, _) => Some(BinaryOpCacheKind::Float),
@@ -1549,6 +1553,7 @@ pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String {
     out.push_str("AST:\n");
     out.push_str(&format!("{:#?}\n", ast));
 
+    out.push_str(&format!("Bytecode mode: {:?}\n", mode));
     out.push_str("Top-level bytecode:\n");
     {
         let simple = is_simple(ast);
@@ -1571,12 +1576,43 @@ pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String {
                 for (idx, value) in consts.iter().enumerate() {
                     out.push_str(&format!("  [{idx}] {}\n", value.inspect()));
                 }
-                out.push_str("  Bytecode:\n");
-                for (idx, inst) in code.iter().enumerate() {
-                    out.push_str(&format!("  {idx:04} {:?}\n", inst));
+            out.push_str("  Bytecode:\n");
+            let mut bin_hits = 0u64;
+            let mut bin_misses = 0u64;
+            let mut idx_hits = 0u64;
+            let mut idx_misses = 0u64;
+            let mut call_hits = 0u64;
+            let mut call_misses = 0u64;
+            for (idx, inst) in code.iter().enumerate() {
+                match inst {
+                    Instruction::AddCached(cache)
+                    | Instruction::SubCached(cache)
+                    | Instruction::MulCached(cache)
+                    | Instruction::DivCached(cache) => {
+                        let cache = cache.borrow();
+                        bin_hits += cache.hits;
+                        bin_misses += cache.misses;
+                    }
+                    Instruction::IndexCached(cache) => {
+                        let cache = cache.borrow();
+                        idx_hits += cache.hits;
+                        idx_misses += cache.misses;
+                    }
+                    Instruction::CallValueCached(cache, _) => {
+                        let cache = cache.borrow();
+                        call_hits += cache.hits;
+                        call_misses += cache.misses;
+                    }
+                    _ => {}
                 }
-            } else if let Some(reason) = find_compile_failure(ast) {
-                out.push_str(&format!("  <compile failed: {reason}>\n"));
+                out.push_str(&format!("  {idx:04} {:?}\n", inst));
+            }
+            out.push_str(&format!(
+                "  CacheMetrics bin(hits={}, misses={}) index(hits={}, misses={}) call(hits={}, misses={})\n",
+                bin_hits, bin_misses, idx_hits, idx_misses, call_hits, call_misses
+            ));
+        } else if let Some(reason) = find_compile_failure(ast) {
+            out.push_str(&format!("  <compile failed: {reason}>\n"));
             } else {
                 out.push_str("  <compile failed: unknown reason>\n");
             }
@@ -1630,9 +1666,41 @@ pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String {
                     out.push_str(&format!("  [{idx}] {}\n", value.inspect()));
                 }
                 out.push_str("  Bytecode:\n");
+                let mut bin_hits = 0u64;
+                let mut bin_misses = 0u64;
+                let mut idx_hits = 0u64;
+                let mut idx_misses = 0u64;
+                let mut call_hits = 0u64;
+                let mut call_misses = 0u64;
+
                 for (idx, inst) in code.iter().enumerate() {
+                    match inst {
+                        Instruction::AddCached(cache)
+                        | Instruction::SubCached(cache)
+                        | Instruction::MulCached(cache)
+                        | Instruction::DivCached(cache) => {
+                            let cache = cache.borrow();
+                            bin_hits += cache.hits;
+                            bin_misses += cache.misses;
+                        }
+                        Instruction::IndexCached(cache) => {
+                            let cache = cache.borrow();
+                            idx_hits += cache.hits;
+                            idx_misses += cache.misses;
+                        }
+                        Instruction::CallValueCached(cache, _) => {
+                            let cache = cache.borrow();
+                            call_hits += cache.hits;
+                            call_misses += cache.misses;
+                        }
+                        _ => {}
+                    }
                     out.push_str(&format!("  {idx:04} {:?}\n", inst));
                 }
+                out.push_str(&format!(
+                    "  CacheMetrics bin(hits={}, misses={}) index(hits={}, misses={}) call(hits={}, misses={})\n",
+                    bin_hits, bin_misses, idx_hits, idx_misses, call_hits, call_misses
+                ));
             } else if let Some(reason) = find_compile_failure(&resolved_body) {
                 out.push_str(&format!("  <compile failed: {reason}>\n"));
             } else {
@@ -1956,6 +2024,7 @@ fn execute_instructions(
                     let func_ptr = Rc::as_ptr(func) as usize;
                     let mut cache_mut = cache.borrow_mut();
                     if cache_mut.func_ptr == Some(func_ptr) {
+                        cache_mut.hits += 1;
                         if args.len() < func.params.len() {
                             return Err(RuntimeError { message: "Too few arguments".to_string(), line: 0 });
                         }
@@ -1973,9 +2042,12 @@ fn execute_instructions(
                         }
                     } else {
                         cache_mut.func_ptr = Some(func_ptr);
+                        cache_mut.misses += 1;
                     }
                 } else {
-                    cache.borrow_mut().func_ptr = None;
+                    let mut cache_mut = cache.borrow_mut();
+                    cache_mut.func_ptr = None;
+                    cache_mut.misses += 1;
                 }
                 let result = interpreter.call_value(func_val, args, 0, None)?;
                 stack.push(result);
@@ -2222,6 +2294,7 @@ fn execute_instructions(
                                     && cache_mut.version == map_ref.version
                                     && cache_mut.key.as_ref() == Some(&s)
                                 {
+                                    cache_mut.hits += 1;
                                     cache_mut.value.clone().unwrap_or(Value::Nil)
                                 } else {
                                     let value = map_ref.data.get(&s).cloned().unwrap_or(Value::Nil);
@@ -2229,6 +2302,7 @@ fn execute_instructions(
                                     cache_mut.version = map_ref.version;
                                     cache_mut.key = Some(s.clone());
                                     cache_mut.value = Some(value.clone());
+                                    cache_mut.misses += 1;
                                     value
                                 }
                             }

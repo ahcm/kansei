@@ -252,6 +252,20 @@ pub enum RegInstruction {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum FastRegInstruction {
+    LoadConst { dst: usize, value: f64 },
+    LoadSlot { dst: usize, slot: usize },
+    BinOp { dst: usize, op: RegBinOp, left: usize, right: usize },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FastRegFunction {
+    pub code: Vec<FastRegInstruction>,
+    pub reg_count: usize,
+    pub ret_reg: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct RegFunction {
     pub code: Vec<RegInstruction>,
     pub reg_count: usize,
@@ -400,6 +414,7 @@ pub struct FunctionData {
     pub uses_env: bool,
     pub code: Option<Rc<Vec<Instruction>>>,
     pub reg_code: Option<Rc<RegFunction>>,
+    pub fast_reg_code: Option<Rc<FastRegFunction>>,
     pub const_pool: Rc<Vec<Value>>,
     pub env: Rc<RefCell<Environment>>,
 }

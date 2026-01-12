@@ -1,7 +1,7 @@
 use crate::ast::{Closure, Expr, ExprKind, FloatKind, IntKind, Op};
 use crate::intern;
 use crate::intern::{SymbolId, symbol_name};
-use crate::value::{BinaryOpCache, BinaryOpCacheKind, Builtin, CallSiteCache, Environment, GlobalCache, IndexCache, Instruction, MapAccessCache, MapAccessCacheEntry, MapValue, RangeEnd, RegBinOp, RegFunction, RegInstruction, Value};
+use crate::value::{BinaryOpCache, BinaryOpCacheKind, Builtin, CallSiteCache, Environment, FastRegFunction, FastRegInstruction, GlobalCache, IndexCache, Instruction, MapAccessCache, MapAccessCacheEntry, MapValue, RangeEnd, RegBinOp, RegFunction, RegInstruction, Value};
 use crate::wasm::{WasmFunction, WasmModule};
 use rustc_hash::FxHashMap;
 use std::collections::HashSet;
@@ -2353,6 +2353,50 @@ fn compile_reg_function(expr: &Expr) -> Option<RegFunction> {
     })
 }
 
+fn compile_fast_float_expr(expr: &Expr, code: &mut Vec<FastRegInstruction>, next_reg: &mut usize) -> Option<usize> {
+    match &expr.kind {
+        ExprKind::Float { value, kind: FloatKind::F64 } => {
+            let dst = *next_reg;
+            *next_reg += 1;
+            code.push(FastRegInstruction::LoadConst { dst, value: *value });
+            Some(dst)
+        }
+        ExprKind::Identifier { slot: Some(slot), .. } => {
+            let dst = *next_reg;
+            *next_reg += 1;
+            code.push(FastRegInstruction::LoadSlot { dst, slot: *slot });
+            Some(dst)
+        }
+        ExprKind::BinaryOp { left, op, right } => {
+            let left = compile_fast_float_expr(left, code, next_reg)?;
+            let right = compile_fast_float_expr(right, code, next_reg)?;
+            let op = match op {
+                Op::Add => RegBinOp::Add,
+                Op::Subtract => RegBinOp::Sub,
+                Op::Multiply => RegBinOp::Mul,
+                Op::Divide => RegBinOp::Div,
+                _ => return None,
+            };
+            let dst = *next_reg;
+            *next_reg += 1;
+            code.push(FastRegInstruction::BinOp { dst, op, left, right });
+            Some(dst)
+        }
+        _ => None,
+    }
+}
+
+fn compile_fast_float_function(expr: &Expr) -> Option<FastRegFunction> {
+    let mut code = Vec::new();
+    let mut next_reg = 0usize;
+    let ret_reg = compile_fast_float_expr(expr, &mut code, &mut next_reg)?;
+    Some(FastRegFunction {
+        code,
+        reg_count: next_reg,
+        ret_reg,
+    })
+}
+
 fn is_inline_safe_arg(expr: &Expr) -> bool {
     match &expr.kind {
         ExprKind::Integer { .. } | ExprKind::Unsigned { .. } | ExprKind::Float { .. } | ExprKind::Boolean(_) | ExprKind::Nil => true,
@@ -2648,6 +2692,15 @@ fn eval_call_value_cached(
             if arg_vals.len() > func_data.params.len() {
                 return Err(RuntimeError { message: "Too many arguments".to_string(), line: 0 });
             }
+            if let Some(fast) = &func_data.fast_reg_code {
+                let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, func_data.declarations.len());
+                for (i, val) in arg_vals.iter().cloned().enumerate() {
+                    new_slots[i + func_data.param_offset] = val;
+                }
+                if let Some(result) = try_execute_fast_float_reg(fast, &mut new_slots) {
+                    return Ok(result);
+                }
+            }
             if let Some(reg_code) = &func_data.reg_code {
                 let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, func_data.declarations.len());
                 for (i, val) in arg_vals.into_iter().enumerate() {
@@ -2898,6 +2951,39 @@ fn execute_reg_instructions(
     })();
     interpreter.recycle_reg_buffer(regs);
     result
+}
+
+fn try_execute_fast_float_reg(fast: &FastRegFunction, slots: &mut [Value]) -> Option<Value> {
+    let mut regs = vec![0.0f64; fast.reg_count];
+    for inst in &fast.code {
+        match inst {
+            FastRegInstruction::LoadConst { dst, value } => {
+                regs[*dst] = *value;
+            }
+            FastRegInstruction::LoadSlot { dst, slot } => {
+                let val = slots.get(*slot)?.clone();
+                match val {
+                    Value::Float { value, kind: FloatKind::F64 } => {
+                        regs[*dst] = value;
+                    }
+                    _ => return None,
+                }
+            }
+            FastRegInstruction::BinOp { dst, op, left, right } => {
+                let l = regs[*left];
+                let r = regs[*right];
+                regs[*dst] = match op {
+                    RegBinOp::Add => l + r,
+                    RegBinOp::Sub => l - r,
+                    RegBinOp::Mul => l * r,
+                    RegBinOp::Div => l / r,
+                    _ => return None,
+                };
+            }
+        }
+    }
+    let value = regs.get(fast.ret_reg)?;
+    Some(make_float(*value, FloatKind::F64))
 }
 
 fn execute_instructions(
@@ -4880,6 +4966,7 @@ impl Interpreter {
                             uses_env: data.uses_env,
                             code: data.code.clone(),
                             reg_code: data.reg_code.clone(),
+                            fast_reg_code: data.fast_reg_code.clone(),
                             const_pool: data.const_pool.clone(),
                             env: new_env,
                         })));
@@ -4888,6 +4975,15 @@ impl Interpreter {
         }
 
         // FULL CALL
+        if let Some(fast) = &data.fast_reg_code {
+            let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, data.declarations.len());
+            for (i, val) in arg_vals.iter().cloned().enumerate() {
+                new_slots[i + data.param_offset] = val;
+            }
+            if let Some(result) = try_execute_fast_float_reg(fast, &mut new_slots) {
+                return Ok(result);
+            }
+        }
         if let Some(reg) = &data.reg_code {
             let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, data.declarations.len());
             for (i, val) in arg_vals.into_iter().enumerate() {
@@ -5154,6 +5250,11 @@ impl Interpreter {
             } else {
                 None
             };
+            let fast_reg_code = if reg_simple && !uses_env && self.bytecode_mode != BytecodeMode::Off {
+                compile_fast_float_function(&resolved_body).map(Rc::new)
+            } else {
+                None
+            };
             let func = Value::Function(Rc::new(crate::value::FunctionData {
                 params: params.clone(),
                 body: *resolved_body,
@@ -5163,6 +5264,7 @@ impl Interpreter {
                 uses_env,
                 code: if compiled { Some(Rc::new(code)) } else { None },
                 reg_code,
+                fast_reg_code,
                 const_pool: Rc::new(const_pool),
                 env: func_env,
             }));
@@ -5198,6 +5300,11 @@ impl Interpreter {
                 } else {
                     None
                 };
+                let fast_reg_code = if reg_simple && !uses_env && self.bytecode_mode != BytecodeMode::Off {
+                    compile_fast_float_function(&resolved_body).map(Rc::new)
+                } else {
+                    None
+                };
                 Ok(Value::Function(Rc::new(crate::value::FunctionData {
                     params: params.clone(),
                     body: *resolved_body,
@@ -5207,6 +5314,7 @@ impl Interpreter {
                     uses_env,
                     code: if compiled { Some(Rc::new(code)) } else { None },
                     reg_code,
+                    fast_reg_code,
                     const_pool: Rc::new(const_pool),
                     env: func_env,
                 })))

@@ -1103,6 +1103,178 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
     true
 }
 
+pub fn compile_for_dump(expr: &Expr) -> Option<(Vec<Instruction>, Vec<Value>)> {
+    let mut code = Vec::new();
+    let mut consts = Vec::new();
+    if compile_expr(expr, &mut code, &mut consts, true) {
+        Some((code, consts))
+    } else {
+        None
+    }
+}
+
+fn collect_function_exprs(expr: &Expr, out: &mut Vec<(Option<SymbolId>, Vec<(SymbolId, bool)>, Expr, Option<Rc<Vec<Rc<String>>>>, usize)>) {
+    match &expr.kind {
+        ExprKind::FunctionDef { name, params, body, slots } => {
+            out.push((Some(*name), params.clone(), *body.clone(), slots.clone(), expr.line));
+            collect_function_exprs(body, out);
+        }
+        ExprKind::AnonymousFunction { params, body, slots } => {
+            out.push((None, params.clone(), *body.clone(), slots.clone(), expr.line));
+            collect_function_exprs(body, out);
+        }
+        ExprKind::Block(stmts) => {
+            for stmt in stmts {
+                collect_function_exprs(stmt, out);
+            }
+        }
+        ExprKind::If { condition, then_branch, else_branch } => {
+            collect_function_exprs(condition, out);
+            collect_function_exprs(then_branch, out);
+            if let Some(else_expr) = else_branch {
+                collect_function_exprs(else_expr, out);
+            }
+        }
+        ExprKind::While { condition, body } => {
+            collect_function_exprs(condition, out);
+            collect_function_exprs(body, out);
+        }
+        ExprKind::For { iterable, body, .. } => {
+            collect_function_exprs(iterable, out);
+            collect_function_exprs(body, out);
+        }
+        ExprKind::Loop { count, body, .. } => {
+            collect_function_exprs(count, out);
+            collect_function_exprs(body, out);
+        }
+        ExprKind::Call { function, args, block, .. } => {
+            collect_function_exprs(function, out);
+            for arg in args {
+                collect_function_exprs(arg, out);
+            }
+            if let Some(c) = block {
+                collect_function_exprs(&c.body, out);
+            }
+        }
+        ExprKind::Array(elements) => {
+            for e in elements {
+                collect_function_exprs(e, out);
+            }
+        }
+        ExprKind::ArrayGenerator { generator, size } => {
+            collect_function_exprs(generator, out);
+            collect_function_exprs(size, out);
+        }
+        ExprKind::Map(entries) => {
+            for (k, v) in entries {
+                collect_function_exprs(k, out);
+                collect_function_exprs(v, out);
+            }
+        }
+        ExprKind::Index { target, index } => {
+            collect_function_exprs(target, out);
+            collect_function_exprs(index, out);
+        }
+        ExprKind::IndexAssignment { target, index, value } => {
+            collect_function_exprs(target, out);
+            collect_function_exprs(index, out);
+            collect_function_exprs(value, out);
+        }
+        ExprKind::FormatString(parts) => {
+            for part in parts {
+                if let crate::ast::FormatPart::Expr { expr, .. } = part {
+                    collect_function_exprs(expr, out);
+                }
+            }
+        }
+        ExprKind::Yield(args) => {
+            for arg in args {
+                collect_function_exprs(arg, out);
+            }
+        }
+        ExprKind::Assignment { value, .. } => {
+            collect_function_exprs(value, out);
+        }
+        ExprKind::BinaryOp { left, right, .. } => {
+            collect_function_exprs(left, out);
+            collect_function_exprs(right, out);
+        }
+        ExprKind::Reference(_) | ExprKind::Identifier { .. } | ExprKind::Integer { .. } | ExprKind::Unsigned { .. }
+        | ExprKind::Float { .. } | ExprKind::String(_) | ExprKind::Boolean(_) | ExprKind::Nil | ExprKind::Shell(_)
+        | ExprKind::Use(_) | ExprKind::Load(_) => {}
+    }
+}
+
+pub fn dump_bytecode(ast: &Expr) -> String {
+    let mut out = String::new();
+    out.push_str("AST:\n");
+    out.push_str(&format!("{:#?}\n", ast));
+
+    out.push_str("Top-level bytecode:\n");
+    if let Some((code, consts)) = compile_for_dump(ast) {
+        out.push_str("  Constants:\n");
+        for (idx, value) in consts.iter().enumerate() {
+            out.push_str(&format!("  [{idx}] {}\n", value.inspect()));
+        }
+        out.push_str("  Bytecode:\n");
+        for (idx, inst) in code.iter().enumerate() {
+            out.push_str(&format!("  {idx:04} {:?}\n", inst));
+        }
+    } else {
+        out.push_str("  <unavailable>\n");
+    }
+
+    let mut functions = Vec::new();
+    collect_function_exprs(ast, &mut functions);
+    if !functions.is_empty() {
+        out.push_str("Functions:\n");
+    }
+
+    for (name, params, body, slots, line) in functions {
+        let label = match name {
+            Some(sym) => format!("{}", symbol_name(sym).as_str()),
+            None => format!("<anon@line {}>", line),
+        };
+        out.push_str(&format!("- {label} (line {line})\n"));
+
+        let (resolved_body, _slot_names) = if let Some(slot_names) = slots {
+            (body, slot_names)
+        } else {
+            let mut locals = HashSet::new();
+            collect_declarations(&body, &mut locals);
+            let (slot_map, slot_names) = build_slot_map(&params, locals);
+            let mut resolved = body;
+            resolve(&mut resolved, &slot_map);
+            (resolved, Rc::new(slot_names))
+        };
+
+        let simple = is_simple(&resolved_body);
+        let uses_env = uses_environment(&resolved_body);
+        out.push_str(&format!("  simple: {}, uses_env: {}\n", simple, uses_env));
+
+        if simple {
+            let mut code = Vec::new();
+            let mut consts = Vec::new();
+            if compile_expr(&resolved_body, &mut code, &mut consts, true) {
+                out.push_str("  Constants:\n");
+                for (idx, value) in consts.iter().enumerate() {
+                    out.push_str(&format!("  [{idx}] {}\n", value.inspect()));
+                }
+                out.push_str("  Bytecode:\n");
+                for (idx, inst) in code.iter().enumerate() {
+                    out.push_str(&format!("  {idx:04} {:?}\n", inst));
+                }
+            } else {
+                out.push_str("  <compile failed>\n");
+            }
+        } else {
+            out.push_str("  <not compiled>\n");
+        }
+    }
+
+    out
+}
+
 fn substitute(expr: &Expr, args: &[Expr]) -> Expr {
     match &expr.kind {
         ExprKind::Identifier { slot: Some(s), .. } => {

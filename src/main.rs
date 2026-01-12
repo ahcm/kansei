@@ -22,16 +22,35 @@ use std::cell::RefCell;
 fn main() -> rustyline::Result<()>
 {
     let args: Vec<String> = env::args().collect();
+    let mut dump_ast = false;
+    let mut dump_bytecode = false;
+    let mut script_path: Option<String> = None;
+    let mut script_args: Vec<String> = Vec::new();
+
+    let mut idx = 1;
+    while idx < args.len() {
+        match args[idx].as_str() {
+            "--dump-ast" => dump_ast = true,
+            "--dump-bytecode" => dump_bytecode = true,
+            arg => {
+                if script_path.is_none() {
+                    script_path = Some(arg.to_string());
+                } else {
+                    script_args.push(arg.to_string());
+                }
+            }
+        }
+        idx += 1;
+    }
+
+    if script_path.is_none() && (dump_ast || dump_bytecode) {
+        eprintln!("Dump flags require a file path.");
+        return Ok(());
+    }
 
     let mut interpreter = eval::Interpreter::new();
 
     // Prepare program.args
-    let script_args = if args.len() > 2 {
-        args[2..].to_vec()
-    } else {
-        Vec::new()
-    };
-
     let args_val = value::Value::Array(
         Rc::new(RefCell::new(script_args.iter()
             .map(|s| value::Value::String(intern::intern_owned(s.clone())))
@@ -54,9 +73,9 @@ fn main() -> rustyline::Result<()>
         value::Value::Map(Rc::new(RefCell::new(value::MapValue::new(program_map)))),
     );
 
-    if args.len() > 1
+    if let Some(path) = script_path
     {
-        run_file(&args[1], interpreter);
+        run_file(&path, interpreter, dump_ast, dump_bytecode);
         Ok(())
     }
     else
@@ -65,7 +84,7 @@ fn main() -> rustyline::Result<()>
     }
 }
 
-fn run_file(path: &str, mut interpreter: eval::Interpreter)
+fn run_file(path: &str, mut interpreter: eval::Interpreter, dump_ast: bool, dump_bytecode: bool)
 {
     let source = match fs::read_to_string(path)
     {
@@ -90,6 +109,14 @@ fn run_file(path: &str, mut interpreter: eval::Interpreter)
         {
             let mut ast = ast;
             eval::resolve_slots(&mut ast);
+            if dump_bytecode {
+                println!("{}", eval::dump_bytecode(&ast));
+                return;
+            }
+            if dump_ast {
+                println!("{:#?}", ast);
+                return;
+            }
             // 2. Evaluate
             let eval_result =
                 panic::catch_unwind(panic::AssertUnwindSafe(|| interpreter.eval(&ast, &mut [])));

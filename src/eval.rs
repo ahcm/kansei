@@ -2076,11 +2076,26 @@ fn execute_instructions(
                         }
                     } else {
                         cache_mut.func_ptr = Some(func_ptr);
+                        cache_mut.native_ptr = None;
+                        cache_mut.misses += 1;
+                    }
+                } else if let Value::NativeFunction(func) = &func_val {
+                    let func_ptr = *func as usize;
+                    let mut cache_mut = cache.borrow_mut();
+                    if cache_mut.native_ptr == Some(func_ptr) {
+                        cache_mut.hits += 1;
+                        let result = func(&args).map_err(|message| RuntimeError { message, line: 0 })?;
+                        stack.push(result);
+                        continue;
+                    } else {
+                        cache_mut.native_ptr = Some(func_ptr);
+                        cache_mut.func_ptr = None;
                         cache_mut.misses += 1;
                     }
                 } else {
                     let mut cache_mut = cache.borrow_mut();
                     cache_mut.func_ptr = None;
+                    cache_mut.native_ptr = None;
                     cache_mut.misses += 1;
                 }
                 let result = interpreter.call_value(func_val, args, 0, None)?;

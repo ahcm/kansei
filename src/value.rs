@@ -243,6 +243,7 @@ pub struct IndexCache {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CallSiteCache {
     pub func_ptr: Option<usize>,
+    pub native_ptr: Option<usize>,
     pub hits: u64,
     pub misses: u64,
 }
@@ -251,6 +252,7 @@ impl Default for CallSiteCache {
     fn default() -> Self {
         Self {
             func_ptr: None,
+            native_ptr: None,
             hits: 0,
             misses: 0,
         }

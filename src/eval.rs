@@ -1164,6 +1164,25 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
         }
         ExprKind::Call { function, args, block, .. } => {
             if block.is_some() {
+                if let ExprKind::Index { target, index } = &function.kind {
+                    if let ExprKind::String(name) = &index.kind {
+                        if !compile_expr(target, code, consts, true) { return false; }
+                        for arg in args {
+                            if !compile_expr(arg, code, consts, true) { return false; }
+                        }
+                        code.push(Instruction::CallMethodWithBlockCached(
+                            name.clone(),
+                            Rc::new(RefCell::new(MapAccessCache::default())),
+                            Rc::new(RefCell::new(CallSiteCache::default())),
+                            Rc::new(block.as_ref().unwrap().clone()),
+                            args.len(),
+                        ));
+                        if !want_value {
+                            code.push(Instruction::Pop);
+                        }
+                        return true;
+                    }
+                }
                 if !compile_expr(function, code, consts, true) { return false; }
                 for arg in args {
                     if !compile_expr(arg, code, consts, true) { return false; }
@@ -1848,6 +1867,14 @@ pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String {
                         map_hits += cache.hits;
                         map_misses += cache.misses;
                     }
+                    Instruction::CallMethodWithBlockCached(_, map_cache, call_cache, _, _) => {
+                        let cache = call_cache.borrow();
+                        call_hits += cache.hits;
+                        call_misses += cache.misses;
+                        let cache = map_cache.borrow();
+                        map_hits += cache.hits;
+                        map_misses += cache.misses;
+                    }
                     Instruction::LoadGlobalCached(_, cache) => {
                         let cache = cache.borrow();
                         global_hits += cache.hits;
@@ -1977,6 +2004,14 @@ pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String {
                             global_misses += cache.misses;
                         }
                         Instruction::CallMethodCached(_, map_cache, call_cache, _) => {
+                            let cache = call_cache.borrow();
+                            call_hits += cache.hits;
+                            call_misses += cache.misses;
+                            let cache = map_cache.borrow();
+                            map_hits += cache.hits;
+                            map_misses += cache.misses;
+                        }
+                        Instruction::CallMethodWithBlockCached(_, map_cache, call_cache, _, _) => {
                             let cache = call_cache.borrow();
                             call_hits += cache.hits;
                             call_misses += cache.misses;
@@ -3328,6 +3363,39 @@ fn execute_instructions(
                     _ => return Err(RuntimeError { message: "Index operator not supported on this type".to_string(), line: 0 }),
                 };
                 let result = eval_call_value_cached(interpreter, func_val, args, call_cache)?;
+                stack.push(result);
+            }
+            Instruction::CallMethodWithBlockCached(name, map_cache, call_cache, block, argc) => {
+                if *argc > stack.len() {
+                    return Err(RuntimeError { message: "Invalid argument count".to_string(), line: 0 });
+                }
+                let mut args = smallvec::SmallVec::<[Value; 8]>::with_capacity(*argc);
+                for _ in 0..*argc {
+                    args.push(stack.pop().unwrap());
+                }
+                args.reverse();
+                let target_val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing target for method call".to_string(),
+                    line: 0,
+                })?;
+                let func_val = match target_val {
+                    Value::Map(map) => {
+                        if name.as_str() == "keys" {
+                            map_keys_array(&map.borrow())
+                        } else if name.as_str() == "values" {
+                            map_values_array(&map.borrow())
+                        } else {
+                            let map_ptr = Rc::as_ptr(&map) as usize;
+                            let map_ref = map.borrow();
+                            eval_map_index_cached(&map_ref, map_ptr, name, map_cache)
+                        }
+                    }
+                    Value::Array(_) | Value::F64Array(_) => {
+                        return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
+                    }
+                    _ => return Err(RuntimeError { message: "Index operator not supported on this type".to_string(), line: 0 }),
+                };
+                let result = eval_call_value_cached_with_block(interpreter, func_val, args, call_cache, block)?;
                 stack.push(result);
             }
             Instruction::ForEach { var_slot, body } => {

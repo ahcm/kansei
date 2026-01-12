@@ -200,6 +200,7 @@ pub enum Instruction {
     CallValueCached(Rc<RefCell<CallSiteCache>>, usize),
     CallGlobalCached(SymbolId, Rc<RefCell<GlobalCache>>, Rc<RefCell<CallSiteCache>>, usize),
     CallMethodCached(Rc<String>, Rc<RefCell<MapAccessCache>>, Rc<RefCell<CallSiteCache>>, usize),
+    CallMethodWithBlockCached(Rc<String>, Rc<RefCell<MapAccessCache>>, Rc<RefCell<CallSiteCache>>, Rc<Closure>, usize),
     ArrayGen,
     Dup,
     F64Axpy { dst_slot: usize, dst_index_slot: usize, src_slot: usize, src_index_slot: usize },

@@ -5604,13 +5604,17 @@ impl Interpreter {
                             let target_val = self.eval(target, slots)?;
                             let index_val = self.eval(index, slots)?;
                             if let Value::String(name) = index_val {
-                                if name.as_str() == "each" || name.as_str() == "apply" {
-                                    let collect_results = name.as_str() == "each";
+                                if matches!(name.as_str(), "each" | "apply" | "map" | "filter") {
+                                    let method = name.as_str();
+                                    let collect_results = method == "each" || method == "map";
+                                    let is_filter = method == "filter";
                                     let saved_env = self.env.clone();
                                     match target_val {
                                         Value::Array(arr) => {
                                             let len = arr.borrow().len();
                                             let mut results = Vec::new();
+                                            let mut f64_vals = Vec::new();
+                                            let mut all_f64 = true;
                                             for idx in 0..len {
                                                 let val = arr.borrow()[idx].clone();
                                                 let result = self.call_block_with_args(
@@ -5619,12 +5623,41 @@ impl Interpreter {
                                                     std::slice::from_ref(&val),
                                                     line,
                                                 )?;
-                                                if collect_results {
-                                                    results.push(result);
+                                                if is_filter {
+                                                    let is_truthy = !matches!(result, Value::Boolean(false) | Value::Nil);
+                                                    if is_truthy {
+                                                        if all_f64 {
+                                                            if let Some(num) = int_value_as_f64(&val) {
+                                                                f64_vals.push(num);
+                                                            } else {
+                                                                all_f64 = false;
+                                                                results.extend(f64_vals.drain(..).map(|v| make_float(v, FloatKind::F64)));
+                                                                results.push(val.clone());
+                                                            }
+                                                        } else {
+                                                            results.push(val.clone());
+                                                        }
+                                                    }
+                                                } else if collect_results {
+                                                    if all_f64 {
+                                                        if let Some(num) = int_value_as_f64(&result) {
+                                                            f64_vals.push(num);
+                                                        } else {
+                                                            all_f64 = false;
+                                                            results.extend(f64_vals.drain(..).map(|v| make_float(v, FloatKind::F64)));
+                                                            results.push(result);
+                                                        }
+                                                    } else {
+                                                        results.push(result);
+                                                    }
                                                 }
                                             }
-                                            return if collect_results {
-                                                Ok(Value::Array(Rc::new(RefCell::new(results))))
+                                            return if collect_results || is_filter {
+                                                if all_f64 {
+                                                    Ok(Value::F64Array(Rc::new(RefCell::new(f64_vals))))
+                                                } else {
+                                                    Ok(Value::Array(Rc::new(RefCell::new(results))))
+                                                }
                                             } else {
                                                 Ok(Value::Array(arr))
                                             };
@@ -5632,6 +5665,8 @@ impl Interpreter {
                                         Value::F64Array(arr) => {
                                             let len = arr.borrow().len();
                                             let mut results = Vec::new();
+                                            let mut f64_vals = Vec::new();
+                                            let mut all_f64 = true;
                                             for idx in 0..len {
                                                 let arg = make_float(arr.borrow()[idx], FloatKind::F64);
                                                 let result = self.call_block_with_args(
@@ -5640,12 +5675,34 @@ impl Interpreter {
                                                     std::slice::from_ref(&arg),
                                                     line,
                                                 )?;
-                                                if collect_results {
-                                                    results.push(result);
+                                                if is_filter {
+                                                    let is_truthy = !matches!(result, Value::Boolean(false) | Value::Nil);
+                                                    if is_truthy {
+                                                        f64_vals.push(match arg {
+                                                            Value::Float { value, .. } => value,
+                                                            _ => 0.0,
+                                                        });
+                                                    }
+                                                } else if collect_results {
+                                                    if all_f64 {
+                                                        if let Some(num) = int_value_as_f64(&result) {
+                                                            f64_vals.push(num);
+                                                        } else {
+                                                            all_f64 = false;
+                                                            results.extend(f64_vals.drain(..).map(|v| make_float(v, FloatKind::F64)));
+                                                            results.push(result);
+                                                        }
+                                                    } else {
+                                                        results.push(result);
+                                                    }
                                                 }
                                             }
-                                            return if collect_results {
-                                                Ok(Value::Array(Rc::new(RefCell::new(results))))
+                                            return if collect_results || is_filter {
+                                                if is_filter || all_f64 {
+                                                    Ok(Value::F64Array(Rc::new(RefCell::new(f64_vals))))
+                                                } else {
+                                                    Ok(Value::Array(Rc::new(RefCell::new(results))))
+                                                }
                                             } else {
                                                 Ok(Value::F64Array(arr))
                                             };

@@ -1786,6 +1786,97 @@ fn collect_function_exprs(expr: &Expr, out: &mut Vec<(Option<SymbolId>, Vec<(Sym
     }
 }
 
+fn collect_cache_metrics(code: &[Instruction]) -> (u64, u64, u64, u64, u64, u64, u64, u64, u64, u64) {
+    let mut bin_hits = 0u64;
+    let mut bin_misses = 0u64;
+    let mut idx_hits = 0u64;
+    let mut idx_misses = 0u64;
+    let mut map_hits = 0u64;
+    let mut map_misses = 0u64;
+    let mut call_hits = 0u64;
+    let mut call_misses = 0u64;
+    let mut global_hits = 0u64;
+    let mut global_misses = 0u64;
+
+    for inst in code {
+        match inst {
+            Instruction::AddCached(cache)
+            | Instruction::SubCached(cache)
+            | Instruction::MulCached(cache)
+            | Instruction::DivCached(cache) => {
+                let cache = cache.borrow();
+                bin_hits += cache.hits;
+                bin_misses += cache.misses;
+            }
+            Instruction::IndexCached(cache)
+            | Instruction::F64IndexCached(cache)
+            | Instruction::F64IndexAssignCached(cache) => {
+                let cache = cache.borrow();
+                idx_hits += cache.hits;
+                idx_misses += cache.misses;
+            }
+            Instruction::MapIndexCached(cache) => {
+                let cache = cache.borrow();
+                map_hits += cache.hits;
+                map_misses += cache.misses;
+            }
+            Instruction::CallValueCached(cache, _) => {
+                let cache = cache.borrow();
+                call_hits += cache.hits;
+                call_misses += cache.misses;
+            }
+            Instruction::CallValueWithBlockCached(cache, _, _) => {
+                let cache = cache.borrow();
+                call_hits += cache.hits;
+                call_misses += cache.misses;
+            }
+            Instruction::CallGlobalCached(_, global_cache, call_cache, _) => {
+                let cache = call_cache.borrow();
+                call_hits += cache.hits;
+                call_misses += cache.misses;
+                let cache = global_cache.borrow();
+                global_hits += cache.hits;
+                global_misses += cache.misses;
+            }
+            Instruction::CallMethodCached(_, map_cache, call_cache, _) => {
+                let cache = call_cache.borrow();
+                call_hits += cache.hits;
+                call_misses += cache.misses;
+                let cache = map_cache.borrow();
+                map_hits += cache.hits;
+                map_misses += cache.misses;
+            }
+            Instruction::CallMethodWithBlockCached(_, map_cache, call_cache, _, _) => {
+                let cache = call_cache.borrow();
+                call_hits += cache.hits;
+                call_misses += cache.misses;
+                let cache = map_cache.borrow();
+                map_hits += cache.hits;
+                map_misses += cache.misses;
+            }
+            Instruction::LoadGlobalCached(_, cache) => {
+                let cache = cache.borrow();
+                global_hits += cache.hits;
+                global_misses += cache.misses;
+            }
+            _ => {}
+        }
+    }
+
+    (
+        bin_hits,
+        bin_misses,
+        idx_hits,
+        idx_misses,
+        map_hits,
+        map_misses,
+        call_hits,
+        call_misses,
+        global_hits,
+        global_misses,
+    )
+}
+
 pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String {
     let mut out = String::new();
     out.push_str("AST:\n");
@@ -1815,81 +1906,11 @@ pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String {
                     out.push_str(&format!("  [{idx}] {}\n", value.inspect()));
                 }
             out.push_str("  Bytecode:\n");
-            let mut bin_hits = 0u64;
-            let mut bin_misses = 0u64;
-            let mut idx_hits = 0u64;
-            let mut idx_misses = 0u64;
-            let mut map_hits = 0u64;
-            let mut map_misses = 0u64;
-            let mut call_hits = 0u64;
-            let mut call_misses = 0u64;
-            let mut global_hits = 0u64;
-            let mut global_misses = 0u64;
             for (idx, inst) in code.iter().enumerate() {
-                match inst {
-                    Instruction::AddCached(cache)
-                    | Instruction::SubCached(cache)
-                    | Instruction::MulCached(cache)
-                    | Instruction::DivCached(cache) => {
-                        let cache = cache.borrow();
-                        bin_hits += cache.hits;
-                        bin_misses += cache.misses;
-                    }
-                    Instruction::IndexCached(cache)
-                    | Instruction::F64IndexCached(cache)
-                    | Instruction::F64IndexAssignCached(cache) => {
-                        let cache = cache.borrow();
-                        idx_hits += cache.hits;
-                        idx_misses += cache.misses;
-                    }
-                    Instruction::MapIndexCached(cache) => {
-                        let cache = cache.borrow();
-                        map_hits += cache.hits;
-                        map_misses += cache.misses;
-                    }
-                    Instruction::CallValueCached(cache, _) => {
-                        let cache = cache.borrow();
-                        call_hits += cache.hits;
-                        call_misses += cache.misses;
-                    }
-                    Instruction::CallValueWithBlockCached(cache, _, _) => {
-                        let cache = cache.borrow();
-                        call_hits += cache.hits;
-                        call_misses += cache.misses;
-                    }
-                    Instruction::CallGlobalCached(_, global_cache, call_cache, _) => {
-                        let cache = call_cache.borrow();
-                        call_hits += cache.hits;
-                        call_misses += cache.misses;
-                        let cache = global_cache.borrow();
-                        global_hits += cache.hits;
-                        global_misses += cache.misses;
-                    }
-                    Instruction::CallMethodCached(_, map_cache, call_cache, _) => {
-                        let cache = call_cache.borrow();
-                        call_hits += cache.hits;
-                        call_misses += cache.misses;
-                        let cache = map_cache.borrow();
-                        map_hits += cache.hits;
-                        map_misses += cache.misses;
-                    }
-                    Instruction::CallMethodWithBlockCached(_, map_cache, call_cache, _, _) => {
-                        let cache = call_cache.borrow();
-                        call_hits += cache.hits;
-                        call_misses += cache.misses;
-                        let cache = map_cache.borrow();
-                        map_hits += cache.hits;
-                        map_misses += cache.misses;
-                    }
-                    Instruction::LoadGlobalCached(_, cache) => {
-                        let cache = cache.borrow();
-                        global_hits += cache.hits;
-                        global_misses += cache.misses;
-                    }
-                    _ => {}
-                }
                 out.push_str(&format!("  {idx:04} {:?}\n", inst));
             }
+            let (bin_hits, bin_misses, idx_hits, idx_misses, map_hits, map_misses, call_hits, call_misses, global_hits, global_misses) =
+                collect_cache_metrics(&code);
             out.push_str(&format!(
                 "  CacheMetrics bin(hits={}, misses={}) index(hits={}, misses={}) map(hits={}, misses={}) call(hits={}, misses={}) global(hits={}, misses={})\n",
                 bin_hits,
@@ -1958,82 +1979,11 @@ pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String {
                     out.push_str(&format!("  [{idx}] {}\n", value.inspect()));
                 }
                 out.push_str("  Bytecode:\n");
-                let mut bin_hits = 0u64;
-                let mut bin_misses = 0u64;
-                let mut idx_hits = 0u64;
-                let mut idx_misses = 0u64;
-                let mut map_hits = 0u64;
-                let mut map_misses = 0u64;
-                let mut call_hits = 0u64;
-                let mut call_misses = 0u64;
-                let mut global_hits = 0u64;
-                let mut global_misses = 0u64;
-
                 for (idx, inst) in code.iter().enumerate() {
-                    match inst {
-                        Instruction::AddCached(cache)
-                        | Instruction::SubCached(cache)
-                        | Instruction::MulCached(cache)
-                        | Instruction::DivCached(cache) => {
-                            let cache = cache.borrow();
-                            bin_hits += cache.hits;
-                            bin_misses += cache.misses;
-                        }
-                        Instruction::IndexCached(cache)
-                        | Instruction::F64IndexCached(cache)
-                        | Instruction::F64IndexAssignCached(cache) => {
-                            let cache = cache.borrow();
-                            idx_hits += cache.hits;
-                            idx_misses += cache.misses;
-                        }
-                        Instruction::MapIndexCached(cache) => {
-                            let cache = cache.borrow();
-                            map_hits += cache.hits;
-                            map_misses += cache.misses;
-                        }
-                        Instruction::CallValueCached(cache, _) => {
-                            let cache = cache.borrow();
-                            call_hits += cache.hits;
-                            call_misses += cache.misses;
-                        }
-                        Instruction::CallValueWithBlockCached(cache, _, _) => {
-                            let cache = cache.borrow();
-                            call_hits += cache.hits;
-                            call_misses += cache.misses;
-                        }
-                        Instruction::CallGlobalCached(_, global_cache, call_cache, _) => {
-                            let cache = call_cache.borrow();
-                            call_hits += cache.hits;
-                            call_misses += cache.misses;
-                            let cache = global_cache.borrow();
-                            global_hits += cache.hits;
-                            global_misses += cache.misses;
-                        }
-                        Instruction::CallMethodCached(_, map_cache, call_cache, _) => {
-                            let cache = call_cache.borrow();
-                            call_hits += cache.hits;
-                            call_misses += cache.misses;
-                            let cache = map_cache.borrow();
-                            map_hits += cache.hits;
-                            map_misses += cache.misses;
-                        }
-                        Instruction::CallMethodWithBlockCached(_, map_cache, call_cache, _, _) => {
-                            let cache = call_cache.borrow();
-                            call_hits += cache.hits;
-                            call_misses += cache.misses;
-                            let cache = map_cache.borrow();
-                            map_hits += cache.hits;
-                            map_misses += cache.misses;
-                        }
-                        Instruction::LoadGlobalCached(_, cache) => {
-                            let cache = cache.borrow();
-                            global_hits += cache.hits;
-                            global_misses += cache.misses;
-                        }
-                        _ => {}
-                    }
                     out.push_str(&format!("  {idx:04} {:?}\n", inst));
                 }
+                let (bin_hits, bin_misses, idx_hits, idx_misses, map_hits, map_misses, call_hits, call_misses, global_hits, global_misses) =
+                    collect_cache_metrics(&code);
                 out.push_str(&format!(
                     "  CacheMetrics bin(hits={}, misses={}) index(hits={}, misses={}) map(hits={}, misses={}) call(hits={}, misses={}) global(hits={}, misses={})\n",
                     bin_hits,

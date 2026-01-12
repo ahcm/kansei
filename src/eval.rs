@@ -2364,184 +2364,188 @@ fn execute_reg_instructions(
     reg: &RegFunction,
     slots: &mut [Value],
 ) -> EvalResult {
-    let mut regs = vec![Value::Uninitialized; reg.reg_count];
-    for inst in &reg.code {
-        match inst {
-            RegInstruction::LoadConst { dst, idx } => {
-                let val = reg.const_pool.get(*idx).cloned().unwrap_or(Value::Nil);
-                regs[*dst] = val;
-            }
-            RegInstruction::LoadSlot { dst, slot } => {
-                regs[*dst] = slots[*slot].clone();
-            }
-            RegInstruction::StoreSlot { slot, src } => {
-                slots[*slot] = regs[*src].clone();
-            }
-            RegInstruction::CloneValue { dst, src } => {
-                regs[*dst] = clone_value(&regs[*src]);
-            }
-            RegInstruction::BinOpCached { dst, op, left, right, cache } => {
-                let l = regs[*left].clone();
-                let r = regs[*right].clone();
-                regs[*dst] = eval_cached_binop(reg_binop_kind(*op), cache, l, r)?;
-            }
-            RegInstruction::F64IndexCached { dst, target, index, cache } => {
-                let target_val = regs[*target].clone();
-                let index_val = regs[*index].clone();
-                let result = match target_val {
-                    Value::F64Array(arr) => {
-                        let idx = match index_val {
-                            Value::Integer { value, .. } if value >= 0 => value as usize,
-                            Value::Unsigned { value, .. } => value as usize,
-                            _ => {
-                                return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
-                            }
-                        };
-                        let arr_ptr = Rc::as_ptr(&arr) as usize;
-                        let mut cache_mut = cache.borrow_mut();
-                        if cache_mut.array_ptr == Some(arr_ptr) && cache_mut.index_usize == Some(idx) {
-                            cache_mut.hits += 1;
-                        } else {
-                            cache_mut.array_ptr = Some(arr_ptr);
-                            cache_mut.index_usize = Some(idx);
-                            cache_mut.misses += 1;
-                        }
-                        let vec = arr.borrow();
-                        if idx < vec.len() { make_float(vec[idx], FloatKind::F64) } else { Value::Nil }
-                    }
-                    other => eval_index_cached_value(index_val, other, cache)?,
-                };
-                regs[*dst] = result;
-            }
-            RegInstruction::F64IndexAssignCached { dst, target, index, value, cache } => {
-                let target_val = regs[*target].clone();
-                let index_val = regs[*index].clone();
-                let value_val = regs[*value].clone();
-                let result = match target_val {
-                    Value::F64Array(arr) => {
-                        let idx = match index_val {
-                            Value::Integer { value, .. } if value >= 0 => value as usize,
-                            Value::Unsigned { value, .. } => value as usize,
-                            _ => {
-                                let fallback = Value::F64Array(arr.clone());
-                                return eval_index_assign_value(fallback, index_val, value_val);
-                            }
-                        };
-                        let num = match &value_val {
-                            Value::Float { value, .. } => *value,
-                            Value::Integer { value, .. } => *value as f64,
-                            Value::Unsigned { value, .. } => *value as f64,
-                            other => {
-                                let fallback = Value::F64Array(arr.clone());
-                                return eval_index_assign_value(fallback, index_val, other.clone());
-                            }
-                        };
-                        let arr_ptr = Rc::as_ptr(&arr) as usize;
-                        let mut cache_mut = cache.borrow_mut();
-                        if cache_mut.array_ptr == Some(arr_ptr) && cache_mut.index_usize == Some(idx) {
-                            cache_mut.hits += 1;
-                        } else {
-                            cache_mut.array_ptr = Some(arr_ptr);
-                            cache_mut.index_usize = Some(idx);
-                            cache_mut.misses += 1;
-                        }
-                        let mut vec = arr.borrow_mut();
-                        if idx < vec.len() {
-                            vec[idx] = num;
-                            value_val
-                        } else {
-                            return Err(RuntimeError { message: "Array index out of bounds".to_string(), line: 0 });
-                        }
-                    }
-                    other => eval_index_assign_value(other, index_val, value_val)?,
-                };
-                regs[*dst] = result;
-            }
-            RegInstruction::CallValueCached { dst, func, args, cache } => {
-                let func_val = regs[*func].clone();
-                let mut arg_vals: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
-                for reg_idx in args {
-                    arg_vals.push(regs[*reg_idx].clone());
+    let mut regs = interpreter.get_reg_buffer(reg.reg_count);
+    let result = (|| {
+        for inst in &reg.code {
+            match inst {
+                RegInstruction::LoadConst { dst, idx } => {
+                    let val = reg.const_pool.get(*idx).cloned().unwrap_or(Value::Nil);
+                    regs[*dst] = val;
                 }
-                if let Value::Function(func_data) = &func_val {
-                    let func_ptr = Rc::as_ptr(func_data) as usize;
-                    let mut cache_mut = cache.borrow_mut();
-                    if cache_mut.func_ptr == Some(func_ptr) {
-                        cache_mut.hits += 1;
-                        if arg_vals.len() < func_data.params.len() {
-                            return Err(RuntimeError { message: "Too few arguments".to_string(), line: 0 });
-                        }
-                        if arg_vals.len() > func_data.params.len() {
-                            return Err(RuntimeError { message: "Too many arguments".to_string(), line: 0 });
-                        }
-                        if let Some(reg_code) = &func_data.reg_code {
-                            let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, func_data.declarations.len());
-                            for (i, val) in arg_vals.into_iter().enumerate() {
-                                new_slots[i + func_data.param_offset] = val;
+                RegInstruction::LoadSlot { dst, slot } => {
+                    regs[*dst] = slots[*slot].clone();
+                }
+                RegInstruction::StoreSlot { slot, src } => {
+                    slots[*slot] = regs[*src].clone();
+                }
+                RegInstruction::CloneValue { dst, src } => {
+                    regs[*dst] = clone_value(&regs[*src]);
+                }
+                RegInstruction::BinOpCached { dst, op, left, right, cache } => {
+                    let l = regs[*left].clone();
+                    let r = regs[*right].clone();
+                    regs[*dst] = eval_cached_binop(reg_binop_kind(*op), cache, l, r)?;
+                }
+                RegInstruction::F64IndexCached { dst, target, index, cache } => {
+                    let target_val = regs[*target].clone();
+                    let index_val = regs[*index].clone();
+                    let result = match target_val {
+                        Value::F64Array(arr) => {
+                            let idx = match index_val {
+                                Value::Integer { value, .. } if value >= 0 => value as usize,
+                                Value::Unsigned { value, .. } => value as usize,
+                                _ => {
+                                    return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
+                                }
+                            };
+                            let arr_ptr = Rc::as_ptr(&arr) as usize;
+                            let mut cache_mut = cache.borrow_mut();
+                            if cache_mut.array_ptr == Some(arr_ptr) && cache_mut.index_usize == Some(idx) {
+                                cache_mut.hits += 1;
+                            } else {
+                                cache_mut.array_ptr = Some(arr_ptr);
+                                cache_mut.index_usize = Some(idx);
+                                cache_mut.misses += 1;
                             }
-                            regs[*dst] = execute_reg_instructions(interpreter, reg_code, &mut new_slots)?;
-                            continue;
+                            let vec = arr.borrow();
+                            if idx < vec.len() { make_float(vec[idx], FloatKind::F64) } else { Value::Nil }
                         }
-                        if let Some(code) = &func_data.code {
-                            let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, func_data.declarations.len());
-                            for (i, val) in arg_vals.into_iter().enumerate() {
-                                new_slots[i + func_data.param_offset] = val;
+                        other => eval_index_cached_value(index_val, other, cache)?,
+                    };
+                    regs[*dst] = result;
+                }
+                RegInstruction::F64IndexAssignCached { dst, target, index, value, cache } => {
+                    let target_val = regs[*target].clone();
+                    let index_val = regs[*index].clone();
+                    let value_val = regs[*value].clone();
+                    let result = match target_val {
+                        Value::F64Array(arr) => {
+                            let idx = match index_val {
+                                Value::Integer { value, .. } if value >= 0 => value as usize,
+                                Value::Unsigned { value, .. } => value as usize,
+                                _ => {
+                                    let fallback = Value::F64Array(arr.clone());
+                                    return eval_index_assign_value(fallback, index_val, value_val);
+                                }
+                            };
+                            let num = match &value_val {
+                                Value::Float { value, .. } => *value,
+                                Value::Integer { value, .. } => *value as f64,
+                                Value::Unsigned { value, .. } => *value as f64,
+                                other => {
+                                    let fallback = Value::F64Array(arr.clone());
+                                    return eval_index_assign_value(fallback, index_val, other.clone());
+                                }
+                            };
+                            let arr_ptr = Rc::as_ptr(&arr) as usize;
+                            let mut cache_mut = cache.borrow_mut();
+                            if cache_mut.array_ptr == Some(arr_ptr) && cache_mut.index_usize == Some(idx) {
+                                cache_mut.hits += 1;
+                            } else {
+                                cache_mut.array_ptr = Some(arr_ptr);
+                                cache_mut.index_usize = Some(idx);
+                                cache_mut.misses += 1;
                             }
-                            regs[*dst] = execute_instructions(interpreter, code, &func_data.const_pool, &mut new_slots)?;
+                            let mut vec = arr.borrow_mut();
+                            if idx < vec.len() {
+                                vec[idx] = num;
+                                value_val
+                            } else {
+                                return Err(RuntimeError { message: "Array index out of bounds".to_string(), line: 0 });
+                            }
+                        }
+                        other => eval_index_assign_value(other, index_val, value_val)?,
+                    };
+                    regs[*dst] = result;
+                }
+                RegInstruction::CallValueCached { dst, func, args, cache } => {
+                    let func_val = regs[*func].clone();
+                    let mut arg_vals: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
+                    for reg_idx in args {
+                        arg_vals.push(regs[*reg_idx].clone());
+                    }
+                    if let Value::Function(func_data) = &func_val {
+                        let func_ptr = Rc::as_ptr(func_data) as usize;
+                        let mut cache_mut = cache.borrow_mut();
+                        if cache_mut.func_ptr == Some(func_ptr) {
+                            cache_mut.hits += 1;
+                            if arg_vals.len() < func_data.params.len() {
+                                return Err(RuntimeError { message: "Too few arguments".to_string(), line: 0 });
+                            }
+                            if arg_vals.len() > func_data.params.len() {
+                                return Err(RuntimeError { message: "Too many arguments".to_string(), line: 0 });
+                            }
+                            if let Some(reg_code) = &func_data.reg_code {
+                                let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, func_data.declarations.len());
+                                for (i, val) in arg_vals.into_iter().enumerate() {
+                                    new_slots[i + func_data.param_offset] = val;
+                                }
+                                regs[*dst] = execute_reg_instructions(interpreter, reg_code, &mut new_slots)?;
+                                continue;
+                            }
+                            if let Some(code) = &func_data.code {
+                                let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, func_data.declarations.len());
+                                for (i, val) in arg_vals.into_iter().enumerate() {
+                                    new_slots[i + func_data.param_offset] = val;
+                                }
+                                regs[*dst] = execute_instructions(interpreter, code, &func_data.const_pool, &mut new_slots)?;
+                                continue;
+                            }
+                        } else {
+                            cache_mut.func_ptr = Some(func_ptr);
+                            cache_mut.native_ptr = None;
+                            cache_mut.misses += 1;
+                        }
+                    } else if let Value::NativeFunction(func) = &func_val {
+                        let func_ptr = *func as usize;
+                        let mut cache_mut = cache.borrow_mut();
+                        if cache_mut.native_ptr == Some(func_ptr) {
+                            cache_mut.hits += 1;
+                            regs[*dst] = func(&arg_vals).map_err(|message| RuntimeError { message, line: 0 })?;
                             continue;
+                        } else {
+                            cache_mut.native_ptr = Some(func_ptr);
+                            cache_mut.func_ptr = None;
+                            cache_mut.misses += 1;
                         }
                     } else {
-                        cache_mut.func_ptr = Some(func_ptr);
+                        let mut cache_mut = cache.borrow_mut();
+                        cache_mut.func_ptr = None;
                         cache_mut.native_ptr = None;
                         cache_mut.misses += 1;
                     }
-                } else if let Value::NativeFunction(func) = &func_val {
-                    let func_ptr = *func as usize;
-                    let mut cache_mut = cache.borrow_mut();
-                    if cache_mut.native_ptr == Some(func_ptr) {
-                        cache_mut.hits += 1;
-                        regs[*dst] = func(&arg_vals).map_err(|message| RuntimeError { message, line: 0 })?;
-                        continue;
-                    } else {
-                        cache_mut.native_ptr = Some(func_ptr);
-                        cache_mut.func_ptr = None;
-                        cache_mut.misses += 1;
-                    }
-                } else {
-                    let mut cache_mut = cache.borrow_mut();
-                    cache_mut.func_ptr = None;
-                    cache_mut.native_ptr = None;
-                    cache_mut.misses += 1;
+                    regs[*dst] = interpreter.call_value(func_val, arg_vals, 0, None)?;
                 }
-                regs[*dst] = interpreter.call_value(func_val, arg_vals, 0, None)?;
-            }
-            RegInstruction::Len { dst, src } => {
-                let val = regs[*src].clone();
-                regs[*dst] = match val {
-                    Value::String(s) => default_int(s.len() as i128),
-                    Value::Array(arr) => default_int(arr.borrow().len() as i128),
-                    Value::F64Array(arr) => default_int(arr.borrow().len() as i128),
-                    Value::Map(map) => default_int(map.borrow().data.len() as i128),
-                    _ => default_int(0),
-                };
-            }
-            RegInstruction::MapKeys { dst, src } => {
-                let val = regs[*src].clone();
-                regs[*dst] = match val {
-                    Value::Map(map) => map_keys_array(&map.borrow()),
-                    _ => Value::Nil,
-                };
-            }
-            RegInstruction::MapValues { dst, src } => {
-                let val = regs[*src].clone();
-                regs[*dst] = match val {
-                    Value::Map(map) => map_values_array(&map.borrow()),
-                    _ => Value::Nil,
-                };
+                RegInstruction::Len { dst, src } => {
+                    let val = regs[*src].clone();
+                    regs[*dst] = match val {
+                        Value::String(s) => default_int(s.len() as i128),
+                        Value::Array(arr) => default_int(arr.borrow().len() as i128),
+                        Value::F64Array(arr) => default_int(arr.borrow().len() as i128),
+                        Value::Map(map) => default_int(map.borrow().data.len() as i128),
+                        _ => default_int(0),
+                    };
+                }
+                RegInstruction::MapKeys { dst, src } => {
+                    let val = regs[*src].clone();
+                    regs[*dst] = match val {
+                        Value::Map(map) => map_keys_array(&map.borrow()),
+                        _ => Value::Nil,
+                    };
+                }
+                RegInstruction::MapValues { dst, src } => {
+                    let val = regs[*src].clone();
+                    regs[*dst] = match val {
+                        Value::Map(map) => map_values_array(&map.borrow()),
+                        _ => Value::Nil,
+                    };
+                }
             }
         }
-    }
-    Ok(regs.get(reg.ret_reg).cloned().unwrap_or(Value::Nil))
+        Ok(regs.get(reg.ret_reg).cloned().unwrap_or(Value::Nil))
+    })();
+    interpreter.recycle_reg_buffer(regs);
+    result
 }
 
 fn execute_instructions(
@@ -3708,6 +3712,8 @@ pub struct Interpreter {
     block_stack: Vec<Option<(Closure, Rc<RefCell<Environment>>)>>,
     // Pool of spare environments for reuse
     env_pool: Vec<Rc<RefCell<Environment>>>,
+    // Pool of reusable register buffers for reg-simple functions
+    reg_pool: Vec<Vec<Value>>,
     bytecode_mode: BytecodeMode,
 }
 
@@ -3717,6 +3723,7 @@ impl Interpreter {
             env: Rc::new(RefCell::new(Environment::new(None))),
             block_stack: Vec::new(),
             env_pool: Vec::with_capacity(32),
+            reg_pool: Vec::with_capacity(32),
             bytecode_mode: BytecodeMode::Simple,
         }
     }
@@ -3739,6 +3746,29 @@ impl Interpreter {
             if self.env_pool.len() < 128 {
                 self.env_pool.push(env_rc);
             }
+        }
+    }
+
+    fn get_reg_buffer(&mut self, size: usize) -> Vec<Value> {
+        if size == 0 {
+            return Vec::new();
+        }
+        if let Some(mut buf) = self.reg_pool.pop() {
+            if buf.capacity() < size {
+                buf.reserve(size - buf.capacity());
+            }
+            buf.clear();
+            buf.resize(size, Value::Uninitialized);
+            buf
+        } else {
+            vec![Value::Uninitialized; size]
+        }
+    }
+
+    fn recycle_reg_buffer(&mut self, mut buf: Vec<Value>) {
+        if self.reg_pool.len() < 128 {
+            buf.clear();
+            self.reg_pool.push(buf);
         }
     }
 

@@ -831,7 +831,34 @@ fn push_const(consts: &mut Vec<Value>, value: Value) -> usize {
     consts.len() - 1
 }
 
-fn match_for_range(condition: &Expr, body: &Expr, consts: &mut Vec<Value>) -> Option<(usize, RangeEnd, Expr)> {
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum RangeStep {
+    Int(i64),
+    Float(f64, FloatKind),
+}
+
+fn range_step_from_literal(expr: &Expr) -> Option<RangeStep> {
+    match &expr.kind {
+        ExprKind::Integer { value, .. } => {
+            let step = i64::try_from(*value).ok()?;
+            if step > 0 { Some(RangeStep::Int(step)) } else { None }
+        }
+        ExprKind::Unsigned { value, .. } => {
+            let step = i64::try_from(*value).ok()?;
+            if step > 0 { Some(RangeStep::Int(step)) } else { None }
+        }
+        ExprKind::Float { value, kind } => {
+            if *value > 0.0 {
+                Some(RangeStep::Float(*value, *kind))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn match_for_range(condition: &Expr, body: &Expr, consts: &mut Vec<Value>) -> Option<(usize, RangeEnd, RangeStep, Expr)> {
     let (index_slot, end) = match &condition.kind {
         ExprKind::BinaryOp { left, op: Op::LessThan, right } => {
             let idx_slot = match &left.kind {
@@ -868,19 +895,17 @@ fn match_for_range(condition: &Expr, body: &Expr, consts: &mut Vec<Value>) -> Op
     }
     let (body_stmts, increment) = stmts.split_at(stmts.len() - 1);
     let inc_stmt = &increment[0];
-    match &inc_stmt.kind {
+    let step = match &inc_stmt.kind {
         ExprKind::Assignment { slot: Some(s), value, .. } if *s == index_slot => {
             match &value.kind {
                 ExprKind::BinaryOp { left, op: Op::Add, right } => {
-                    let left_slot = match &left.kind {
-                        ExprKind::Identifier { slot: Some(ls), .. } => *ls,
-                        _ => return None,
-                    };
-                    if left_slot != index_slot {
-                        return None;
-                    }
-                    let is_one = matches!(right.kind, ExprKind::Integer { value: 1, .. } | ExprKind::Unsigned { value: 1, .. } | ExprKind::Float { value: 1.0, .. });
-                    if !is_one {
+                    let left_is_index = matches!(left.kind, ExprKind::Identifier { slot: Some(ls), .. } if ls == index_slot);
+                    let right_is_index = matches!(right.kind, ExprKind::Identifier { slot: Some(rs), .. } if rs == index_slot);
+                    if left_is_index {
+                        range_step_from_literal(right)?
+                    } else if right_is_index {
+                        range_step_from_literal(left)?
+                    } else {
                         return None;
                     }
                 }
@@ -888,13 +913,13 @@ fn match_for_range(condition: &Expr, body: &Expr, consts: &mut Vec<Value>) -> Op
             }
         }
         _ => return None,
-    }
+    };
 
     let body_expr = Expr {
         kind: ExprKind::Block(body_stmts.to_vec()),
         line,
     };
-    Some((index_slot, end, body_expr))
+    Some((index_slot, end, step, body_expr))
 }
 
 fn match_dot_assign(stmt: &Expr, index_slot: usize) -> Option<(usize, usize, usize)> {
@@ -1251,31 +1276,40 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
         }
         ExprKind::While { condition, body } => {
             if !want_value {
-                if let Some((index_slot, end, body_expr)) = match_for_range(condition, body, consts) {
-                    if let Some((acc1, a1, b1, acc2, a2, b2)) = match_dot2_range_body(&body_expr, index_slot) {
-                        code.push(Instruction::F64Dot2Range {
-                            acc1_slot: acc1,
-                            a1_slot: a1,
-                            b1_slot: b1,
-                            acc2_slot: acc2,
-                            a2_slot: a2,
-                            b2_slot: b2,
-                            index_slot,
-                            end,
-                        });
-                        code.push(Instruction::Pop);
-                        return true;
-                    } else if let Some((acc_slot, a_slot, b_slot)) = match_dot_range_body(&body_expr, index_slot) {
-                        code.push(Instruction::F64DotRange { acc_slot, a_slot, b_slot, index_slot, end });
-                        code.push(Instruction::Pop);
-                        return true;
-                    } else {
-                        let mut body_code = Vec::new();
-                        if !compile_expr(&body_expr, &mut body_code, consts, true) { return false; }
-                        code.push(Instruction::ForRange { index_slot, end, body: Rc::new(body_code) });
-                        code.push(Instruction::Pop);
-                        return true;
+                if let Some((index_slot, end, step, body_expr)) = match_for_range(condition, body, consts) {
+                    let is_unit_step = matches!(step, RangeStep::Int(1));
+                    if is_unit_step {
+                        if let Some((acc1, a1, b1, acc2, a2, b2)) = match_dot2_range_body(&body_expr, index_slot) {
+                            code.push(Instruction::F64Dot2Range {
+                                acc1_slot: acc1,
+                                a1_slot: a1,
+                                b1_slot: b1,
+                                acc2_slot: acc2,
+                                a2_slot: a2,
+                                b2_slot: b2,
+                                index_slot,
+                                end,
+                            });
+                            code.push(Instruction::Pop);
+                            return true;
+                        } else if let Some((acc_slot, a_slot, b_slot)) = match_dot_range_body(&body_expr, index_slot) {
+                            code.push(Instruction::F64DotRange { acc_slot, a_slot, b_slot, index_slot, end });
+                            code.push(Instruction::Pop);
+                            return true;
+                        }
                     }
+                    let mut body_code = Vec::new();
+                    if !compile_expr(&body_expr, &mut body_code, consts, true) { return false; }
+                    match step {
+                        RangeStep::Int(step) => {
+                            code.push(Instruction::ForRangeInt { index_slot, end, step, body: Rc::new(body_code) });
+                        }
+                        RangeStep::Float(step, kind) => {
+                            code.push(Instruction::ForRangeFloat { index_slot, end, step, kind, body: Rc::new(body_code) });
+                        }
+                    }
+                    code.push(Instruction::Pop);
+                    return true;
                 }
             }
             if want_value {
@@ -1313,7 +1347,7 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
                 code.push(Instruction::StoreSlot(*var_slot));
                 let mut body_code = Vec::new();
                 if !compile_expr(body, &mut body_code, consts, true) { return false; }
-                code.push(Instruction::ForRange { index_slot: *var_slot, end, body: Rc::new(body_code) });
+                code.push(Instruction::ForRangeInt { index_slot: *var_slot, end, step: 1, body: Rc::new(body_code) });
                 if !want_value {
                     code.push(Instruction::Pop);
                 }
@@ -2134,6 +2168,124 @@ fn execute_instructions(
                     if let Some(slot) = slots.get_mut(*index_slot) {
                         *slot = default_int(current as i128 + 1);
                     }
+                }
+                stack.push(last);
+            }
+            Instruction::ForRangeInt { index_slot, end, step, body } => {
+                let mut last = Value::Nil;
+                let current_val = slots.get(*index_slot).cloned().ok_or_else(|| RuntimeError {
+                    message: "Range index must be a number".to_string(),
+                    line: 0,
+                })?;
+                match current_val {
+                    Value::Float { value: mut current, kind } => {
+                        let step_f = *step as f64;
+                        loop {
+                            let end_val = match end {
+                                RangeEnd::Slot(s) => slots.get(*s).cloned().unwrap_or(Value::Nil),
+                                RangeEnd::Const(idx) => const_pool.get(*idx).cloned().unwrap_or(Value::Nil),
+                            };
+                            let end_f = match end_val {
+                                Value::Float { value, kind: end_kind } => normalize_float_value(value, end_kind),
+                                _ => int_value_as_f64(&end_val).ok_or_else(|| RuntimeError {
+                                    message: "Range end must be a number".to_string(),
+                                    line: 0,
+                                })?,
+                            };
+                            if current >= end_f {
+                                if let Some(slot) = slots.get_mut(*index_slot) {
+                                    *slot = make_float(current, kind);
+                                }
+                                break;
+                            }
+                            if let Some(slot) = slots.get_mut(*index_slot) {
+                                *slot = make_float(current, kind);
+                            }
+                            last = execute_instructions(interpreter, body, const_pool, slots)?;
+                            current += step_f;
+                        }
+                    }
+                    _ => {
+                        let mut current = int_value_as_i64(&current_val).ok_or_else(|| RuntimeError {
+                            message: "Range index must be a number".to_string(),
+                            line: 0,
+                        })?;
+                        loop {
+                            let end_val = match end {
+                                RangeEnd::Slot(s) => slots.get(*s).cloned().unwrap_or(Value::Nil),
+                                RangeEnd::Const(idx) => const_pool.get(*idx).cloned().unwrap_or(Value::Nil),
+                            };
+                            let should_stop = match end_val {
+                                Value::Float { value, kind: end_kind } => {
+                                    let end_f = normalize_float_value(value, end_kind);
+                                    (current as f64) >= end_f
+                                }
+                                _ => {
+                                    let end_i = int_value_as_i64(&end_val).ok_or_else(|| RuntimeError {
+                                        message: "Range end must be a number".to_string(),
+                                        line: 0,
+                                    })?;
+                                    current >= end_i
+                                }
+                            };
+                            if should_stop {
+                                if let Some(slot) = slots.get_mut(*index_slot) {
+                                    *slot = default_int(current as i128);
+                                }
+                                break;
+                            }
+                            if let Some(slot) = slots.get_mut(*index_slot) {
+                                *slot = default_int(current as i128);
+                            }
+                            last = execute_instructions(interpreter, body, const_pool, slots)?;
+                            current = current + *step;
+                        }
+                    }
+                }
+                stack.push(last);
+            }
+            Instruction::ForRangeFloat { index_slot, end, step, kind, body } => {
+                let mut last = Value::Nil;
+                let current_val = slots.get(*index_slot).cloned().ok_or_else(|| RuntimeError {
+                    message: "Range index must be a number".to_string(),
+                    line: 0,
+                })?;
+                let (mut current, kind) = match current_val {
+                    Value::Float { value, kind: current_kind } => {
+                        (value, promote_float_kind(current_kind, *kind))
+                    }
+                    _ => {
+                        let current = int_value_as_f64(&current_val).ok_or_else(|| RuntimeError {
+                            message: "Range index must be a number".to_string(),
+                            line: 0,
+                        })?;
+                        (current, *kind)
+                    }
+                };
+                let step_f = normalize_float_value(*step, kind);
+                loop {
+                    let end_val = match end {
+                        RangeEnd::Slot(s) => slots.get(*s).cloned().unwrap_or(Value::Nil),
+                        RangeEnd::Const(idx) => const_pool.get(*idx).cloned().unwrap_or(Value::Nil),
+                    };
+                    let end_f = match end_val {
+                        Value::Float { value, kind: end_kind } => normalize_float_value(value, end_kind),
+                        _ => int_value_as_f64(&end_val).ok_or_else(|| RuntimeError {
+                            message: "Range end must be a number".to_string(),
+                            line: 0,
+                        })?,
+                    };
+                    if current >= end_f {
+                        if let Some(slot) = slots.get_mut(*index_slot) {
+                            *slot = make_float(current, kind);
+                        }
+                        break;
+                    }
+                    if let Some(slot) = slots.get_mut(*index_slot) {
+                        *slot = make_float(current, kind);
+                    }
+                    last = execute_instructions(interpreter, body, const_pool, slots)?;
+                    current += step_f;
                 }
                 stack.push(last);
             }

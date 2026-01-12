@@ -1,7 +1,7 @@
 use crate::ast::{Closure, Expr, ExprKind, FloatKind, IntKind, Op};
 use crate::intern;
 use crate::intern::{SymbolId, symbol_name};
-use crate::value::{BinaryOpCache, BinaryOpCacheKind, Builtin, Environment, IndexCache, Instruction, MapValue, RangeEnd, Value};
+use crate::value::{BinaryOpCache, BinaryOpCacheKind, Builtin, Environment, IndexCache, Instruction, MapValue, RangeEnd, RegBinOp, RegFunction, RegInstruction, Value};
 use crate::wasm::{WasmFunction, WasmModule};
 use rustc_hash::FxHashMap;
 use std::collections::HashSet;
@@ -512,6 +512,19 @@ fn eval_cached_binop(op: BinOpKind, cache: &Rc<RefCell<BinaryOpCache>>, l: Value
 }
 fn make_float(value: f64, kind: FloatKind) -> Value {
     Value::Float { value: normalize_float_value(value, kind), kind }
+}
+
+fn reg_binop_from_op(op: &Op) -> Option<RegBinOp> {
+    match op {
+        Op::Add => Some(RegBinOp::Add),
+        Op::Subtract => Some(RegBinOp::Sub),
+        Op::Multiply => Some(RegBinOp::Mul),
+        Op::Divide => Some(RegBinOp::Div),
+        Op::Equal => Some(RegBinOp::Eq),
+        Op::GreaterThan => Some(RegBinOp::Gt),
+        Op::LessThan => Some(RegBinOp::Lt),
+        _ => None,
+    }
 }
 
 fn int_kind_bits(kind: IntKind) -> u32 {
@@ -1985,6 +1998,214 @@ fn expr_size(expr: &Expr) -> usize {
     }
 }
 
+fn is_reg_simple(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Yield(_) | ExprKind::FunctionDef { .. } | ExprKind::AnonymousFunction { .. } | ExprKind::Use(_) | ExprKind::Load(_) => false,
+        ExprKind::If { .. } | ExprKind::While { .. } | ExprKind::For { .. } | ExprKind::Loop { .. } => false,
+        ExprKind::Array(_) | ExprKind::ArrayGenerator { .. } | ExprKind::Map(_) | ExprKind::FormatString(_) => false,
+        ExprKind::Block(stmts) => stmts.iter().all(is_reg_simple),
+        ExprKind::BinaryOp { left, right, .. } => is_reg_simple(left) && is_reg_simple(right),
+        ExprKind::Call { function, args, block, .. } => {
+            if block.is_some() { return false; }
+            is_reg_simple(function) && args.iter().all(is_reg_simple)
+        }
+        ExprKind::Index { target, index } => is_reg_simple(target) && is_reg_simple(index),
+        ExprKind::IndexAssignment { target, index, value } => {
+            is_reg_simple(target) && is_reg_simple(index) && is_reg_simple(value)
+        }
+        ExprKind::Assignment { value, .. } => is_reg_simple(value),
+        ExprKind::Clone(expr) => is_reg_simple(expr),
+        _ => true,
+    }
+}
+
+struct RegAllocator {
+    next_reg: usize,
+}
+
+impl RegAllocator {
+    fn new() -> Self {
+        Self { next_reg: 0 }
+    }
+
+    fn alloc(&mut self) -> usize {
+        let reg = self.next_reg;
+        self.next_reg += 1;
+        reg
+    }
+}
+
+fn compile_reg_expr(
+    expr: &Expr,
+    code: &mut Vec<RegInstruction>,
+    consts: &mut Vec<Value>,
+    alloc: &mut RegAllocator,
+) -> Option<usize> {
+    match &expr.kind {
+        ExprKind::Integer { value, kind } => {
+            let dst = alloc.alloc();
+            let idx = push_const(consts, make_signed_int(*value, *kind));
+            code.push(RegInstruction::LoadConst { dst, idx });
+            Some(dst)
+        }
+        ExprKind::Unsigned { value, kind } => {
+            let dst = alloc.alloc();
+            let idx = push_const(consts, make_unsigned_int(*value, *kind));
+            code.push(RegInstruction::LoadConst { dst, idx });
+            Some(dst)
+        }
+        ExprKind::Float { value, kind } => {
+            let dst = alloc.alloc();
+            let idx = push_const(consts, make_float(*value, *kind));
+            code.push(RegInstruction::LoadConst { dst, idx });
+            Some(dst)
+        }
+        ExprKind::Boolean(b) => {
+            let dst = alloc.alloc();
+            let idx = push_const(consts, Value::Boolean(*b));
+            code.push(RegInstruction::LoadConst { dst, idx });
+            Some(dst)
+        }
+        ExprKind::Nil => {
+            let dst = alloc.alloc();
+            let idx = push_const(consts, Value::Nil);
+            code.push(RegInstruction::LoadConst { dst, idx });
+            Some(dst)
+        }
+        ExprKind::String(s) => {
+            let dst = alloc.alloc();
+            let idx = push_const(consts, Value::String(s.clone()));
+            code.push(RegInstruction::LoadConst { dst, idx });
+            Some(dst)
+        }
+        ExprKind::Identifier { slot: Some(s), .. } => {
+            let dst = alloc.alloc();
+            code.push(RegInstruction::LoadSlot { dst, slot: *s });
+            Some(dst)
+        }
+        ExprKind::Identifier { slot: None, .. } => None,
+        ExprKind::Assignment { slot: Some(s), value, .. } => {
+            let src = compile_reg_expr(value, code, consts, alloc)?;
+            code.push(RegInstruction::StoreSlot { slot: *s, src });
+            Some(src)
+        }
+        ExprKind::Assignment { slot: None, .. } => None,
+        ExprKind::Clone(expr) => {
+            let src = compile_reg_expr(expr, code, consts, alloc)?;
+            let dst = alloc.alloc();
+            code.push(RegInstruction::CloneValue { dst, src });
+            Some(dst)
+        }
+        ExprKind::BinaryOp { left, op, right } => {
+            let left = compile_reg_expr(left, code, consts, alloc)?;
+            let right = compile_reg_expr(right, code, consts, alloc)?;
+            let op = reg_binop_from_op(op)?;
+            let dst = alloc.alloc();
+            code.push(RegInstruction::BinOpCached {
+                dst,
+                op,
+                left,
+                right,
+                cache: Rc::new(RefCell::new(BinaryOpCache::default())),
+            });
+            Some(dst)
+        }
+        ExprKind::Index { target, index } => {
+            let target = compile_reg_expr(target, code, consts, alloc)?;
+            if let ExprKind::String(name) = &index.kind {
+                match name.as_str() {
+                    "keys" => {
+                        let dst = alloc.alloc();
+                        code.push(RegInstruction::MapKeys { dst, src: target });
+                        return Some(dst);
+                    }
+                    "values" => {
+                        let dst = alloc.alloc();
+                        code.push(RegInstruction::MapValues { dst, src: target });
+                        return Some(dst);
+                    }
+                    _ => {}
+                }
+            }
+            let index = compile_reg_expr(index, code, consts, alloc)?;
+            let dst = alloc.alloc();
+            code.push(RegInstruction::F64IndexCached {
+                dst,
+                target,
+                index,
+                cache: Rc::new(RefCell::new(IndexCache::default())),
+            });
+            Some(dst)
+        }
+        ExprKind::IndexAssignment { target, index, value } => {
+            let target = compile_reg_expr(target, code, consts, alloc)?;
+            let index = compile_reg_expr(index, code, consts, alloc)?;
+            let value = compile_reg_expr(value, code, consts, alloc)?;
+            let dst = alloc.alloc();
+            code.push(RegInstruction::F64IndexAssignCached {
+                dst,
+                target,
+                index,
+                value,
+                cache: Rc::new(RefCell::new(IndexCache::default())),
+            });
+            Some(dst)
+        }
+        ExprKind::Call { function, args, block, .. } => {
+            if block.is_some() {
+                return None;
+            }
+            if let ExprKind::Identifier { name, .. } = &function.kind {
+                if let Some(builtin) = builtin_from_symbol(*name) {
+                    if matches!(builtin, Builtin::Len) && args.len() == 1 {
+                        let src = compile_reg_expr(&args[0], code, consts, alloc)?;
+                        let dst = alloc.alloc();
+                        code.push(RegInstruction::Len { dst, src });
+                        return Some(dst);
+                    }
+                }
+            }
+            let func = compile_reg_expr(function, code, consts, alloc)?;
+            let mut arg_regs = Vec::with_capacity(args.len());
+            for arg in args {
+                arg_regs.push(compile_reg_expr(arg, code, consts, alloc)?);
+            }
+            let dst = alloc.alloc();
+            code.push(RegInstruction::CallValueCached {
+                dst,
+                func,
+                args: arg_regs,
+                cache: Rc::new(RefCell::new(crate::value::CallSiteCache::default())),
+            });
+            Some(dst)
+        }
+        ExprKind::Block(stmts) => {
+            let mut last = None;
+            for stmt in stmts {
+                last = compile_reg_expr(stmt, code, consts, alloc);
+                if last.is_none() {
+                    return None;
+                }
+            }
+            last
+        }
+        _ => None,
+    }
+}
+
+fn compile_reg_function(expr: &Expr) -> Option<RegFunction> {
+    let mut code = Vec::new();
+    let mut consts = Vec::new();
+    let mut alloc = RegAllocator::new();
+    let ret_reg = compile_reg_expr(expr, &mut code, &mut consts, &mut alloc)?;
+    Some(RegFunction {
+        code,
+        reg_count: alloc.next_reg,
+        ret_reg,
+        const_pool: Rc::new(consts),
+    })
+}
+
 fn is_inline_safe_arg(expr: &Expr) -> bool {
     match &expr.kind {
         ExprKind::Integer { .. } | ExprKind::Unsigned { .. } | ExprKind::Float { .. } | ExprKind::Boolean(_) | ExprKind::Nil => true,
@@ -2124,6 +2345,203 @@ fn eval_index_assign_value(target_val: Value, index_val: Value, value: Value) ->
         _ => return Err(RuntimeError { message: "Index assignment not supported on this type".to_string(), line: 0 }),
     }
     Ok(value)
+}
+
+fn reg_binop_kind(op: RegBinOp) -> BinOpKind {
+    match op {
+        RegBinOp::Add => BinOpKind::Add,
+        RegBinOp::Sub => BinOpKind::Sub,
+        RegBinOp::Mul => BinOpKind::Mul,
+        RegBinOp::Div => BinOpKind::Div,
+        RegBinOp::Eq => BinOpKind::Eq,
+        RegBinOp::Gt => BinOpKind::Gt,
+        RegBinOp::Lt => BinOpKind::Lt,
+    }
+}
+
+fn execute_reg_instructions(
+    interpreter: &mut Interpreter,
+    reg: &RegFunction,
+    slots: &mut [Value],
+) -> EvalResult {
+    let mut regs = vec![Value::Uninitialized; reg.reg_count];
+    for inst in &reg.code {
+        match inst {
+            RegInstruction::LoadConst { dst, idx } => {
+                let val = reg.const_pool.get(*idx).cloned().unwrap_or(Value::Nil);
+                regs[*dst] = val;
+            }
+            RegInstruction::LoadSlot { dst, slot } => {
+                regs[*dst] = slots[*slot].clone();
+            }
+            RegInstruction::StoreSlot { slot, src } => {
+                slots[*slot] = regs[*src].clone();
+            }
+            RegInstruction::CloneValue { dst, src } => {
+                regs[*dst] = clone_value(&regs[*src]);
+            }
+            RegInstruction::BinOpCached { dst, op, left, right, cache } => {
+                let l = regs[*left].clone();
+                let r = regs[*right].clone();
+                regs[*dst] = eval_cached_binop(reg_binop_kind(*op), cache, l, r)?;
+            }
+            RegInstruction::F64IndexCached { dst, target, index, cache } => {
+                let target_val = regs[*target].clone();
+                let index_val = regs[*index].clone();
+                let result = match target_val {
+                    Value::F64Array(arr) => {
+                        let idx = match index_val {
+                            Value::Integer { value, .. } if value >= 0 => value as usize,
+                            Value::Unsigned { value, .. } => value as usize,
+                            _ => {
+                                return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
+                            }
+                        };
+                        let arr_ptr = Rc::as_ptr(&arr) as usize;
+                        let mut cache_mut = cache.borrow_mut();
+                        if cache_mut.array_ptr == Some(arr_ptr) && cache_mut.index_usize == Some(idx) {
+                            cache_mut.hits += 1;
+                        } else {
+                            cache_mut.array_ptr = Some(arr_ptr);
+                            cache_mut.index_usize = Some(idx);
+                            cache_mut.misses += 1;
+                        }
+                        let vec = arr.borrow();
+                        if idx < vec.len() { make_float(vec[idx], FloatKind::F64) } else { Value::Nil }
+                    }
+                    other => eval_index_cached_value(index_val, other, cache)?,
+                };
+                regs[*dst] = result;
+            }
+            RegInstruction::F64IndexAssignCached { dst, target, index, value, cache } => {
+                let target_val = regs[*target].clone();
+                let index_val = regs[*index].clone();
+                let value_val = regs[*value].clone();
+                let result = match target_val {
+                    Value::F64Array(arr) => {
+                        let idx = match index_val {
+                            Value::Integer { value, .. } if value >= 0 => value as usize,
+                            Value::Unsigned { value, .. } => value as usize,
+                            _ => {
+                                let fallback = Value::F64Array(arr.clone());
+                                return eval_index_assign_value(fallback, index_val, value_val);
+                            }
+                        };
+                        let num = match &value_val {
+                            Value::Float { value, .. } => *value,
+                            Value::Integer { value, .. } => *value as f64,
+                            Value::Unsigned { value, .. } => *value as f64,
+                            other => {
+                                let fallback = Value::F64Array(arr.clone());
+                                return eval_index_assign_value(fallback, index_val, other.clone());
+                            }
+                        };
+                        let arr_ptr = Rc::as_ptr(&arr) as usize;
+                        let mut cache_mut = cache.borrow_mut();
+                        if cache_mut.array_ptr == Some(arr_ptr) && cache_mut.index_usize == Some(idx) {
+                            cache_mut.hits += 1;
+                        } else {
+                            cache_mut.array_ptr = Some(arr_ptr);
+                            cache_mut.index_usize = Some(idx);
+                            cache_mut.misses += 1;
+                        }
+                        let mut vec = arr.borrow_mut();
+                        if idx < vec.len() {
+                            vec[idx] = num;
+                            value_val
+                        } else {
+                            return Err(RuntimeError { message: "Array index out of bounds".to_string(), line: 0 });
+                        }
+                    }
+                    other => eval_index_assign_value(other, index_val, value_val)?,
+                };
+                regs[*dst] = result;
+            }
+            RegInstruction::CallValueCached { dst, func, args, cache } => {
+                let func_val = regs[*func].clone();
+                let mut arg_vals: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
+                for reg_idx in args {
+                    arg_vals.push(regs[*reg_idx].clone());
+                }
+                if let Value::Function(func_data) = &func_val {
+                    let func_ptr = Rc::as_ptr(func_data) as usize;
+                    let mut cache_mut = cache.borrow_mut();
+                    if cache_mut.func_ptr == Some(func_ptr) {
+                        cache_mut.hits += 1;
+                        if arg_vals.len() < func_data.params.len() {
+                            return Err(RuntimeError { message: "Too few arguments".to_string(), line: 0 });
+                        }
+                        if arg_vals.len() > func_data.params.len() {
+                            return Err(RuntimeError { message: "Too many arguments".to_string(), line: 0 });
+                        }
+                        if let Some(reg_code) = &func_data.reg_code {
+                            let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, func_data.declarations.len());
+                            for (i, val) in arg_vals.into_iter().enumerate() {
+                                new_slots[i + func_data.param_offset] = val;
+                            }
+                            regs[*dst] = execute_reg_instructions(interpreter, reg_code, &mut new_slots)?;
+                            continue;
+                        }
+                        if let Some(code) = &func_data.code {
+                            let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, func_data.declarations.len());
+                            for (i, val) in arg_vals.into_iter().enumerate() {
+                                new_slots[i + func_data.param_offset] = val;
+                            }
+                            regs[*dst] = execute_instructions(interpreter, code, &func_data.const_pool, &mut new_slots)?;
+                            continue;
+                        }
+                    } else {
+                        cache_mut.func_ptr = Some(func_ptr);
+                        cache_mut.native_ptr = None;
+                        cache_mut.misses += 1;
+                    }
+                } else if let Value::NativeFunction(func) = &func_val {
+                    let func_ptr = *func as usize;
+                    let mut cache_mut = cache.borrow_mut();
+                    if cache_mut.native_ptr == Some(func_ptr) {
+                        cache_mut.hits += 1;
+                        regs[*dst] = func(&arg_vals).map_err(|message| RuntimeError { message, line: 0 })?;
+                        continue;
+                    } else {
+                        cache_mut.native_ptr = Some(func_ptr);
+                        cache_mut.func_ptr = None;
+                        cache_mut.misses += 1;
+                    }
+                } else {
+                    let mut cache_mut = cache.borrow_mut();
+                    cache_mut.func_ptr = None;
+                    cache_mut.native_ptr = None;
+                    cache_mut.misses += 1;
+                }
+                regs[*dst] = interpreter.call_value(func_val, arg_vals, 0, None)?;
+            }
+            RegInstruction::Len { dst, src } => {
+                let val = regs[*src].clone();
+                regs[*dst] = match val {
+                    Value::String(s) => default_int(s.len() as i128),
+                    Value::Array(arr) => default_int(arr.borrow().len() as i128),
+                    Value::F64Array(arr) => default_int(arr.borrow().len() as i128),
+                    Value::Map(map) => default_int(map.borrow().data.len() as i128),
+                    _ => default_int(0),
+                };
+            }
+            RegInstruction::MapKeys { dst, src } => {
+                let val = regs[*src].clone();
+                regs[*dst] = match val {
+                    Value::Map(map) => map_keys_array(&map.borrow()),
+                    _ => Value::Nil,
+                };
+            }
+            RegInstruction::MapValues { dst, src } => {
+                let val = regs[*src].clone();
+                regs[*dst] = match val {
+                    Value::Map(map) => map_values_array(&map.borrow()),
+                    _ => Value::Nil,
+                };
+            }
+        }
+    }
+    Ok(regs.get(reg.ret_reg).cloned().unwrap_or(Value::Nil))
 }
 
 fn execute_instructions(
@@ -2304,6 +2722,15 @@ fn execute_instructions(
                         }
                         if args.len() > func.params.len() {
                             return Err(RuntimeError { message: "Too many arguments".to_string(), line: 0 });
+                        }
+                        if let Some(reg_code) = &func.reg_code {
+                            let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, func.declarations.len());
+                            for (i, val) in args.into_iter().enumerate() {
+                                new_slots[i + func.param_offset] = val;
+                            }
+                            let result = execute_reg_instructions(interpreter, reg_code, &mut new_slots)?;
+                            stack.push(result);
+                            continue;
                         }
                         if let Some(code) = &func.code {
                             let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, func.declarations.len());
@@ -3900,6 +4327,7 @@ impl Interpreter {
                             is_simple: data.is_simple,
                             uses_env: data.uses_env,
                             code: data.code.clone(),
+                            reg_code: data.reg_code.clone(),
                             const_pool: data.const_pool.clone(),
                             env: new_env,
                         })));
@@ -3908,6 +4336,13 @@ impl Interpreter {
         }
 
         // FULL CALL
+        if let Some(reg) = &data.reg_code {
+            let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, data.declarations.len());
+            for (i, val) in arg_vals.into_iter().enumerate() {
+                new_slots[i + data.param_offset] = val;
+            }
+            return execute_reg_instructions(self, reg, &mut new_slots);
+        }
         if let Some(code) = &data.code {
             let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, data.declarations.len());
             for (i, val) in arg_vals.into_iter().enumerate() {
@@ -4150,8 +4585,9 @@ impl Interpreter {
                 resolve(resolved.as_mut(), &slot_map);
                 (resolved, Rc::new(slot_names))
             };
-        let simple = is_simple(&resolved_body);
-        let uses_env = uses_environment(&resolved_body);
+            let simple = is_simple(&resolved_body);
+            let uses_env = uses_environment(&resolved_body);
+            let reg_simple = is_reg_simple(&resolved_body);
                 
             let mut code = Vec::new();
             let mut const_pool = Vec::new();
@@ -4161,6 +4597,11 @@ impl Interpreter {
                 false
             };
 
+            let reg_code = if reg_simple && !uses_env && self.bytecode_mode != BytecodeMode::Off {
+                compile_reg_function(&resolved_body).map(Rc::new)
+            } else {
+                None
+            };
             let func = Value::Function(Rc::new(crate::value::FunctionData {
                 params: params.clone(),
                 body: *resolved_body,
@@ -4169,6 +4610,7 @@ impl Interpreter {
                 is_simple: simple,
                 uses_env,
                 code: if compiled { Some(Rc::new(code)) } else { None },
+                reg_code,
                 const_pool: Rc::new(const_pool),
                 env: func_env,
             }));
@@ -4189,6 +4631,7 @@ impl Interpreter {
             };
             let simple = is_simple(&resolved_body);
             let uses_env = uses_environment(&resolved_body);
+            let reg_simple = is_reg_simple(&resolved_body);
                 
             let mut code = Vec::new();
             let mut const_pool = Vec::new();
@@ -4198,6 +4641,11 @@ impl Interpreter {
                 false
             };
 
+                let reg_code = if reg_simple && !uses_env && self.bytecode_mode != BytecodeMode::Off {
+                    compile_reg_function(&resolved_body).map(Rc::new)
+                } else {
+                    None
+                };
                 Ok(Value::Function(Rc::new(crate::value::FunctionData {
                     params: params.clone(),
                     body: *resolved_body,
@@ -4206,6 +4654,7 @@ impl Interpreter {
                     is_simple: simple,
                     uses_env,
                     code: if compiled { Some(Rc::new(code)) } else { None },
+                    reg_code,
                     const_pool: Rc::new(const_pool),
                     env: func_env,
                 })))

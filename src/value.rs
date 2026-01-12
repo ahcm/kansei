@@ -210,6 +210,40 @@ pub enum Instruction {
     // Add more if needed
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RegBinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Eq,
+    Gt,
+    Lt,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RegInstruction {
+    LoadConst { dst: usize, idx: usize },
+    LoadSlot { dst: usize, slot: usize },
+    StoreSlot { slot: usize, src: usize },
+    CloneValue { dst: usize, src: usize },
+    BinOpCached { dst: usize, op: RegBinOp, left: usize, right: usize, cache: Rc<RefCell<BinaryOpCache>> },
+    F64IndexCached { dst: usize, target: usize, index: usize, cache: Rc<RefCell<IndexCache>> },
+    F64IndexAssignCached { dst: usize, target: usize, index: usize, value: usize, cache: Rc<RefCell<IndexCache>> },
+    CallValueCached { dst: usize, func: usize, args: Vec<usize>, cache: Rc<RefCell<CallSiteCache>> },
+    Len { dst: usize, src: usize },
+    MapKeys { dst: usize, src: usize },
+    MapValues { dst: usize, src: usize },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RegFunction {
+    pub code: Vec<RegInstruction>,
+    pub reg_count: usize,
+    pub ret_reg: usize,
+    pub const_pool: Rc<Vec<Value>>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum BinaryOpCacheKind {
     Float,
@@ -304,6 +338,7 @@ pub struct FunctionData {
     pub is_simple: bool,
     pub uses_env: bool,
     pub code: Option<Rc<Vec<Instruction>>>,
+    pub reg_code: Option<Rc<RegFunction>>,
     pub const_pool: Rc<Vec<Value>>,
     pub env: Rc<RefCell<Environment>>,
 }

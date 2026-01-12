@@ -16,11 +16,12 @@ pub struct Environment {
     pub slots: SmallVec<[Value; 8]>,
     pub parent: Option<Rc<RefCell<Environment>>>,
     pub is_partial: bool, // If true, allow full recursive lookup (used for currying/params)
+    pub version: u64,
 }
 
 impl Environment {
     pub fn new(parent: Option<Rc<RefCell<Environment>>>) -> Self {
-        Self { values: Vec::new(), slots: SmallVec::new(), parent, is_partial: false }
+        Self { values: Vec::new(), slots: SmallVec::new(), parent, is_partial: false, version: 0 }
     }
 
     pub fn reset(&mut self, parent: Option<Rc<RefCell<Environment>>>, is_partial: bool) {
@@ -28,6 +29,7 @@ impl Environment {
         self.slots.clear();
         self.parent = parent;
         self.is_partial = is_partial;
+        self.version = 0;
     }
 
     pub fn get(&self, name: SymbolId) -> Option<Value> {
@@ -82,6 +84,7 @@ impl Environment {
             self.values.resize(idx + 1, Value::Uninitialized);
         }
         self.values[idx] = val;
+        self.version = self.version.wrapping_add(1);
     }
 
     // Set variable in current scope. If it's a reference, update referee.
@@ -95,6 +98,7 @@ impl Environment {
          } else {
              self.values[idx] = val;
          }
+         self.version = self.version.wrapping_add(1);
     }
 
     pub fn assign(&mut self, name: SymbolId, val: Value) {
@@ -123,6 +127,7 @@ impl Environment {
             } else {
                 self.values[idx] = val.clone();
             }
+            self.version = self.version.wrapping_add(1);
             return true;
         }
         if let Some(parent) = &self.parent {
@@ -142,6 +147,7 @@ impl Environment {
              let r = Rc::new(RefCell::new(val));
              let new_ref = Value::Reference(r);
              self.values[idx] = new_ref.clone();
+             self.version = self.version.wrapping_add(1);
              return Some(new_ref);
          }
          
@@ -158,6 +164,7 @@ pub enum Instruction {
     LoadSlot(usize),
     StoreSlot(usize),
     LoadGlobal(SymbolId),
+    LoadGlobalCached(SymbolId, Rc<RefCell<GlobalCache>>),
     StoreGlobal(SymbolId),
     LoadConstIdx(usize),
     Pop,
@@ -177,6 +184,7 @@ pub enum Instruction {
     F64ArrayGen { count: Option<usize> },
     Index,
     IndexCached(Rc<RefCell<IndexCache>>),
+    MapIndexCached(Rc<RefCell<MapAccessCache>>),
     F64IndexCached(Rc<RefCell<IndexCache>>),
     IndexAssign,
     F64IndexAssignCached(Rc<RefCell<IndexCache>>),
@@ -229,6 +237,7 @@ pub enum RegInstruction {
     CloneValue { dst: usize, src: usize },
     BinOpCached { dst: usize, op: RegBinOp, left: usize, right: usize, cache: Rc<RefCell<BinaryOpCache>> },
     F64IndexCached { dst: usize, target: usize, index: usize, cache: Rc<RefCell<IndexCache>> },
+    MapIndexCached { dst: usize, target: usize, index: usize, cache: Rc<RefCell<MapAccessCache>> },
     F64IndexAssignCached { dst: usize, target: usize, index: usize, value: usize, cache: Rc<RefCell<IndexCache>> },
     CallValueCached { dst: usize, func: usize, args: Vec<usize>, cache: Rc<RefCell<CallSiteCache>> },
     Len { dst: usize, src: usize },
@@ -288,11 +297,57 @@ pub struct CallSiteCache {
     pub misses: u64,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct GlobalCache {
+    pub env_ptr: Option<usize>,
+    pub version: u64,
+    pub value: Option<Value>,
+    pub hits: u64,
+    pub misses: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MapAccessCacheEntry {
+    pub map_ptr: usize,
+    pub version: u64,
+    pub key: Rc<String>,
+    pub value: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MapAccessCache {
+    pub entries: [Option<MapAccessCacheEntry>; 2],
+    pub hits: u64,
+    pub misses: u64,
+}
+
 impl Default for CallSiteCache {
     fn default() -> Self {
         Self {
             func_ptr: None,
             native_ptr: None,
+            hits: 0,
+            misses: 0,
+        }
+    }
+}
+
+impl Default for GlobalCache {
+    fn default() -> Self {
+        Self {
+            env_ptr: None,
+            version: 0,
+            value: None,
+            hits: 0,
+            misses: 0,
+        }
+    }
+}
+
+impl Default for MapAccessCache {
+    fn default() -> Self {
+        Self {
+            entries: std::array::from_fn(|_| None),
             hits: 0,
             misses: 0,
         }

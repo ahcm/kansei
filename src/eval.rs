@@ -1,7 +1,7 @@
 use crate::ast::{Closure, Expr, ExprKind, FloatKind, IntKind, Op};
 use crate::intern;
 use crate::intern::{SymbolId, symbol_name};
-use crate::value::{BinaryOpCache, BinaryOpCacheKind, Builtin, Environment, IndexCache, Instruction, MapValue, RangeEnd, RegBinOp, RegFunction, RegInstruction, Value};
+use crate::value::{BinaryOpCache, BinaryOpCacheKind, Builtin, Environment, GlobalCache, IndexCache, Instruction, MapAccessCache, MapAccessCacheEntry, MapValue, RangeEnd, RegBinOp, RegFunction, RegInstruction, Value};
 use crate::wasm::{WasmFunction, WasmModule};
 use rustc_hash::FxHashMap;
 use std::collections::HashSet;
@@ -1098,7 +1098,10 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
         }
         ExprKind::Identifier { slot: None, name } => {
             if want_value {
-                code.push(Instruction::LoadGlobal(*name));
+                code.push(Instruction::LoadGlobalCached(
+                    *name,
+                    Rc::new(RefCell::new(GlobalCache::default())),
+                ));
             }
         }
         ExprKind::Boolean(b) => {
@@ -1185,6 +1188,12 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
                     }
                     _ => {}
                 }
+                if !compile_expr(index, code, consts, true) { return false; }
+                code.push(Instruction::MapIndexCached(Rc::new(RefCell::new(MapAccessCache::default()))));
+                if !want_value {
+                    code.push(Instruction::Pop);
+                }
+                return true;
             }
             if !compile_expr(index, code, consts, true) { return false; }
             code.push(Instruction::F64IndexCached(Rc::new(RefCell::new(crate::value::IndexCache::default()))));
@@ -1703,8 +1712,12 @@ pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String {
             let mut bin_misses = 0u64;
             let mut idx_hits = 0u64;
             let mut idx_misses = 0u64;
+            let mut map_hits = 0u64;
+            let mut map_misses = 0u64;
             let mut call_hits = 0u64;
             let mut call_misses = 0u64;
+            let mut global_hits = 0u64;
+            let mut global_misses = 0u64;
             for (idx, inst) in code.iter().enumerate() {
                 match inst {
                     Instruction::AddCached(cache)
@@ -1722,18 +1735,37 @@ pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String {
                         idx_hits += cache.hits;
                         idx_misses += cache.misses;
                     }
+                    Instruction::MapIndexCached(cache) => {
+                        let cache = cache.borrow();
+                        map_hits += cache.hits;
+                        map_misses += cache.misses;
+                    }
                     Instruction::CallValueCached(cache, _) => {
                         let cache = cache.borrow();
                         call_hits += cache.hits;
                         call_misses += cache.misses;
+                    }
+                    Instruction::LoadGlobalCached(_, cache) => {
+                        let cache = cache.borrow();
+                        global_hits += cache.hits;
+                        global_misses += cache.misses;
                     }
                     _ => {}
                 }
                 out.push_str(&format!("  {idx:04} {:?}\n", inst));
             }
             out.push_str(&format!(
-                "  CacheMetrics bin(hits={}, misses={}) index(hits={}, misses={}) call(hits={}, misses={})\n",
-                bin_hits, bin_misses, idx_hits, idx_misses, call_hits, call_misses
+                "  CacheMetrics bin(hits={}, misses={}) index(hits={}, misses={}) map(hits={}, misses={}) call(hits={}, misses={}) global(hits={}, misses={})\n",
+                bin_hits,
+                bin_misses,
+                idx_hits,
+                idx_misses,
+                map_hits,
+                map_misses,
+                call_hits,
+                call_misses,
+                global_hits,
+                global_misses
             ));
         } else if let Some(reason) = find_compile_failure(ast) {
             out.push_str(&format!("  <compile failed: {reason}>\n"));
@@ -1794,8 +1826,12 @@ pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String {
                 let mut bin_misses = 0u64;
                 let mut idx_hits = 0u64;
                 let mut idx_misses = 0u64;
+                let mut map_hits = 0u64;
+                let mut map_misses = 0u64;
                 let mut call_hits = 0u64;
                 let mut call_misses = 0u64;
+                let mut global_hits = 0u64;
+                let mut global_misses = 0u64;
 
                 for (idx, inst) in code.iter().enumerate() {
                     match inst {
@@ -1814,18 +1850,37 @@ pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String {
                             idx_hits += cache.hits;
                             idx_misses += cache.misses;
                         }
+                        Instruction::MapIndexCached(cache) => {
+                            let cache = cache.borrow();
+                            map_hits += cache.hits;
+                            map_misses += cache.misses;
+                        }
                         Instruction::CallValueCached(cache, _) => {
                             let cache = cache.borrow();
                             call_hits += cache.hits;
                             call_misses += cache.misses;
+                        }
+                        Instruction::LoadGlobalCached(_, cache) => {
+                            let cache = cache.borrow();
+                            global_hits += cache.hits;
+                            global_misses += cache.misses;
                         }
                         _ => {}
                     }
                     out.push_str(&format!("  {idx:04} {:?}\n", inst));
                 }
                 out.push_str(&format!(
-                    "  CacheMetrics bin(hits={}, misses={}) index(hits={}, misses={}) call(hits={}, misses={})\n",
-                    bin_hits, bin_misses, idx_hits, idx_misses, call_hits, call_misses
+                    "  CacheMetrics bin(hits={}, misses={}) index(hits={}, misses={}) map(hits={}, misses={}) call(hits={}, misses={}) global(hits={}, misses={})\n",
+                    bin_hits,
+                    bin_misses,
+                    idx_hits,
+                    idx_misses,
+                    map_hits,
+                    map_misses,
+                    call_hits,
+                    call_misses,
+                    global_hits,
+                    global_misses
                 ));
             } else if let Some(reason) = find_compile_failure(&resolved_body) {
                 out.push_str(&format!("  <compile failed: {reason}>\n"));
@@ -2126,6 +2181,15 @@ fn compile_reg_expr(
                     }
                     _ => {}
                 }
+                let index = compile_reg_expr(index, code, consts, alloc)?;
+                let dst = alloc.alloc();
+                code.push(RegInstruction::MapIndexCached {
+                    dst,
+                    target,
+                    index,
+                    cache: Rc::new(RefCell::new(MapAccessCache::default())),
+                });
+                return Some(dst);
             }
             let index = compile_reg_expr(index, code, consts, alloc)?;
             let dst = alloc.alloc();
@@ -2221,6 +2285,41 @@ fn is_inline_safe_arg(expr: &Expr) -> bool {
         }),
         _ => false,
     }
+}
+
+fn eval_map_index_cached(map: &MapValue, map_ptr: usize, key: &Rc<String>, cache: &Rc<RefCell<MapAccessCache>>) -> Value {
+    let mut cache_mut = cache.borrow_mut();
+    if let Some(entry) = cache_mut.entries[0].as_ref() {
+        if entry.map_ptr == map_ptr && entry.version == map.version && entry.key.as_ref() == key.as_ref() {
+            let value = entry.value.clone();
+            cache_mut.hits += 1;
+            return value;
+        }
+    }
+    if let Some(entry) = cache_mut.entries[1].as_ref() {
+        if entry.map_ptr == map_ptr && entry.version == map.version && entry.key.as_ref() == key.as_ref() {
+            let value = entry.value.clone();
+            cache_mut.hits += 1;
+            if let Some(entry1) = cache_mut.entries[1].take() {
+                cache_mut.entries[1] = cache_mut.entries[0].take();
+                cache_mut.entries[0] = Some(entry1);
+            }
+            return value;
+        }
+    }
+    cache_mut.misses += 1;
+    let value = map.data.get(key).cloned().unwrap_or(Value::Nil);
+    let new_entry = MapAccessCacheEntry {
+        map_ptr,
+        version: map.version,
+        key: key.clone(),
+        value: value.clone(),
+    };
+    if let Some(entry0) = cache_mut.entries[0].take() {
+        cache_mut.entries[1] = Some(entry0);
+    }
+    cache_mut.entries[0] = Some(new_entry);
+    value
 }
 
 fn eval_index_cached_value(index_val: Value, target_val: Value, cache: &Rc<RefCell<IndexCache>>) -> EvalResult {
@@ -2347,6 +2446,56 @@ fn eval_index_assign_value(target_val: Value, index_val: Value, value: Value) ->
     Ok(value)
 }
 
+fn lookup_env_value_with_owner(env_rc: &Rc<RefCell<Environment>>, name: SymbolId) -> Option<(Value, usize, u64)> {
+    let idx = name as usize;
+    let (parent, is_partial) = {
+        let env = env_rc.borrow();
+        if idx < env.values.len() {
+            let v = env.values[idx].clone();
+            let val = match v {
+                Value::Reference(r) => r.borrow().clone(),
+                _ => v,
+            };
+            let ptr = Rc::as_ptr(env_rc) as usize;
+            return Some((val, ptr, env.version));
+        }
+        (env.parent.clone(), env.is_partial)
+    };
+    if let Some(parent_rc) = parent {
+        if is_partial {
+            return lookup_env_value_with_owner(&parent_rc, name);
+        }
+        return lookup_env_value_recursive_with_owner(&parent_rc, name);
+    }
+    None
+}
+
+fn lookup_env_value_recursive_with_owner(env_rc: &Rc<RefCell<Environment>>, name: SymbolId) -> Option<(Value, usize, u64)> {
+    let idx = name as usize;
+    let parent = {
+        let env = env_rc.borrow();
+        if idx < env.values.len() {
+            let v = env.values[idx].clone();
+            return match v {
+                Value::Reference(r) => Some((r.borrow().clone(), Rc::as_ptr(env_rc) as usize, env.version)),
+                Value::Function(_) => Some((v, Rc::as_ptr(env_rc) as usize, env.version)),
+                _ => {
+                    if env.is_partial {
+                        Some((v, Rc::as_ptr(env_rc) as usize, env.version))
+                    } else {
+                        None
+                    }
+                }
+            };
+        }
+        env.parent.clone()
+    };
+    if let Some(parent_rc) = parent {
+        return lookup_env_value_recursive_with_owner(&parent_rc, name);
+    }
+    None
+}
+
 fn reg_binop_kind(op: RegBinOp) -> BinOpKind {
     match op {
         RegBinOp::Add => BinOpKind::Add,
@@ -2385,6 +2534,33 @@ fn execute_reg_instructions(
                     let l = regs[*left].clone();
                     let r = regs[*right].clone();
                     regs[*dst] = eval_cached_binop(reg_binop_kind(*op), cache, l, r)?;
+                }
+                RegInstruction::MapIndexCached { dst, target, index, cache } => {
+                    let target_val = regs[*target].clone();
+                    let index_val = regs[*index].clone();
+                    let result = match target_val {
+                        Value::Map(map) => {
+                            if let Value::String(s) = index_val {
+                                if s.as_str() == "keys" {
+                                    map_keys_array(&map.borrow())
+                                } else if s.as_str() == "values" {
+                                    map_values_array(&map.borrow())
+                                } else {
+                                    let map_ptr = Rc::as_ptr(&map) as usize;
+                                    let map_ref = map.borrow();
+                                    eval_map_index_cached(&map_ref, map_ptr, &s, cache)
+                                }
+                            } else {
+                                let key = intern::intern_owned(index_val.inspect());
+                                map.borrow().data.get(&key).cloned().unwrap_or(Value::Nil)
+                            }
+                        }
+                        Value::Array(_) | Value::F64Array(_) => {
+                            return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
+                        }
+                        _ => return Err(RuntimeError { message: "Index operator not supported on this type".to_string(), line: 0 }),
+                    };
+                    regs[*dst] = result;
                 }
                 RegInstruction::F64IndexCached { dst, target, index, cache } => {
                     let target_val = regs[*target].clone();
@@ -2567,6 +2743,57 @@ fn execute_instructions(
                 let val = stack.pop().unwrap();
                 if let Some(slot) = slots.get_mut(*s) {
                     *slot = val.clone();
+                }
+                stack.push(val);
+            }
+            Instruction::LoadGlobalCached(name, cache) => {
+                let cached = {
+                    let cache_ref = cache.borrow();
+                    if let Some(env_ptr) = cache_ref.env_ptr {
+                        let mut cached_val = None;
+                        let mut current = Some(interpreter.env.clone());
+                        while let Some(env_rc) = current {
+                            let env_ref = env_rc.borrow();
+                            if Rc::as_ptr(&env_rc) as usize == env_ptr {
+                                if env_ref.version == cache_ref.version {
+                                    cached_val = cache_ref.value.clone();
+                                }
+                                break;
+                            }
+                            current = env_ref.parent.clone();
+                        }
+                        cached_val
+                    } else {
+                        None
+                    }
+                };
+                if let Some(val) = cached {
+                    cache.borrow_mut().hits += 1;
+                    if let Value::Uninitialized = val {
+                        return Err(RuntimeError {
+                            message: format!("Variable '{}' used before assignment", symbol_name(*name).as_str()),
+                            line: 0,
+                        });
+                    }
+                    stack.push(val);
+                    continue;
+                }
+                let (val, env_ptr, version) = lookup_env_value_with_owner(&interpreter.env, *name).ok_or_else(|| RuntimeError {
+                    message: format!("Undefined variable: {}", symbol_name(*name).as_str()),
+                    line: 0,
+                })?;
+                cache.borrow_mut().misses += 1;
+                {
+                    let mut cache_mut = cache.borrow_mut();
+                    cache_mut.env_ptr = Some(env_ptr);
+                    cache_mut.version = version;
+                    cache_mut.value = Some(val.clone());
+                }
+                if let Value::Uninitialized = val {
+                    return Err(RuntimeError {
+                        message: format!("Variable '{}' used before assignment", symbol_name(*name).as_str()),
+                        line: 0,
+                    });
                 }
                 stack.push(val);
             }
@@ -3102,6 +3329,39 @@ fn execute_instructions(
                     line: 0,
                 })?;
                 let result = eval_index_cached_value(index_val, target_val, cache)?;
+                stack.push(result);
+            }
+            Instruction::MapIndexCached(cache) => {
+                let index_val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing index for index expression".to_string(),
+                    line: 0,
+                })?;
+                let target_val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing target for index expression".to_string(),
+                    line: 0,
+                })?;
+                let result = match target_val {
+                    Value::Map(map) => {
+                        if let Value::String(s) = index_val {
+                            if s.as_str() == "keys" {
+                                map_keys_array(&map.borrow())
+                            } else if s.as_str() == "values" {
+                                map_values_array(&map.borrow())
+                            } else {
+                                let map_ptr = Rc::as_ptr(&map) as usize;
+                                let map_ref = map.borrow();
+                                eval_map_index_cached(&map_ref, map_ptr, &s, cache)
+                            }
+                        } else {
+                            let key = intern::intern_owned(index_val.inspect());
+                            map.borrow().data.get(&key).cloned().unwrap_or(Value::Nil)
+                        }
+                    }
+                    Value::Array(_) | Value::F64Array(_) => {
+                        return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
+                    }
+                    _ => return Err(RuntimeError { message: "Index operator not supported on this type".to_string(), line: 0 }),
+                };
                 stack.push(result);
             }
             Instruction::F64IndexCached(cache) => {

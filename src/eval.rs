@@ -3146,6 +3146,18 @@ fn pop_args_from_stack(stack: &mut Vec<Value>, argc: usize) -> Result<smallvec::
     Ok(args)
 }
 
+fn pop_method_target_and_resolve(
+    stack: &mut Vec<Value>,
+    name: &Rc<String>,
+    map_cache: &Rc<RefCell<MapAccessCache>>,
+) -> EvalResult {
+    let target_val = stack.pop().ok_or_else(|| RuntimeError {
+        message: "Missing target for method call".to_string(),
+        line: 0,
+    })?;
+    resolve_method_value(target_val, name, map_cache)
+}
+
 fn execute_instructions(
     interpreter: &mut Interpreter,
     code: &[Instruction],
@@ -3326,21 +3338,13 @@ fn execute_instructions(
             }
             Instruction::CallMethodCached(name, map_cache, call_cache, argc) => {
                 let args = pop_args_from_stack(&mut stack, *argc)?;
-                let target_val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing target for method call".to_string(),
-                    line: 0,
-                })?;
-                let func_val = resolve_method_value(target_val, name, map_cache)?;
+                let func_val = pop_method_target_and_resolve(&mut stack, name, map_cache)?;
                 let result = eval_call_value_cached(interpreter, func_val, args, call_cache)?;
                 stack.push(result);
             }
             Instruction::CallMethodWithBlockCached(name, map_cache, call_cache, block, argc) => {
                 let args = pop_args_from_stack(&mut stack, *argc)?;
-                let target_val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing target for method call".to_string(),
-                    line: 0,
-                })?;
-                let func_val = resolve_method_value(target_val, name, map_cache)?;
+                let func_val = pop_method_target_and_resolve(&mut stack, name, map_cache)?;
                 let result = eval_call_value_cached_with_block(interpreter, func_val, args, call_cache, block)?;
                 stack.push(result);
             }

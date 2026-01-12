@@ -171,6 +171,7 @@ pub enum Instruction {
     ForRangeFloat { index_slot: usize, end: RangeEnd, step: f64, kind: FloatKind, body: Rc<Vec<Instruction>> },
     MakeArray(usize),
     MakeMap(usize),
+    F64ArrayGen { count: Option<usize> },
     Index,
     IndexCached(Rc<RefCell<IndexCache>>),
     IndexAssign,

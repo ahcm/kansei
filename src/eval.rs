@@ -1356,18 +1356,70 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
             }
         }
         ExprKind::Array(elements) => {
+            let mut all_f64 = true;
             for e in elements {
-                if !compile_expr(e, code, consts, true) { return false; }
+                match &e.kind {
+                    ExprKind::Float { value, kind } => {
+                        let idx = push_const(consts, make_float(*value, *kind));
+                        code.push(Instruction::LoadConstIdx(idx));
+                    }
+                    ExprKind::Integer { value, kind } => {
+                        let idx = push_const(consts, make_signed_int(*value, *kind));
+                        code.push(Instruction::LoadConstIdx(idx));
+                    }
+                    ExprKind::Unsigned { value, kind } => {
+                        let idx = push_const(consts, make_unsigned_int(*value, *kind));
+                        code.push(Instruction::LoadConstIdx(idx));
+                    }
+                    _ => {
+                        all_f64 = false;
+                        if !compile_expr(e, code, consts, true) { return false; }
+                    }
+                }
+                if all_f64 {
+                    match &e.kind {
+                        ExprKind::Float { .. } | ExprKind::Integer { .. } | ExprKind::Unsigned { .. } => {}
+                        _ => all_f64 = false,
+                    }
+                }
             }
-            code.push(Instruction::MakeArray(elements.len()));
+            if all_f64 {
+                code.push(Instruction::F64ArrayGen { count: Some(elements.len()) });
+            } else {
+                code.push(Instruction::MakeArray(elements.len()));
+            }
             if !want_value {
                 code.push(Instruction::Pop);
             }
         }
         ExprKind::ArrayGenerator { generator, size } => {
-            if !compile_expr(generator, code, consts, true) { return false; }
+            let mut use_f64_gen = false;
+            match &generator.kind {
+                ExprKind::Float { value, kind } => {
+                    let idx = push_const(consts, make_float(*value, *kind));
+                    code.push(Instruction::LoadConstIdx(idx));
+                    use_f64_gen = true;
+                }
+                ExprKind::Integer { value, kind } => {
+                    let idx = push_const(consts, make_signed_int(*value, *kind));
+                    code.push(Instruction::LoadConstIdx(idx));
+                    use_f64_gen = true;
+                }
+                ExprKind::Unsigned { value, kind } => {
+                    let idx = push_const(consts, make_unsigned_int(*value, *kind));
+                    code.push(Instruction::LoadConstIdx(idx));
+                    use_f64_gen = true;
+                }
+                _ => {
+                    if !compile_expr(generator, code, consts, true) { return false; }
+                }
+            }
             if !compile_expr(size, code, consts, true) { return false; }
-            code.push(Instruction::ArrayGen);
+            if use_f64_gen {
+                code.push(Instruction::F64ArrayGen { count: None });
+            } else {
+                code.push(Instruction::ArrayGen);
+            }
             if !want_value {
                 code.push(Instruction::Pop);
             }
@@ -2559,6 +2611,61 @@ fn execute_instructions(
                     _ => return Err(RuntimeError { message: "Index assignment not supported on this type".to_string(), line: 0 }),
                 }
                 stack.push(value);
+            }
+            Instruction::F64ArrayGen { count } => {
+                let n = if let Some(count) = count {
+                    *count
+                } else {
+                    let size_val = stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing size for array generator".to_string(),
+                        line: 0,
+                    })?;
+                    int_value_as_usize(&size_val).ok_or_else(|| RuntimeError {
+                        message: "Array size must be a non-negative integer".to_string(),
+                        line: 0,
+                    })?
+                };
+                if let Some(count) = count {
+                    if *count > stack.len() {
+                        return Err(RuntimeError { message: "Invalid array length".to_string(), line: 0 });
+                    }
+                    let mut vals: Vec<f64> = Vec::with_capacity(*count);
+                    for _ in 0..*count {
+                        let val = stack.pop().unwrap();
+                        let num = match val {
+                            Value::Float { value, .. } => value,
+                            Value::Integer { value, .. } => value as f64,
+                            Value::Unsigned { value, .. } => value as f64,
+                            _ => {
+                                return Err(RuntimeError {
+                                    message: "F64Array literal requires numeric elements".to_string(),
+                                    line: 0,
+                                });
+                            }
+                        };
+                        vals.push(num);
+                    }
+                    vals.reverse();
+                    stack.push(Value::F64Array(Rc::new(RefCell::new(vals))));
+                } else {
+                    let gen_val = stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing generator for array".to_string(),
+                        line: 0,
+                    })?;
+                    let num = match gen_val {
+                        Value::Float { value, .. } => value,
+                        Value::Integer { value, .. } => value as f64,
+                        Value::Unsigned { value, .. } => value as f64,
+                        _ => {
+                            return Err(RuntimeError {
+                                message: "F64Array generator requires numeric value".to_string(),
+                                line: 0,
+                            });
+                        }
+                    };
+                    let vals = vec![num; n];
+                    stack.push(Value::F64Array(Rc::new(RefCell::new(vals))));
+                }
             }
             Instruction::ArrayGen => {
                 let size_val = stack.pop().ok_or_else(|| RuntimeError {

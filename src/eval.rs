@@ -1137,10 +1137,10 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
                 code.push(Instruction::Pop);
             }
         }
-            ExprKind::Call { function, args, block, .. } => {
-                if block.is_some() {
-                    return false;
-                }
+        ExprKind::Call { function, args, block, .. } => {
+            if block.is_some() {
+                return false;
+            }
             if let ExprKind::Identifier { name, .. } = &function.kind {
                 if let Some(builtin) = builtin_from_symbol(*name) {
                     for arg in args {
@@ -1150,6 +1150,39 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
                         Builtin::Len if args.len() == 1 => code.push(Instruction::Len),
                         _ => code.push(Instruction::CallBuiltin(builtin, args.len())),
                     }
+                    if !want_value {
+                        code.push(Instruction::Pop);
+                    }
+                    return true;
+                }
+                if let ExprKind::Identifier { slot: None, name } = &function.kind {
+                    for arg in args {
+                        if !compile_expr(arg, code, consts, true) { return false; }
+                    }
+                    code.push(Instruction::CallGlobalCached(
+                        *name,
+                        Rc::new(RefCell::new(GlobalCache::default())),
+                        Rc::new(RefCell::new(CallSiteCache::default())),
+                        args.len(),
+                    ));
+                    if !want_value {
+                        code.push(Instruction::Pop);
+                    }
+                    return true;
+                }
+            }
+            if let ExprKind::Index { target, index } = &function.kind {
+                if let ExprKind::String(name) = &index.kind {
+                    if !compile_expr(target, code, consts, true) { return false; }
+                    for arg in args {
+                        if !compile_expr(arg, code, consts, true) { return false; }
+                    }
+                    code.push(Instruction::CallMethodCached(
+                        name.clone(),
+                        Rc::new(RefCell::new(MapAccessCache::default())),
+                        Rc::new(RefCell::new(CallSiteCache::default())),
+                        args.len(),
+                    ));
                     if !want_value {
                         code.push(Instruction::Pop);
                     }
@@ -1745,6 +1778,22 @@ pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String {
                         call_hits += cache.hits;
                         call_misses += cache.misses;
                     }
+                    Instruction::CallGlobalCached(_, global_cache, call_cache, _) => {
+                        let cache = call_cache.borrow();
+                        call_hits += cache.hits;
+                        call_misses += cache.misses;
+                        let cache = global_cache.borrow();
+                        global_hits += cache.hits;
+                        global_misses += cache.misses;
+                    }
+                    Instruction::CallMethodCached(_, map_cache, call_cache, _) => {
+                        let cache = call_cache.borrow();
+                        call_hits += cache.hits;
+                        call_misses += cache.misses;
+                        let cache = map_cache.borrow();
+                        map_hits += cache.hits;
+                        map_misses += cache.misses;
+                    }
                     Instruction::LoadGlobalCached(_, cache) => {
                         let cache = cache.borrow();
                         global_hits += cache.hits;
@@ -1859,6 +1908,22 @@ pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String {
                             let cache = cache.borrow();
                             call_hits += cache.hits;
                             call_misses += cache.misses;
+                        }
+                        Instruction::CallGlobalCached(_, global_cache, call_cache, _) => {
+                            let cache = call_cache.borrow();
+                            call_hits += cache.hits;
+                            call_misses += cache.misses;
+                            let cache = global_cache.borrow();
+                            global_hits += cache.hits;
+                            global_misses += cache.misses;
+                        }
+                        Instruction::CallMethodCached(_, map_cache, call_cache, _) => {
+                            let cache = call_cache.borrow();
+                            call_hits += cache.hits;
+                            call_misses += cache.misses;
+                            let cache = map_cache.borrow();
+                            map_hits += cache.hits;
+                            map_misses += cache.misses;
                         }
                         Instruction::LoadGlobalCached(_, cache) => {
                             let cache = cache.borrow();
@@ -2514,6 +2579,123 @@ fn lookup_env_value_recursive_with_owner(env_rc: &Rc<RefCell<Environment>>, name
     None
 }
 
+fn load_global_cached(interpreter: &mut Interpreter, name: SymbolId, cache: &Rc<RefCell<GlobalCache>>) -> EvalResult {
+    let cached = {
+        let cache_ref = cache.borrow();
+        if let Some(env_ptr) = cache_ref.env_ptr {
+            let mut cached_val = None;
+            let mut current = Some(interpreter.env.clone());
+            while let Some(env_rc) = current {
+                let env_ref = env_rc.borrow();
+                if Rc::as_ptr(&env_rc) as usize == env_ptr {
+                    if env_ref.version == cache_ref.version {
+                        cached_val = cache_ref.value.clone();
+                    }
+                    break;
+                }
+                current = env_ref.parent.clone();
+            }
+            cached_val
+        } else {
+            None
+        }
+    };
+    if let Some(val) = cached {
+        cache.borrow_mut().hits += 1;
+        if let Value::Uninitialized = val {
+            return Err(RuntimeError {
+                message: format!("Variable '{}' used before assignment", symbol_name(name).as_str()),
+                line: 0,
+            });
+        }
+        return Ok(val);
+    }
+
+    let (val, env_ptr, version) = lookup_env_value_with_owner(&interpreter.env, name).ok_or_else(|| RuntimeError {
+        message: format!("Undefined variable: {}", symbol_name(name).as_str()),
+        line: 0,
+    })?;
+    cache.borrow_mut().misses += 1;
+    {
+        let mut cache_mut = cache.borrow_mut();
+        cache_mut.env_ptr = Some(env_ptr);
+        cache_mut.version = version;
+        cache_mut.value = Some(val.clone());
+    }
+    if let Value::Uninitialized = val {
+        return Err(RuntimeError {
+            message: format!("Variable '{}' used before assignment", symbol_name(name).as_str()),
+            line: 0,
+        });
+    }
+    Ok(val)
+}
+
+fn eval_call_value_cached(
+    interpreter: &mut Interpreter,
+    func_val: Value,
+    arg_vals: smallvec::SmallVec<[Value; 8]>,
+    cache: &Rc<RefCell<CallSiteCache>>,
+) -> EvalResult {
+    if let Value::Function(func_data) = &func_val {
+        let func_ptr = Rc::as_ptr(func_data) as usize;
+        let mut cache_mut = cache.borrow_mut();
+        if cache_mut.func_ptr == Some(func_ptr) {
+            cache_mut.hits += 1;
+            if arg_vals.len() < func_data.params.len() {
+                return Err(RuntimeError { message: "Too few arguments".to_string(), line: 0 });
+            }
+            if arg_vals.len() > func_data.params.len() {
+                return Err(RuntimeError { message: "Too many arguments".to_string(), line: 0 });
+            }
+            if let Some(reg_code) = &func_data.reg_code {
+                let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, func_data.declarations.len());
+                for (i, val) in arg_vals.into_iter().enumerate() {
+                    new_slots[i + func_data.param_offset] = val;
+                }
+                return execute_reg_instructions(interpreter, reg_code, &mut new_slots);
+            }
+            if let Some(code) = &func_data.code {
+                let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, func_data.declarations.len());
+                for (i, val) in arg_vals.into_iter().enumerate() {
+                    new_slots[i + func_data.param_offset] = val;
+                }
+                let result = if func_data.uses_env {
+                    let original_env = interpreter.env.clone();
+                    interpreter.env = func_data.env.clone();
+                    let result = execute_instructions(interpreter, code, &func_data.const_pool, &mut new_slots);
+                    interpreter.env = original_env;
+                    result?
+                } else {
+                    execute_instructions(interpreter, code, &func_data.const_pool, &mut new_slots)?
+                };
+                return Ok(result);
+            }
+        } else {
+            cache_mut.func_ptr = Some(func_ptr);
+            cache_mut.native_ptr = None;
+            cache_mut.misses += 1;
+        }
+    } else if let Value::NativeFunction(func) = &func_val {
+        let func_ptr = *func as usize;
+        let mut cache_mut = cache.borrow_mut();
+        if cache_mut.native_ptr == Some(func_ptr) {
+            cache_mut.hits += 1;
+            return func(&arg_vals).map_err(|message| RuntimeError { message, line: 0 });
+        } else {
+            cache_mut.native_ptr = Some(func_ptr);
+            cache_mut.func_ptr = None;
+            cache_mut.misses += 1;
+        }
+    } else {
+        let mut cache_mut = cache.borrow_mut();
+        cache_mut.func_ptr = None;
+        cache_mut.native_ptr = None;
+        cache_mut.misses += 1;
+    }
+    interpreter.call_value(func_val, arg_vals, 0, None)
+}
+
 fn reg_binop_kind(op: RegBinOp) -> BinOpKind {
     match op {
         RegBinOp::Add => BinOpKind::Add,
@@ -2531,62 +2713,6 @@ fn execute_reg_instructions(
     reg: &RegFunction,
     slots: &mut [Value],
 ) -> EvalResult {
-    fn eval_call_value_cached(
-        interpreter: &mut Interpreter,
-        func_val: Value,
-        arg_vals: smallvec::SmallVec<[Value; 8]>,
-        cache: &Rc<RefCell<CallSiteCache>>,
-    ) -> EvalResult {
-        if let Value::Function(func_data) = &func_val {
-            let func_ptr = Rc::as_ptr(func_data) as usize;
-            let mut cache_mut = cache.borrow_mut();
-            if cache_mut.func_ptr == Some(func_ptr) {
-                cache_mut.hits += 1;
-                if arg_vals.len() < func_data.params.len() {
-                    return Err(RuntimeError { message: "Too few arguments".to_string(), line: 0 });
-                }
-                if arg_vals.len() > func_data.params.len() {
-                    return Err(RuntimeError { message: "Too many arguments".to_string(), line: 0 });
-                }
-                if let Some(reg_code) = &func_data.reg_code {
-                    let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, func_data.declarations.len());
-                    for (i, val) in arg_vals.into_iter().enumerate() {
-                        new_slots[i + func_data.param_offset] = val;
-                    }
-                    return execute_reg_instructions(interpreter, reg_code, &mut new_slots);
-                }
-                if let Some(code) = &func_data.code {
-                    let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, func_data.declarations.len());
-                    for (i, val) in arg_vals.into_iter().enumerate() {
-                        new_slots[i + func_data.param_offset] = val;
-                    }
-                    return execute_instructions(interpreter, code, &func_data.const_pool, &mut new_slots);
-                }
-            } else {
-                cache_mut.func_ptr = Some(func_ptr);
-                cache_mut.native_ptr = None;
-                cache_mut.misses += 1;
-            }
-        } else if let Value::NativeFunction(func) = &func_val {
-            let func_ptr = *func as usize;
-            let mut cache_mut = cache.borrow_mut();
-            if cache_mut.native_ptr == Some(func_ptr) {
-                cache_mut.hits += 1;
-                return func(&arg_vals).map_err(|message| RuntimeError { message, line: 0 });
-            } else {
-                cache_mut.native_ptr = Some(func_ptr);
-                cache_mut.func_ptr = None;
-                cache_mut.misses += 1;
-            }
-        } else {
-            let mut cache_mut = cache.borrow_mut();
-            cache_mut.func_ptr = None;
-            cache_mut.native_ptr = None;
-            cache_mut.misses += 1;
-        }
-        interpreter.call_value(func_val, arg_vals, 0, None)
-    }
-
     let mut regs = interpreter.get_reg_buffer(reg.reg_count);
     let result = (|| {
         for inst in &reg.code {
@@ -2797,54 +2923,7 @@ fn execute_instructions(
                 stack.push(val);
             }
             Instruction::LoadGlobalCached(name, cache) => {
-                let cached = {
-                    let cache_ref = cache.borrow();
-                    if let Some(env_ptr) = cache_ref.env_ptr {
-                        let mut cached_val = None;
-                        let mut current = Some(interpreter.env.clone());
-                        while let Some(env_rc) = current {
-                            let env_ref = env_rc.borrow();
-                            if Rc::as_ptr(&env_rc) as usize == env_ptr {
-                                if env_ref.version == cache_ref.version {
-                                    cached_val = cache_ref.value.clone();
-                                }
-                                break;
-                            }
-                            current = env_ref.parent.clone();
-                        }
-                        cached_val
-                    } else {
-                        None
-                    }
-                };
-                if let Some(val) = cached {
-                    cache.borrow_mut().hits += 1;
-                    if let Value::Uninitialized = val {
-                        return Err(RuntimeError {
-                            message: format!("Variable '{}' used before assignment", symbol_name(*name).as_str()),
-                            line: 0,
-                        });
-                    }
-                    stack.push(val);
-                    continue;
-                }
-                let (val, env_ptr, version) = lookup_env_value_with_owner(&interpreter.env, *name).ok_or_else(|| RuntimeError {
-                    message: format!("Undefined variable: {}", symbol_name(*name).as_str()),
-                    line: 0,
-                })?;
-                cache.borrow_mut().misses += 1;
-                {
-                    let mut cache_mut = cache.borrow_mut();
-                    cache_mut.env_ptr = Some(env_ptr);
-                    cache_mut.version = version;
-                    cache_mut.value = Some(val.clone());
-                }
-                if let Value::Uninitialized = val {
-                    return Err(RuntimeError {
-                        message: format!("Variable '{}' used before assignment", symbol_name(*name).as_str()),
-                        line: 0,
-                    });
-                }
+                let val = load_global_cached(interpreter, *name, cache)?;
                 stack.push(val);
             }
             Instruction::LoadGlobal(name) => {
@@ -2992,69 +3071,53 @@ fn execute_instructions(
                     message: "Missing function value for call".to_string(),
                     line: 0,
                 })?;
-                let func_val = func_val;
-                if let Value::Function(func) = &func_val {
-                    let func_ptr = Rc::as_ptr(func) as usize;
-                    let mut cache_mut = cache.borrow_mut();
-                    if cache_mut.func_ptr == Some(func_ptr) {
-                        cache_mut.hits += 1;
-                        if args.len() < func.params.len() {
-                            return Err(RuntimeError { message: "Too few arguments".to_string(), line: 0 });
-                        }
-                        if args.len() > func.params.len() {
-                            return Err(RuntimeError { message: "Too many arguments".to_string(), line: 0 });
-                        }
-                        if let Some(reg_code) = &func.reg_code {
-                            let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, func.declarations.len());
-                            for (i, val) in args.into_iter().enumerate() {
-                                new_slots[i + func.param_offset] = val;
-                            }
-                            let result = execute_reg_instructions(interpreter, reg_code, &mut new_slots)?;
-                            stack.push(result);
-                            continue;
-                        }
-                        if let Some(code) = &func.code {
-                            let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(Value::Uninitialized, func.declarations.len());
-                            for (i, val) in args.into_iter().enumerate() {
-                                new_slots[i + func.param_offset] = val;
-                            }
-                            let result = if func.uses_env {
-                                let original_env = interpreter.env.clone();
-                                interpreter.env = func.env.clone();
-                                let result = execute_instructions(interpreter, code, &func.const_pool, &mut new_slots);
-                                interpreter.env = original_env;
-                                result?
-                            } else {
-                                execute_instructions(interpreter, code, &func.const_pool, &mut new_slots)?
-                            };
-                            stack.push(result);
-                            continue;
-                        }
-                    } else {
-                        cache_mut.func_ptr = Some(func_ptr);
-                        cache_mut.native_ptr = None;
-                        cache_mut.misses += 1;
-                    }
-                } else if let Value::NativeFunction(func) = &func_val {
-                    let func_ptr = *func as usize;
-                    let mut cache_mut = cache.borrow_mut();
-                    if cache_mut.native_ptr == Some(func_ptr) {
-                        cache_mut.hits += 1;
-                        let result = func(&args).map_err(|message| RuntimeError { message, line: 0 })?;
-                        stack.push(result);
-                        continue;
-                    } else {
-                        cache_mut.native_ptr = Some(func_ptr);
-                        cache_mut.func_ptr = None;
-                        cache_mut.misses += 1;
-                    }
-                } else {
-                    let mut cache_mut = cache.borrow_mut();
-                    cache_mut.func_ptr = None;
-                    cache_mut.native_ptr = None;
-                    cache_mut.misses += 1;
+                let result = eval_call_value_cached(interpreter, func_val, args, cache)?;
+                stack.push(result);
+            }
+            Instruction::CallGlobalCached(name, global_cache, call_cache, argc) => {
+                if *argc > stack.len() {
+                    return Err(RuntimeError { message: "Invalid argument count".to_string(), line: 0 });
                 }
-                let result = interpreter.call_value(func_val, args, 0, None)?;
+                let mut args = smallvec::SmallVec::<[Value; 8]>::with_capacity(*argc);
+                for _ in 0..*argc {
+                    args.push(stack.pop().unwrap());
+                }
+                args.reverse();
+                let func_val = load_global_cached(interpreter, *name, global_cache)?;
+                let result = eval_call_value_cached(interpreter, func_val, args, call_cache)?;
+                stack.push(result);
+            }
+            Instruction::CallMethodCached(name, map_cache, call_cache, argc) => {
+                if *argc > stack.len() {
+                    return Err(RuntimeError { message: "Invalid argument count".to_string(), line: 0 });
+                }
+                let mut args = smallvec::SmallVec::<[Value; 8]>::with_capacity(*argc);
+                for _ in 0..*argc {
+                    args.push(stack.pop().unwrap());
+                }
+                args.reverse();
+                let target_val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing target for method call".to_string(),
+                    line: 0,
+                })?;
+                let func_val = match target_val {
+                    Value::Map(map) => {
+                        if name.as_str() == "keys" {
+                            map_keys_array(&map.borrow())
+                        } else if name.as_str() == "values" {
+                            map_values_array(&map.borrow())
+                        } else {
+                            let map_ptr = Rc::as_ptr(&map) as usize;
+                            let map_ref = map.borrow();
+                            eval_map_index_cached(&map_ref, map_ptr, name, map_cache)
+                        }
+                    }
+                    Value::Array(_) | Value::F64Array(_) => {
+                        return Err(RuntimeError { message: "Array index must be an integer".to_string(), line: 0 });
+                    }
+                    _ => return Err(RuntimeError { message: "Index operator not supported on this type".to_string(), line: 0 }),
+                };
+                let result = eval_call_value_cached(interpreter, func_val, args, call_cache)?;
                 stack.push(result);
             }
             Instruction::ForEach { var_slot, body } => {

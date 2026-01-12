@@ -194,6 +194,8 @@ pub enum Instruction {
     MulCached(Rc<RefCell<BinaryOpCache>>),
     DivCached(Rc<RefCell<BinaryOpCache>>),
     CallValueCached(Rc<RefCell<CallSiteCache>>, usize),
+    CallGlobalCached(SymbolId, Rc<RefCell<GlobalCache>>, Rc<RefCell<CallSiteCache>>, usize),
+    CallMethodCached(Rc<String>, Rc<RefCell<MapAccessCache>>, Rc<RefCell<CallSiteCache>>, usize),
     ArrayGen,
     Dup,
     F64Axpy { dst_slot: usize, dst_index_slot: usize, src_slot: usize, src_index_slot: usize },

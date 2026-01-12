@@ -1121,16 +1121,19 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
                 code.push(Instruction::Pop);
             }
         }
-        ExprKind::Call { function, args, block, .. } => {
-            if block.is_some() {
-                return false;
-            }
+            ExprKind::Call { function, args, block, .. } => {
+                if block.is_some() {
+                    return false;
+                }
             if let ExprKind::Identifier { name, .. } = &function.kind {
                 if let Some(builtin) = builtin_from_symbol(*name) {
                     for arg in args {
                         if !compile_expr(arg, code, consts, true) { return false; }
                     }
-                    code.push(Instruction::CallBuiltin(builtin, args.len()));
+                    match builtin {
+                        Builtin::Len if args.len() == 1 => code.push(Instruction::Len),
+                        _ => code.push(Instruction::CallBuiltin(builtin, args.len())),
+                    }
                     if !want_value {
                         code.push(Instruction::Pop);
                     }
@@ -1151,6 +1154,25 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
         }
         ExprKind::Index { target, index } => {
             if !compile_expr(target, code, consts, true) { return false; }
+            if let ExprKind::String(name) = &index.kind {
+                match name.as_str() {
+                    "keys" => {
+                        code.push(Instruction::MapKeys);
+                        if !want_value {
+                            code.push(Instruction::Pop);
+                        }
+                        return true;
+                    }
+                    "values" => {
+                        code.push(Instruction::MapValues);
+                        if !want_value {
+                            code.push(Instruction::Pop);
+                        }
+                        return true;
+                    }
+                    _ => {}
+                }
+            }
             if !compile_expr(index, code, consts, true) { return false; }
             code.push(Instruction::F64IndexCached(Rc::new(RefCell::new(crate::value::IndexCache::default()))));
             if !want_value {
@@ -2206,6 +2228,20 @@ fn execute_instructions(
                 let result = interpreter.call_builtin(builtin, &args)?;
                 stack.push(result);
             }
+            Instruction::Len => {
+                let val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing argument for len".to_string(),
+                    line: 0,
+                })?;
+                let result = match val {
+                    Value::String(s) => default_int(s.len() as i128),
+                    Value::Array(arr) => default_int(arr.borrow().len() as i128),
+                    Value::F64Array(arr) => default_int(arr.borrow().len() as i128),
+                    Value::Map(map) => default_int(map.borrow().data.len() as i128),
+                    _ => default_int(0),
+                };
+                stack.push(result);
+            }
             Instruction::CallValue(argc) => {
                 if *argc > stack.len() {
                     return Err(RuntimeError { message: "Invalid argument count".to_string(), line: 0 });
@@ -2220,6 +2256,28 @@ fn execute_instructions(
                     line: 0,
                 })?;
                 let result = interpreter.call_value(func_val, args, 0, None)?;
+                stack.push(result);
+            }
+            Instruction::MapKeys => {
+                let target_val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing target for map keys".to_string(),
+                    line: 0,
+                })?;
+                let result = match target_val {
+                    Value::Map(map) => map_keys_array(&map.borrow()),
+                    _ => Value::Nil,
+                };
+                stack.push(result);
+            }
+            Instruction::MapValues => {
+                let target_val = stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing target for map values".to_string(),
+                    line: 0,
+                })?;
+                let result = match target_val {
+                    Value::Map(map) => map_values_array(&map.borrow()),
+                    _ => Value::Nil,
+                };
                 stack.push(result);
             }
             Instruction::CallValueCached(cache, argc) => {

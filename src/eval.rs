@@ -1103,13 +1103,104 @@ fn compile_expr(expr: &Expr, code: &mut Vec<Instruction>, consts: &mut Vec<Value
     true
 }
 
-pub fn compile_for_dump(expr: &Expr) -> Option<(Vec<Instruction>, Vec<Value>)> {
-    let mut code = Vec::new();
-    let mut consts = Vec::new();
-    if compile_expr(expr, &mut code, &mut consts, true) {
-        Some((code, consts))
-    } else {
-        None
+fn find_compile_failure(expr: &Expr) -> Option<String> {
+    match &expr.kind {
+        ExprKind::Identifier { slot: None, .. } => {
+            return Some("identifier without slot (global lookup) not supported in bytecode".to_string());
+        }
+        ExprKind::FunctionDef { .. } => {
+            return Some("function definition not supported in bytecode dump; functions are dumped separately".to_string());
+        }
+        ExprKind::AnonymousFunction { .. } => {
+            return Some("anonymous function not supported in bytecode".to_string());
+        }
+        ExprKind::Call { block: Some(_), .. } => {
+            return Some("call with block not supported in bytecode".to_string());
+        }
+        ExprKind::Use(_) => {
+            return Some("use not supported in bytecode".to_string());
+        }
+        ExprKind::Load(_) => {
+            return Some("load not supported in bytecode".to_string());
+        }
+        ExprKind::FormatString(_) => {
+            return Some("format string not supported in bytecode".to_string());
+        }
+        ExprKind::Shell(_) => {
+            return Some("shell command not supported in bytecode".to_string());
+        }
+        ExprKind::Reference(_) => {
+            return Some("reference expression not supported in bytecode".to_string());
+        }
+        ExprKind::For { var_slot: None, .. } => {
+            return Some("for-loop variable not resolved to slot".to_string());
+        }
+        ExprKind::Loop { var_slot: None, .. } => {
+            return Some("loop variable not resolved to slot".to_string());
+        }
+        ExprKind::Loop { count, var_slot: Some(_), .. } => {
+            match &count.kind {
+                ExprKind::Identifier { slot: Some(_), .. }
+                | ExprKind::Integer { .. }
+                | ExprKind::Unsigned { .. }
+                | ExprKind::Float { .. } => {}
+                _ => {
+                    return Some("loop count not supported for bytecode (needs literal or slot)".to_string());
+                }
+            }
+        }
+        _ => {}
+    }
+
+    match &expr.kind {
+        ExprKind::BinaryOp { left, right, .. } => {
+            find_compile_failure(left).or_else(|| find_compile_failure(right))
+        }
+        ExprKind::If { condition, then_branch, else_branch } => {
+            find_compile_failure(condition)
+                .or_else(|| find_compile_failure(then_branch))
+                .or_else(|| else_branch.as_ref().and_then(|e| find_compile_failure(e)))
+        }
+        ExprKind::While { condition, body } => {
+            find_compile_failure(condition).or_else(|| find_compile_failure(body))
+        }
+        ExprKind::For { iterable, body, .. } => {
+            find_compile_failure(iterable).or_else(|| find_compile_failure(body))
+        }
+        ExprKind::Loop { count, body, .. } => {
+            find_compile_failure(count).or_else(|| find_compile_failure(body))
+        }
+        ExprKind::Call { function, args, block, .. } => {
+            find_compile_failure(function)
+                .or_else(|| args.iter().find_map(find_compile_failure))
+                .or_else(|| block.as_ref().and_then(|c| find_compile_failure(&c.body)))
+        }
+        ExprKind::Array(elements) => elements.iter().find_map(find_compile_failure),
+        ExprKind::ArrayGenerator { generator, size } => {
+            find_compile_failure(generator).or_else(|| find_compile_failure(size))
+        }
+        ExprKind::Map(entries) => entries
+            .iter()
+            .find_map(|(k, v)| find_compile_failure(k).or_else(|| find_compile_failure(v))),
+        ExprKind::Index { target, index } => {
+            find_compile_failure(target).or_else(|| find_compile_failure(index))
+        }
+        ExprKind::IndexAssignment { target, index, value } => {
+            find_compile_failure(target)
+                .or_else(|| find_compile_failure(index))
+                .or_else(|| find_compile_failure(value))
+        }
+        ExprKind::Block(stmts) => stmts.iter().find_map(find_compile_failure),
+        ExprKind::Assignment { value, .. } => find_compile_failure(value),
+        ExprKind::Yield(args) => args.iter().find_map(find_compile_failure),
+        ExprKind::FormatString(parts) => parts.iter().find_map(|part| {
+            if let crate::ast::FormatPart::Expr { expr, .. } = part {
+                find_compile_failure(expr)
+            } else {
+                None
+            }
+        }),
+        _ => None,
     }
 }
 
@@ -1211,17 +1302,23 @@ pub fn dump_bytecode(ast: &Expr) -> String {
     out.push_str(&format!("{:#?}\n", ast));
 
     out.push_str("Top-level bytecode:\n");
-    if let Some((code, consts)) = compile_for_dump(ast) {
-        out.push_str("  Constants:\n");
-        for (idx, value) in consts.iter().enumerate() {
-            out.push_str(&format!("  [{idx}] {}\n", value.inspect()));
+    {
+        let mut code = Vec::new();
+        let mut consts = Vec::new();
+        if compile_expr(ast, &mut code, &mut consts, true) {
+            out.push_str("  Constants:\n");
+            for (idx, value) in consts.iter().enumerate() {
+                out.push_str(&format!("  [{idx}] {}\n", value.inspect()));
+            }
+            out.push_str("  Bytecode:\n");
+            for (idx, inst) in code.iter().enumerate() {
+                out.push_str(&format!("  {idx:04} {:?}\n", inst));
+            }
+        } else if let Some(reason) = find_compile_failure(ast) {
+            out.push_str(&format!("  <compile failed: {reason}>\n"));
+        } else {
+            out.push_str("  <compile failed: unknown reason>\n");
         }
-        out.push_str("  Bytecode:\n");
-        for (idx, inst) in code.iter().enumerate() {
-            out.push_str(&format!("  {idx:04} {:?}\n", inst));
-        }
-    } else {
-        out.push_str("  <unavailable>\n");
     }
 
     let mut functions = Vec::new();
@@ -1264,8 +1361,10 @@ pub fn dump_bytecode(ast: &Expr) -> String {
                 for (idx, inst) in code.iter().enumerate() {
                     out.push_str(&format!("  {idx:04} {:?}\n", inst));
                 }
+            } else if let Some(reason) = find_compile_failure(&resolved_body) {
+                out.push_str(&format!("  <compile failed: {reason}>\n"));
             } else {
-                out.push_str("  <compile failed>\n");
+                out.push_str("  <compile failed: unknown reason>\n");
             }
         } else {
             out.push_str("  <not compiled>\n");

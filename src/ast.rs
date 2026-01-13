@@ -1,6 +1,6 @@
+use crate::intern::SymbolId;
 use std::cell::RefCell;
 use std::rc::Rc;
-use crate::intern::SymbolId;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Op
@@ -16,14 +16,16 @@ pub enum Op
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FloatKind {
+pub enum FloatKind
+{
     F32,
     F64,
     F128,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IntKind {
+pub enum IntKind
+{
     I8,
     I16,
     I32,
@@ -44,7 +46,8 @@ pub struct Closure
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Expr {
+pub struct Expr
+{
     pub kind: ExprKind,
     pub line: usize,
 }
@@ -53,12 +56,28 @@ pub struct Expr {
 pub enum ExprKind
 {
     // Basic Values
-    Integer { value: i128, kind: IntKind },
-    Unsigned { value: u128, kind: IntKind },
-    Float { value: f64, kind: FloatKind },
-    Identifier { name: SymbolId, slot: Option<usize> },
+    Integer
+    {
+        value: i128,
+        kind: IntKind,
+    },
+    Unsigned
+    {
+        value: u128,
+        kind: IntKind,
+    },
+    Float
+    {
+        value: f64,
+        kind: FloatKind,
+    },
+    Identifier
+    {
+        name: SymbolId,
+        slot: Option<usize>,
+    },
     Reference(SymbolId), // &x
-    String(Rc<String>), // "hello"
+    String(Rc<String>),  // "hello"
     Boolean(bool),
     Nil,
     Shell(Rc<String>), // `ls`
@@ -161,12 +180,18 @@ pub enum ExprKind
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum FormatPart {
+pub enum FormatPart
+{
     Literal(Rc<String>),
-    Expr { expr: Box<Expr>, spec: Option<FormatSpec> },
+    Expr
+    {
+        expr: Box<Expr>,
+        spec: Option<FormatSpec>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct FormatSpec {
+pub struct FormatSpec
+{
     pub precision: Option<usize>,
 }

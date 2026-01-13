@@ -1,9 +1,9 @@
 use crate::ast::{Closure, Expr, FloatKind, IntKind};
-use crate::wasm::WasmFunction;
 use crate::intern::SymbolId;
+use crate::wasm::WasmFunction;
 use rustc_hash::FxHashMap;
-use std::fmt;
 use std::cell::RefCell;
+use std::fmt;
 use std::rc::Rc;
 
 use smallvec::SmallVec;
@@ -11,7 +11,8 @@ use smallvec::SmallVec;
 pub type NativeFunction = fn(&[Value]) -> Result<Value, String>;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Environment {
+pub struct Environment
+{
     pub values: Vec<Value>,
     pub slots: SmallVec<[Value; 8]>,
     pub parent: Option<Rc<RefCell<Environment>>>,
@@ -19,12 +20,21 @@ pub struct Environment {
     pub version: u64,
 }
 
-impl Environment {
-    pub fn new(parent: Option<Rc<RefCell<Environment>>>) -> Self {
-        Self { values: Vec::new(), slots: SmallVec::new(), parent, is_partial: false, version: 0 }
+impl Environment
+{
+    pub fn new(parent: Option<Rc<RefCell<Environment>>>) -> Self
+    {
+        Self {
+            values: Vec::new(),
+            slots: SmallVec::new(),
+            parent,
+            is_partial: false,
+            version: 0,
+        }
     }
 
-    pub fn reset(&mut self, parent: Option<Rc<RefCell<Environment>>>, is_partial: bool) {
+    pub fn reset(&mut self, parent: Option<Rc<RefCell<Environment>>>, is_partial: bool)
+    {
         self.values.clear();
         self.slots.clear();
         self.parent = parent;
@@ -32,55 +42,78 @@ impl Environment {
         self.version = 0;
     }
 
-    pub fn get(&self, name: SymbolId) -> Option<Value> {
+    pub fn get(&self, name: SymbolId) -> Option<Value>
+    {
         let idx = name as usize;
-        if idx < self.values.len() {
+        if idx < self.values.len()
+        {
             let v = &self.values[idx];
-             match v {
-                 Value::Reference(r) => Some(r.borrow().clone()),
-                 _ => Some(v.clone()),
-             }
-        } else if let Some(parent) = &self.parent {
-            if self.is_partial {
+            match v
+            {
+                Value::Reference(r) => Some(r.borrow().clone()),
+                _ => Some(v.clone()),
+            }
+        }
+        else if let Some(parent) = &self.parent
+        {
+            if self.is_partial
+            {
                 parent.borrow().get(name)
-            } else {
+            }
+            else
+            {
                 // Strictly controlled recursion for functions/references
                 parent.borrow().get_recursive(name)
             }
-        } else {
+        }
+        else
+        {
             None
         }
     }
 
-    pub fn get_recursive(&self, name: SymbolId) -> Option<Value> {
+    pub fn get_recursive(&self, name: SymbolId) -> Option<Value>
+    {
         let idx = name as usize;
-        if idx < self.values.len() {
+        if idx < self.values.len()
+        {
             let v = &self.values[idx];
-             match v {
-                 Value::Function(_) | Value::Reference(_) => {
-                     // Dereference if it's a reference
-                     if let Value::Reference(r) = v {
-                         return Some(r.borrow().clone());
-                     }
-                     return Some(v.clone());
-                 }
-                 _ => {
-                     if self.is_partial {
-                         return Some(v.clone());
-                     }
-                     return None;
-                 }
-             }
-        } else if let Some(parent) = &self.parent {
+            match v
+            {
+                Value::Function(_) | Value::Reference(_) =>
+                {
+                    // Dereference if it's a reference
+                    if let Value::Reference(r) = v
+                    {
+                        return Some(r.borrow().clone());
+                    }
+                    return Some(v.clone());
+                }
+                _ =>
+                {
+                    if self.is_partial
+                    {
+                        return Some(v.clone());
+                    }
+                    return None;
+                }
+            }
+        }
+        else if let Some(parent) = &self.parent
+        {
             parent.borrow().get_recursive(name)
-        } else {
+        }
+        else
+        {
             None
         }
     }
 
-    pub fn define(&mut self, name: SymbolId, val: Value) {
+    pub fn define(&mut self, name: SymbolId, val: Value)
+    {
         let idx = name as usize;
-        if idx >= self.values.len() {
+        if idx >= self.values.len()
+        {
             self.values.resize(idx + 1, Value::Uninitialized);
         }
         self.values[idx] = val;
@@ -88,28 +121,37 @@ impl Environment {
     }
 
     // Set variable in current scope. If it's a reference, update referee.
-    pub fn set(&mut self, name: SymbolId, val: Value) {
-         let idx = name as usize;
-         if idx >= self.values.len() {
-             self.values.resize(idx + 1, Value::Uninitialized);
-         }
-         if let Some(Value::Reference(r)) = self.values.get(idx) {
-             *r.borrow_mut() = val;
-         } else {
-             self.values[idx] = val;
-         }
-         self.version = self.version.wrapping_add(1);
+    pub fn set(&mut self, name: SymbolId, val: Value)
+    {
+        let idx = name as usize;
+        if idx >= self.values.len()
+        {
+            self.values.resize(idx + 1, Value::Uninitialized);
+        }
+        if let Some(Value::Reference(r)) = self.values.get(idx)
+        {
+            *r.borrow_mut() = val;
+        }
+        else
+        {
+            self.values[idx] = val;
+        }
+        self.version = self.version.wrapping_add(1);
     }
 
-    pub fn assign(&mut self, name: SymbolId, val: Value) {
+    pub fn assign(&mut self, name: SymbolId, val: Value)
+    {
         let idx = name as usize;
-        if idx < self.values.len() {
+        if idx < self.values.len()
+        {
             self.set(name, val);
             return;
         }
 
-        if let Some(parent) = &self.parent {
-            if parent.borrow_mut().update_existing(name, &val) {
+        if let Some(parent) = &self.parent
+        {
+            if parent.borrow_mut().update_existing(name, &val)
+            {
                 return;
             }
         }
@@ -118,49 +160,60 @@ impl Environment {
         self.define(name, val);
     }
 
-    fn update_existing(&mut self, name: SymbolId, val: &Value) -> bool {
+    fn update_existing(&mut self, name: SymbolId, val: &Value) -> bool
+    {
         let idx = name as usize;
-        if idx < self.values.len() {
+        if idx < self.values.len()
+        {
             // Self::set logic inline because of borrowing issues?
-            if let Some(Value::Reference(r)) = self.values.get(idx) {
+            if let Some(Value::Reference(r)) = self.values.get(idx)
+            {
                 *r.borrow_mut() = val.clone();
-            } else {
+            }
+            else
+            {
                 self.values[idx] = val.clone();
             }
             self.version = self.version.wrapping_add(1);
             return true;
         }
-        if let Some(parent) = &self.parent {
+        if let Some(parent) = &self.parent
+        {
             return parent.borrow_mut().update_existing(name, val);
         }
         false
     }
 
-    pub fn promote(&mut self, name: SymbolId) -> Option<Value> {
-         let idx = name as usize;
-         if idx < self.values.len() {
-             let val = self.values[idx].clone();
-             if let Value::Reference(_) = val {
-                 return Some(val);
-             }
-             // Promote
-             let r = Rc::new(RefCell::new(val));
-             let new_ref = Value::Reference(r);
-             self.values[idx] = new_ref.clone();
-             self.version = self.version.wrapping_add(1);
-             return Some(new_ref);
-         }
-         
-         if let Some(parent) = &self.parent {
+    pub fn promote(&mut self, name: SymbolId) -> Option<Value>
+    {
+        let idx = name as usize;
+        if idx < self.values.len()
+        {
+            let val = self.values[idx].clone();
+            if let Value::Reference(_) = val
+            {
+                return Some(val);
+            }
+            // Promote
+            let r = Rc::new(RefCell::new(val));
+            let new_ref = Value::Reference(r);
+            self.values[idx] = new_ref.clone();
+            self.version = self.version.wrapping_add(1);
+            return Some(new_ref);
+        }
+
+        if let Some(parent) = &self.parent
+        {
             return parent.borrow_mut().promote(name);
-         }
-         
-         None
+        }
+
+        None
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Instruction {
+pub enum Instruction
+{
     LoadSlot(usize),
     StoreSlot(usize),
     LoadGlobal(SymbolId),
@@ -174,18 +227,51 @@ pub enum Instruction {
     CallValue(usize),
     CallValueWithBlock(Rc<Closure>, usize),
     CallValueWithBlockCached(Rc<RefCell<CallSiteCache>>, Rc<Closure>, usize),
-    ForEach { var_slot: usize, body: Rc<Vec<Instruction>> },
-    ForEachArray { var_slot: usize, body: Rc<Vec<Instruction>> },
-    ForEachF64Array { var_slot: usize, body: Rc<Vec<Instruction>> },
-    ForRange { index_slot: usize, end: RangeEnd, body: Rc<Vec<Instruction>> },
-    ForRangeInt { index_slot: usize, end: RangeEnd, step: i64, body: Rc<Vec<Instruction>> },
-    ForRangeFloat { index_slot: usize, end: RangeEnd, step: f64, kind: FloatKind, body: Rc<Vec<Instruction>> },
+    ForEach
+    {
+        var_slot: usize,
+        body: Rc<Vec<Instruction>>,
+    },
+    ForEachArray
+    {
+        var_slot: usize,
+        body: Rc<Vec<Instruction>>,
+    },
+    ForEachF64Array
+    {
+        var_slot: usize,
+        body: Rc<Vec<Instruction>>,
+    },
+    ForRange
+    {
+        index_slot: usize,
+        end: RangeEnd,
+        body: Rc<Vec<Instruction>>,
+    },
+    ForRangeInt
+    {
+        index_slot: usize,
+        end: RangeEnd,
+        step: i64,
+        body: Rc<Vec<Instruction>>,
+    },
+    ForRangeFloat
+    {
+        index_slot: usize,
+        end: RangeEnd,
+        step: f64,
+        kind: FloatKind,
+        body: Rc<Vec<Instruction>>,
+    },
     Len,
     MapKeys,
     MapValues,
     MakeArray(usize),
     MakeMap(usize),
-    F64ArrayGen { count: Option<usize> },
+    F64ArrayGen
+    {
+        count: Option<usize>,
+    },
     Index,
     IndexCached(Rc<RefCell<IndexCache>>),
     MapIndexCached(Rc<RefCell<MapAccessCache>>),
@@ -200,12 +286,32 @@ pub enum Instruction {
     CallValueCached(Rc<RefCell<CallSiteCache>>, usize),
     CallGlobalCached(SymbolId, Rc<RefCell<GlobalCache>>, Rc<RefCell<CallSiteCache>>, usize),
     CallMethodCached(Rc<String>, Rc<RefCell<MapAccessCache>>, Rc<RefCell<CallSiteCache>>, usize),
-    CallMethodWithBlockCached(Rc<String>, Rc<RefCell<MapAccessCache>>, Rc<RefCell<CallSiteCache>>, Rc<Closure>, usize),
+    CallMethodWithBlockCached(
+        Rc<String>,
+        Rc<RefCell<MapAccessCache>>,
+        Rc<RefCell<CallSiteCache>>,
+        Rc<Closure>,
+        usize,
+    ),
     ArrayGen,
     Dup,
-    F64Axpy { dst_slot: usize, dst_index_slot: usize, src_slot: usize, src_index_slot: usize },
-    F64DotRange { acc_slot: usize, a_slot: usize, b_slot: usize, index_slot: usize, end: RangeEnd },
-    F64Dot2Range {
+    F64Axpy
+    {
+        dst_slot: usize,
+        dst_index_slot: usize,
+        src_slot: usize,
+        src_index_slot: usize,
+    },
+    F64DotRange
+    {
+        acc_slot: usize,
+        a_slot: usize,
+        b_slot: usize,
+        index_slot: usize,
+        end: RangeEnd,
+    },
+    F64Dot2Range
+    {
         acc1_slot: usize,
         a1_slot: usize,
         b1_slot: usize,
@@ -226,7 +332,8 @@ pub enum Instruction {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum RegBinOp {
+pub enum RegBinOp
+{
     Add,
     Sub,
     Mul,
@@ -237,41 +344,136 @@ pub enum RegBinOp {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum RegInstruction {
-    LoadConst { dst: usize, idx: usize },
-    LoadSlot { dst: usize, slot: usize },
-    StoreSlot { slot: usize, src: usize },
-    CloneValue { dst: usize, src: usize },
-    BinOpCached { dst: usize, op: RegBinOp, left: usize, right: usize, cache: Rc<RefCell<BinaryOpCache>> },
-    F64IndexCached { dst: usize, target: usize, index: usize, cache: Rc<RefCell<IndexCache>> },
-    MapIndexCached { dst: usize, target: usize, index: usize, cache: Rc<RefCell<MapAccessCache>> },
-    F64IndexAssignCached { dst: usize, target: usize, index: usize, value: usize, cache: Rc<RefCell<IndexCache>> },
-    CallValueCached0 { dst: usize, func: usize, cache: Rc<RefCell<CallSiteCache>> },
-    CallValueCached1 { dst: usize, func: usize, arg0: usize, cache: Rc<RefCell<CallSiteCache>> },
-    CallValueCached2 { dst: usize, func: usize, arg0: usize, arg1: usize, cache: Rc<RefCell<CallSiteCache>> },
-    CallValueCached3 { dst: usize, func: usize, arg0: usize, arg1: usize, arg2: usize, cache: Rc<RefCell<CallSiteCache>> },
-    CallValueCached { dst: usize, func: usize, args: Vec<usize>, cache: Rc<RefCell<CallSiteCache>> },
-    Len { dst: usize, src: usize },
-    MapKeys { dst: usize, src: usize },
-    MapValues { dst: usize, src: usize },
+pub enum RegInstruction
+{
+    LoadConst
+    {
+        dst: usize, idx: usize
+    },
+    LoadSlot
+    {
+        dst: usize, slot: usize
+    },
+    StoreSlot
+    {
+        slot: usize, src: usize
+    },
+    CloneValue
+    {
+        dst: usize, src: usize
+    },
+    BinOpCached
+    {
+        dst: usize,
+        op: RegBinOp,
+        left: usize,
+        right: usize,
+        cache: Rc<RefCell<BinaryOpCache>>,
+    },
+    F64IndexCached
+    {
+        dst: usize,
+        target: usize,
+        index: usize,
+        cache: Rc<RefCell<IndexCache>>,
+    },
+    MapIndexCached
+    {
+        dst: usize,
+        target: usize,
+        index: usize,
+        cache: Rc<RefCell<MapAccessCache>>,
+    },
+    F64IndexAssignCached
+    {
+        dst: usize,
+        target: usize,
+        index: usize,
+        value: usize,
+        cache: Rc<RefCell<IndexCache>>,
+    },
+    CallValueCached0
+    {
+        dst: usize,
+        func: usize,
+        cache: Rc<RefCell<CallSiteCache>>,
+    },
+    CallValueCached1
+    {
+        dst: usize,
+        func: usize,
+        arg0: usize,
+        cache: Rc<RefCell<CallSiteCache>>,
+    },
+    CallValueCached2
+    {
+        dst: usize,
+        func: usize,
+        arg0: usize,
+        arg1: usize,
+        cache: Rc<RefCell<CallSiteCache>>,
+    },
+    CallValueCached3
+    {
+        dst: usize,
+        func: usize,
+        arg0: usize,
+        arg1: usize,
+        arg2: usize,
+        cache: Rc<RefCell<CallSiteCache>>,
+    },
+    CallValueCached
+    {
+        dst: usize,
+        func: usize,
+        args: Vec<usize>,
+        cache: Rc<RefCell<CallSiteCache>>,
+    },
+    Len
+    {
+        dst: usize, src: usize
+    },
+    MapKeys
+    {
+        dst: usize, src: usize
+    },
+    MapValues
+    {
+        dst: usize, src: usize
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum FastRegInstruction {
-    LoadConst { dst: usize, value: f64 },
-    LoadSlot { dst: usize, slot: usize },
-    BinOp { dst: usize, op: RegBinOp, left: usize, right: usize },
+pub enum FastRegInstruction
+{
+    LoadConst
+    {
+        dst: usize, value: f64
+    },
+    LoadSlot
+    {
+        dst: usize, slot: usize
+    },
+    BinOp
+    {
+        dst: usize,
+        op: RegBinOp,
+        left: usize,
+        right: usize,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct FastRegFunction {
+pub struct FastRegFunction
+{
     pub code: Vec<FastRegInstruction>,
     pub reg_count: usize,
     pub ret_reg: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct RegFunction {
+pub struct RegFunction
+{
     pub code: Vec<RegInstruction>,
     pub reg_count: usize,
     pub ret_reg: usize,
@@ -279,21 +481,25 @@ pub struct RegFunction {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum BinaryOpCacheKind {
+pub enum BinaryOpCacheKind
+{
     Float,
     Int,
     Uint,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct BinaryOpCache {
+pub struct BinaryOpCache
+{
     pub kind: Option<BinaryOpCacheKind>,
     pub hits: u64,
     pub misses: u64,
 }
 
-impl Default for BinaryOpCache {
-    fn default() -> Self {
+impl Default for BinaryOpCache
+{
+    fn default() -> Self
+    {
         Self {
             kind: None,
             hits: 0,
@@ -303,7 +509,8 @@ impl Default for BinaryOpCache {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct IndexCache {
+pub struct IndexCache
+{
     pub map_ptr: Option<usize>,
     pub key: Option<Rc<String>>,
     pub value: Option<Value>,
@@ -315,7 +522,8 @@ pub struct IndexCache {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct CallSiteCache {
+pub struct CallSiteCache
+{
     pub func_ptr: Option<usize>,
     pub native_ptr: Option<usize>,
     pub hits: u64,
@@ -323,7 +531,8 @@ pub struct CallSiteCache {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct GlobalCache {
+pub struct GlobalCache
+{
     pub env_ptr: Option<usize>,
     pub version: u64,
     pub value: Option<Value>,
@@ -332,7 +541,8 @@ pub struct GlobalCache {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct MapAccessCacheEntry {
+pub struct MapAccessCacheEntry
+{
     pub map_ptr: usize,
     pub version: u64,
     pub key: Rc<String>,
@@ -340,14 +550,17 @@ pub struct MapAccessCacheEntry {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct MapAccessCache {
+pub struct MapAccessCache
+{
     pub entries: [Option<MapAccessCacheEntry>; 2],
     pub hits: u64,
     pub misses: u64,
 }
 
-impl Default for CallSiteCache {
-    fn default() -> Self {
+impl Default for CallSiteCache
+{
+    fn default() -> Self
+    {
         Self {
             func_ptr: None,
             native_ptr: None,
@@ -357,8 +570,10 @@ impl Default for CallSiteCache {
     }
 }
 
-impl Default for GlobalCache {
-    fn default() -> Self {
+impl Default for GlobalCache
+{
+    fn default() -> Self
+    {
         Self {
             env_ptr: None,
             version: 0,
@@ -369,8 +584,10 @@ impl Default for GlobalCache {
     }
 }
 
-impl Default for MapAccessCache {
-    fn default() -> Self {
+impl Default for MapAccessCache
+{
+    fn default() -> Self
+    {
         Self {
             entries: std::array::from_fn(|_| None),
             hits: 0,
@@ -379,8 +596,10 @@ impl Default for MapAccessCache {
     }
 }
 
-impl Default for IndexCache {
-    fn default() -> Self {
+impl Default for IndexCache
+{
+    fn default() -> Self
+    {
         Self {
             map_ptr: None,
             key: None,
@@ -395,13 +614,15 @@ impl Default for IndexCache {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum RangeEnd {
+pub enum RangeEnd
+{
     Slot(usize),
     Const(usize),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Builtin {
+pub enum Builtin
+{
     Puts,
     Print,
     Len,
@@ -410,7 +631,8 @@ pub enum Builtin {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct FunctionData {
+pub struct FunctionData
+{
     pub params: Vec<(SymbolId, bool)>,
     pub body: Expr,
     pub declarations: Rc<Vec<Rc<String>>>,
@@ -427,9 +649,21 @@ pub struct FunctionData {
 #[derive(Clone)]
 pub enum Value
 {
-    Integer { value: i128, kind: IntKind },
-    Unsigned { value: u128, kind: IntKind },
-    Float { value: f64, kind: FloatKind },
+    Integer
+    {
+        value: i128,
+        kind: IntKind,
+    },
+    Unsigned
+    {
+        value: u128,
+        kind: IntKind,
+    },
+    Float
+    {
+        value: f64,
+        kind: FloatKind,
+    },
     String(Rc<String>),
     Boolean(bool),
     Array(Rc<RefCell<Vec<Value>>>),
@@ -444,45 +678,72 @@ pub enum Value
 }
 
 #[derive(Debug, Clone)]
-pub struct MapValue {
+pub struct MapValue
+{
     pub data: FxHashMap<Rc<String>, Value>,
     pub version: u64,
 }
 
-impl MapValue {
-    pub fn new(data: FxHashMap<Rc<String>, Value>) -> Self {
+impl MapValue
+{
+    pub fn new(data: FxHashMap<Rc<String>, Value>) -> Self
+    {
         Self { data, version: 0 }
     }
 }
 
-
-impl PartialEq for Value {
-    fn eq(&self, other: &Self) -> bool {
-        let left = match self {
+impl PartialEq for Value
+{
+    fn eq(&self, other: &Self) -> bool
+    {
+        let left = match self
+        {
             Value::Reference(r) => &*r.borrow(),
             _ => self,
         };
-        let right = match other {
+        let right = match other
+        {
             Value::Reference(r) => &*r.borrow(),
             _ => other,
         };
-        
-        match (left, right) {
-            (Value::Integer { value: a, kind: ka }, Value::Integer { value: b, kind: kb }) => a == b && ka == kb,
-            (Value::Unsigned { value: a, kind: ka }, Value::Unsigned { value: b, kind: kb }) => a == b && ka == kb,
-            (Value::Float { value: a, kind: ka }, Value::Float { value: b, kind: kb }) => a == b && ka == kb, // Note: NaN != NaN
+
+        match (left, right)
+        {
+            (Value::Integer { value: a, kind: ka }, Value::Integer { value: b, kind: kb }) =>
+            {
+                a == b && ka == kb
+            }
+            (Value::Unsigned { value: a, kind: ka }, Value::Unsigned { value: b, kind: kb }) =>
+            {
+                a == b && ka == kb
+            }
+            (Value::Float { value: a, kind: ka }, Value::Float { value: b, kind: kb }) =>
+            {
+                a == b && ka == kb
+            } // Note: NaN != NaN
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Boolean(a), Value::Boolean(b)) => a == b,
             (Value::Array(a), Value::Array(b)) => a == b, // RefCell PartialEq compares inner values
             (Value::F64Array(a), Value::F64Array(b)) => a == b,
-            (Value::Map(a), Value::Map(b)) => {
+            (Value::Map(a), Value::Map(b)) =>
+            {
                 let map_a = a.borrow();
                 let map_b = b.borrow();
-                if map_a.data.len() != map_b.data.len() { return false; }
-                for (k, v) in map_a.data.iter() {
-                    if let Some(other_v) = map_b.data.get(k) {
-                        if v != other_v { return false; }
-                    } else {
+                if map_a.data.len() != map_b.data.len()
+                {
+                    return false;
+                }
+                for (k, v) in map_a.data.iter()
+                {
+                    if let Some(other_v) = map_b.data.get(k)
+                    {
+                        if v != other_v
+                        {
+                            return false;
+                        }
+                    }
+                    else
+                    {
                         return false;
                     }
                 }
@@ -498,9 +759,12 @@ impl PartialEq for Value {
     }
 }
 
-impl fmt::Debug for Value {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
+impl fmt::Debug for Value
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result
+    {
+        match self
+        {
             Value::Integer { value, kind } => write!(f, "Integer({:?}, {})", kind, value),
             Value::Unsigned { value, kind } => write!(f, "Unsigned({:?}, {})", kind, value),
             Value::Float { value, kind } => write!(f, "Float({:?}, {})", kind, value),
@@ -542,22 +806,34 @@ impl Value
             }
             Value::Map(map) =>
             {
-                let entries: Vec<String> = map.borrow().data
+                let entries: Vec<String> = map
+                    .borrow()
+                    .data
                     .iter()
                     .map(|(k, v)| format!("\"{}\": {}\"", k, v.inspect()))
                     .collect();
                 format!("{{{}}}", entries.join(", "))
             }
             Value::Nil => "nil".to_string(),
-            Value::Function(data) => {
-                let p_str: Vec<String> = data.params.iter()
+            Value::Function(data) =>
+            {
+                let p_str: Vec<String> = data
+                    .params
+                    .iter()
                     .map(|(n, r)| {
                         let name = crate::intern::symbol_name(*n);
-                        if *r { format!("&{}", name.as_str()) } else { name.as_str().to_string() }
+                        if *r
+                        {
+                            format!("&{}", name.as_str())
+                        }
+                        else
+                        {
+                            name.as_str().to_string()
+                        }
                     })
                     .collect();
                 format!("<function({})>", p_str.join(", "))
-            },
+            }
             Value::NativeFunction(_) => "<native function>".to_string(),
             Value::WasmFunction(fnc) => format!("<wasm function {}>", fnc.name),
             Value::Reference(r) => r.borrow().inspect(),
@@ -589,22 +865,34 @@ impl fmt::Display for Value
             }
             Value::Map(map) =>
             {
-                let entries: Vec<String> = map.borrow().data
+                let entries: Vec<String> = map
+                    .borrow()
+                    .data
                     .iter()
                     .map(|(k, v)| format!("\"{}\": {}\"", k, v.inspect()))
                     .collect();
                 write!(f, "{{{}}}", entries.join(", "))
             }
             Value::Nil => write!(f, "nil"),
-            Value::Function(data) => {
-                let p_str: Vec<String> = data.params.iter()
+            Value::Function(data) =>
+            {
+                let p_str: Vec<String> = data
+                    .params
+                    .iter()
                     .map(|(n, r)| {
                         let name = crate::intern::symbol_name(*n);
-                        if *r { format!("&{}", name.as_str()) } else { name.as_str().to_string() }
+                        if *r
+                        {
+                            format!("&{}", name.as_str())
+                        }
+                        else
+                        {
+                            name.as_str().to_string()
+                        }
                     })
                     .collect();
                 write!(f, "<function({})>", p_str.join(", "))
-            },
+            }
             Value::NativeFunction(_) => write!(f, "<native function>"),
             Value::WasmFunction(fnc) => write!(f, "<wasm function {}>", fnc.name),
             Value::Reference(r) => write!(f, "{}", r.borrow()),

@@ -3102,7 +3102,9 @@ pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String
             let mut code = Vec::new();
             let mut consts = Vec::new();
             let use_caches = mode == BytecodeMode::Advanced;
-            if with_compile_use_caches(use_caches, || compile_expr(ast, &mut code, &mut consts, true))
+            if with_compile_use_caches(use_caches, || {
+                compile_expr(ast, &mut code, &mut consts, true)
+            })
             {
                 out.push_str("  Constants:\n");
                 for (idx, value) in consts.iter().enumerate()
@@ -7458,11 +7460,10 @@ impl Interpreter
         let mut module = func.module.borrow_mut();
         if module.memory.is_none()
         {
-            module.memory =
-                module
-                    .instance
-                    .get_export(&module.store, "memory")
-                    .and_then(|e| e.into_memory());
+            module.memory = module
+                .instance
+                .get_export(&module.store, "memory")
+                .and_then(|e| e.into_memory());
         }
         let wasm_func = module
             .functions

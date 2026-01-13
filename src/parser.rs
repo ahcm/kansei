@@ -1,8 +1,8 @@
 use crate::ast::{Closure, Expr, ExprKind, FormatPart, FormatSpec, Op};
 use crate::intern;
 use crate::lexer::{Lexer, Span, Token};
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::rc::Rc;
 
 pub struct Parser
 {
@@ -34,11 +34,15 @@ impl Parser
         }
         else
         {
-            panic!("Syntax Error at line {}: Expected {:?}, but found {:?}", self.current_token.line, token, self.current_token.token);
+            panic!(
+                "Syntax Error at line {}: Expected {:?}, but found {:?}",
+                self.current_token.line, token, self.current_token.token
+            );
         }
     }
 
-    fn make_expr(&self, kind: ExprKind, line: usize) -> Expr {
+    fn make_expr(&self, kind: ExprKind, line: usize) -> Expr
+    {
         Expr { kind, line }
     }
 
@@ -51,22 +55,30 @@ impl Parser
     {
         let expr = self.parse_expression();
 
-        if self.current_token.token == Token::Equals {
+        if self.current_token.token == Token::Equals
+        {
             let line = self.current_token.line;
             self.eat(); // =
             let value = self.parse_expression();
 
-            return match expr.kind {
-                ExprKind::Identifier { name, .. } => self.make_expr(ExprKind::Assignment {
-                    name,
-                    value: Box::new(value),
-                    slot: None,
-                }, line),
-                ExprKind::Index { target, index } => self.make_expr(ExprKind::IndexAssignment {
-                    target,
-                    index,
-                    value: Box::new(value),
-                }, line),
+            return match expr.kind
+            {
+                ExprKind::Identifier { name, .. } => self.make_expr(
+                    ExprKind::Assignment {
+                        name,
+                        value: Box::new(value),
+                        slot: None,
+                    },
+                    line,
+                ),
+                ExprKind::Index { target, index } => self.make_expr(
+                    ExprKind::IndexAssignment {
+                        target,
+                        index,
+                        value: Box::new(value),
+                    },
+                    line,
+                ),
                 _ => panic!("Invalid assignment target at line {}", line),
             };
         }
@@ -75,7 +87,7 @@ impl Parser
 
     fn parse_expression(&mut self) -> Expr
     {
-        let mut left = self.parse_math(); 
+        let mut left = self.parse_math();
 
         while matches!(
             self.current_token.token,
@@ -93,11 +105,14 @@ impl Parser
             };
             self.eat();
             let right = self.parse_math();
-            left = self.make_expr(ExprKind::BinaryOp {
-                left: Box::new(left),
-                op,
-                right: Box::new(right),
-            }, line);
+            left = self.make_expr(
+                ExprKind::BinaryOp {
+                    left: Box::new(left),
+                    op,
+                    right: Box::new(right),
+                },
+                line,
+            );
         }
         left
     }
@@ -117,11 +132,14 @@ impl Parser
             };
             self.eat();
             let right = self.parse_term();
-            left = self.make_expr(ExprKind::BinaryOp {
-                left: Box::new(left),
-                op,
-                right: Box::new(right),
-            }, line);
+            left = self.make_expr(
+                ExprKind::BinaryOp {
+                    left: Box::new(left),
+                    op,
+                    right: Box::new(right),
+                },
+                line,
+            );
         }
         left
     }
@@ -141,18 +159,22 @@ impl Parser
             };
             self.eat();
             let right = self.parse_factor();
-            left = self.make_expr(ExprKind::BinaryOp {
-                left: Box::new(left),
-                op,
-                right: Box::new(right),
-            }, line);
+            left = self.make_expr(
+                ExprKind::BinaryOp {
+                    left: Box::new(left),
+                    op,
+                    right: Box::new(right),
+                },
+                line,
+            );
         }
         left
     }
 
     fn parse_factor(&mut self) -> Expr
     {
-        if self.current_token.token == Token::Clone {
+        if self.current_token.token == Token::Clone
+        {
             let line = self.current_token.line;
             self.eat();
             let inner = self.parse_factor();
@@ -161,37 +183,59 @@ impl Parser
 
         let mut expr = self.parse_atom();
 
-        loop {
+        loop
+        {
             let line = self.current_token.line;
-            if self.current_token.token == Token::LeftBracket {
+            if self.current_token.token == Token::LeftBracket
+            {
                 self.eat(); // [
                 let index = self.parse_expression();
                 self.expect(Token::RightBracket);
-                expr = self.make_expr(ExprKind::Index {
-                    target: Box::new(expr),
-                    index: Box::new(index),
-                }, line);
-            } else if self.current_token.token == Token::Dot || self.current_token.token == Token::ColonColon {
+                expr = self.make_expr(
+                    ExprKind::Index {
+                        target: Box::new(expr),
+                        index: Box::new(index),
+                    },
+                    line,
+                );
+            }
+            else if self.current_token.token == Token::Dot
+                || self.current_token.token == Token::ColonColon
+            {
                 self.eat(); // . or ::
-                let name = match &self.current_token.token {
+                let name = match &self.current_token.token
+                {
                     Token::Identifier(n) => intern::intern_owned(n.clone()),
-                    _ => panic!("Expected property name after dot at line {}", self.current_token.line),
+                    _ => panic!(
+                        "Expected property name after dot at line {}",
+                        self.current_token.line
+                    ),
                 };
                 let name_line = self.current_token.line;
                 self.eat();
-                expr = self.make_expr(ExprKind::Index {
-                    target: Box::new(expr),
-                    index: Box::new(self.make_expr(ExprKind::String(name), name_line)),
-                }, line);
-            } else if self.current_token.token == Token::LeftParen {
+                expr = self.make_expr(
+                    ExprKind::Index {
+                        target: Box::new(expr),
+                        index: Box::new(self.make_expr(ExprKind::String(name), name_line)),
+                    },
+                    line,
+                );
+            }
+            else if self.current_token.token == Token::LeftParen
+            {
                 self.eat(); // (
                 let mut args = Vec::new();
-                if self.current_token.token != Token::RightParen {
-                    loop {
+                if self.current_token.token != Token::RightParen
+                {
+                    loop
+                    {
                         args.push(self.parse_expression());
-                        if self.current_token.token == Token::Comma {
+                        if self.current_token.token == Token::Comma
+                        {
                             self.eat();
-                        } else {
+                        }
+                        else
+                        {
                             break;
                         }
                     }
@@ -199,65 +243,102 @@ impl Parser
                 self.expect(Token::RightParen);
 
                 // Check for Block { |params| body }
-                let block = if self.current_token.token == Token::LeftBrace {
-                    self.eat(); // {
-                    let mut params = Vec::new();
-                    if self.current_token.token == Token::Pipe {
-                        self.eat(); // |
-                        loop {
-                            let is_ref = if self.current_token.token == Token::Ampersand {
+                let block =
+                    if self.current_token.token == Token::LeftBrace
+                    {
+                        self.eat(); // {
+                        let mut params = Vec::new();
+                        if self.current_token.token == Token::Pipe
+                        {
+                            self.eat(); // |
+                            loop
+                            {
+                                let is_ref = if self.current_token.token == Token::Ampersand
+                                {
+                                    self.eat();
+                                    true
+                                }
+                                else
+                                {
+                                    false
+                                };
+                                match &self.current_token.token
+                                {
+                                    Token::Identifier(p) => params
+                                        .push((intern::intern_symbol_owned(p.clone()), is_ref)),
+                                    _ => panic!(
+                                        "Expected param name at line {}",
+                                        self.current_token.line
+                                    ),
+                                }
                                 self.eat();
-                                true
-                            } else {
-                                false
-                            };
-                            match &self.current_token.token {
-                                Token::Identifier(p) => params.push((intern::intern_symbol_owned(p.clone()), is_ref)),
-                                _ => panic!("Expected param name at line {}", self.current_token.line),
+                                if self.current_token.token == Token::Comma
+                                {
+                                    self.eat();
+                                }
+                                else
+                                {
+                                    break;
+                                }
                             }
-                            self.eat();
-                            if self.current_token.token == Token::Comma {
-                                self.eat();
-                            } else {
-                                break;
-                            }
+                            self.expect(Token::Pipe);
                         }
-                        self.expect(Token::Pipe);
+                        let body = self.parse_block();
+                        self.expect(Token::RightBrace);
+                        Some(Closure {
+                            params,
+                            body: Box::new(body),
+                        })
                     }
-                    let body = self.parse_block();
-                    self.expect(Token::RightBrace);
-                    Some(Closure { params, body: Box::new(body) })
-                } else {
-                    None
-                };
+                    else
+                    {
+                        None
+                    };
 
-                expr = self.make_expr(ExprKind::Call {
-                    function: Box::new(expr),
-                    args,
-                    block,
-                    inlined_body: Rc::new(RefCell::new(None)),
-                }, line);
-            } else if self.current_token.token == Token::LeftBrace {
+                expr = self.make_expr(
+                    ExprKind::Call {
+                        function: Box::new(expr),
+                        args,
+                        block,
+                        inlined_body: Rc::new(RefCell::new(None)),
+                    },
+                    line,
+                );
+            }
+            else if self.current_token.token == Token::LeftBrace
+            {
                 // Call with block and no parentheses: foo { |x| ... }
                 self.eat(); // {
                 let mut params = Vec::new();
-                if self.current_token.token == Token::Pipe {
+                if self.current_token.token == Token::Pipe
+                {
                     self.eat(); // |
-                    loop {
-                        let is_ref = if self.current_token.token == Token::Ampersand {
+                    loop
+                    {
+                        let is_ref = if self.current_token.token == Token::Ampersand
+                        {
                             self.eat();
                             true
-                        } else {
+                        }
+                        else
+                        {
                             false
                         };
-                        match &self.current_token.token {
-                            Token::Identifier(p) => params.push((intern::intern_symbol_owned(p.clone()), is_ref)),
+                        match &self.current_token.token
+                        {
+                            Token::Identifier(p) =>
+                            {
+                                params.push((intern::intern_symbol_owned(p.clone()), is_ref))
+                            }
                             _ => panic!("Expected param name at line {}", self.current_token.line),
                         }
                         self.eat();
-                        if self.current_token.token == Token::Comma {
+                        if self.current_token.token == Token::Comma
+                        {
                             self.eat();
-                        } else {
+                        }
+                        else
+                        {
                             break;
                         }
                     }
@@ -265,39 +346,64 @@ impl Parser
                 }
                 let body = self.parse_block();
                 self.expect(Token::RightBrace);
-                expr = self.make_expr(ExprKind::Call {
-                    function: Box::new(expr),
-                    args: Vec::new(),
-                    block: Some(Closure { params, body: Box::new(body) }),
-                    inlined_body: Rc::new(RefCell::new(None)),
-                }, line);
-            } else if matches!(self.current_token.token, Token::Identifier(_)) {
+                expr = self.make_expr(
+                    ExprKind::Call {
+                        function: Box::new(expr),
+                        args: Vec::new(),
+                        block: Some(Closure {
+                            params,
+                            body: Box::new(body),
+                        }),
+                        inlined_body: Rc::new(RefCell::new(None)),
+                    },
+                    line,
+                );
+            }
+            else if matches!(self.current_token.token, Token::Identifier(_))
+            {
                 let mut temp_lexer = self.lexer.clone();
-                if temp_lexer.next_token().token == Token::LeftBrace {
-                    let name = match &self.current_token.token {
+                if temp_lexer.next_token().token == Token::LeftBrace
+                {
+                    let name = match &self.current_token.token
+                    {
                         Token::Identifier(n) => intern::intern_owned(n.clone()),
                         _ => unreachable!(),
                     };
                     self.eat(); // identifier
                     self.eat(); // {
                     let mut params = Vec::new();
-                    if self.current_token.token == Token::Pipe {
+                    if self.current_token.token == Token::Pipe
+                    {
                         self.eat(); // |
-                        loop {
-                            let is_ref = if self.current_token.token == Token::Ampersand {
+                        loop
+                        {
+                            let is_ref = if self.current_token.token == Token::Ampersand
+                            {
                                 self.eat();
                                 true
-                            } else {
+                            }
+                            else
+                            {
                                 false
                             };
-                            match &self.current_token.token {
-                                Token::Identifier(p) => params.push((intern::intern_symbol_owned(p.clone()), is_ref)),
-                                _ => panic!("Expected param name at line {}", self.current_token.line),
+                            match &self.current_token.token
+                            {
+                                Token::Identifier(p) =>
+                                {
+                                    params.push((intern::intern_symbol_owned(p.clone()), is_ref))
+                                }
+                                _ => panic!(
+                                    "Expected param name at line {}",
+                                    self.current_token.line
+                                ),
                             }
                             self.eat();
-                            if self.current_token.token == Token::Comma {
+                            if self.current_token.token == Token::Comma
+                            {
                                 self.eat();
-                            } else {
+                            }
+                            else
+                            {
                                 break;
                             }
                         }
@@ -306,31 +412,52 @@ impl Parser
                     let body = self.parse_block();
                     self.expect(Token::RightBrace);
                     let index = self.make_expr(ExprKind::String(name), line);
-                    let function = self.make_expr(ExprKind::Index {
-                        target: Box::new(expr),
-                        index: Box::new(index),
-                    }, line);
-                    expr = self.make_expr(ExprKind::Call {
-                        function: Box::new(function),
-                        args: Vec::new(),
-                        block: Some(Closure { params, body: Box::new(body) }),
-                        inlined_body: Rc::new(RefCell::new(None)),
-                    }, line);
-                } else if let Token::Identifier(n) = &self.current_token.token {
-                    if self.current_token.line == expr.line && (n == "keys" || n == "values") {
+                    let function = self.make_expr(
+                        ExprKind::Index {
+                            target: Box::new(expr),
+                            index: Box::new(index),
+                        },
+                        line,
+                    );
+                    expr = self.make_expr(
+                        ExprKind::Call {
+                            function: Box::new(function),
+                            args: Vec::new(),
+                            block: Some(Closure {
+                                params,
+                                body: Box::new(body),
+                            }),
+                            inlined_body: Rc::new(RefCell::new(None)),
+                        },
+                        line,
+                    );
+                }
+                else if let Token::Identifier(n) = &self.current_token.token
+                {
+                    if self.current_token.line == expr.line && (n == "keys" || n == "values")
+                    {
                         let name = intern::intern_owned(n.clone());
                         self.eat(); // identifier
-                        expr = self.make_expr(ExprKind::Index {
-                            target: Box::new(expr),
-                            index: Box::new(self.make_expr(ExprKind::String(name), line)),
-                        }, line);
-                    } else {
+                        expr = self.make_expr(
+                            ExprKind::Index {
+                                target: Box::new(expr),
+                                index: Box::new(self.make_expr(ExprKind::String(name), line)),
+                            },
+                            line,
+                        );
+                    }
+                    else
+                    {
                         break;
                     }
-                } else {
+                }
+                else
+                {
                     break;
                 }
-            } else {
+            }
+            else
+            {
                 break;
             }
         }
@@ -389,7 +516,11 @@ impl Parser
 
                 // Legacy built-in support
                 let name_str = intern::symbol_name(name);
-                if name_str.as_str() == "puts" || name_str.as_str() == "print" || name_str.as_str() == "write_file" || name_str.as_str() == "read_file" || name_str.as_str() == "len"
+                if name_str.as_str() == "puts"
+                    || name_str.as_str() == "print"
+                    || name_str.as_str() == "write_file"
+                    || name_str.as_str() == "read_file"
+                    || name_str.as_str() == "len"
                 {
                     let mut args = Vec::new();
                     args.push(self.parse_expression());
@@ -400,12 +531,17 @@ impl Parser
                         args.push(self.parse_expression());
                     }
 
-                    return self.make_expr(ExprKind::Call {
-                        function: Box::new(self.make_expr(ExprKind::Identifier { name, slot: None }, line)),
-                        args,
-                        block: None,
-                        inlined_body: Rc::new(RefCell::new(None)),
-                    }, line);
+                    return self.make_expr(
+                        ExprKind::Call {
+                            function: Box::new(
+                                self.make_expr(ExprKind::Identifier { name, slot: None }, line),
+                            ),
+                            args,
+                            block: None,
+                            inlined_body: Rc::new(RefCell::new(None)),
+                        },
+                        line,
+                    );
                 }
                 self.make_expr(ExprKind::Identifier { name, slot: None }, line)
             }
@@ -417,71 +553,95 @@ impl Parser
             Token::Use => self.parse_use(),
             Token::Load => self.parse_load(),
             Token::LeftBracket => self.parse_array(),
-            Token::LeftBrace => {
+            Token::LeftBrace =>
+            {
                 let mut temp_lexer = self.lexer.clone();
-                if temp_lexer.next_token().token == Token::Pipe {
+                if temp_lexer.next_token().token == Token::Pipe
+                {
                     self.parse_closure_literal()
-                } else {
+                }
+                else
+                {
                     self.parse_map()
                 }
-            },
-            Token::LeftParen => {
+            }
+            Token::LeftParen =>
+            {
                 self.eat();
-                if self.current_token.token == Token::RightParen {
+                if self.current_token.token == Token::RightParen
+                {
                     self.eat();
                     return self.make_expr(ExprKind::Nil, line);
                 }
                 let expr = self.parse_expression();
                 self.expect(Token::RightParen);
                 expr
-            },
-            Token::Yield => {
+            }
+            Token::Yield =>
+            {
                 self.eat();
                 let mut args = Vec::new();
-                if self.current_token.token == Token::LeftParen {
-                     self.eat();
-                     if self.current_token.token != Token::RightParen {
-                         loop {
-                             args.push(self.parse_expression());
-                             if self.current_token.token == Token::Comma {
-                                 self.eat();
-                             } else {
-                                 break;
-                             }
-                         }
-                     }
-                     self.expect(Token::RightParen);
-                } else {
+                if self.current_token.token == Token::LeftParen
+                {
+                    self.eat();
+                    if self.current_token.token != Token::RightParen
+                    {
+                        loop
+                        {
+                            args.push(self.parse_expression());
+                            if self.current_token.token == Token::Comma
+                            {
+                                self.eat();
+                            }
+                            else
+                            {
+                                break;
+                            }
+                        }
+                    }
+                    self.expect(Token::RightParen);
+                }
+                else
+                {
                     // Variadic-ish greedy parsing
-                    while self.current_token.token != Token::EOF &&
-                          self.current_token.token != Token::End &&
-                          self.current_token.token != Token::Else &&
-                          self.current_token.token != Token::Elif &&
-                          self.current_token.token != Token::RightBrace &&
-                          self.current_token.token != Token::RightParen
+                    while self.current_token.token != Token::EOF
+                        && self.current_token.token != Token::End
+                        && self.current_token.token != Token::Else
+                        && self.current_token.token != Token::Elif
+                        && self.current_token.token != Token::RightBrace
+                        && self.current_token.token != Token::RightParen
                     {
                         args.push(self.parse_expression());
-                        if self.current_token.token == Token::Comma {
+                        if self.current_token.token == Token::Comma
+                        {
                             self.eat();
-                        } else {
+                        }
+                        else
+                        {
                             break;
                         }
                     }
                 }
                 self.make_expr(ExprKind::Yield(args), line)
             }
-            Token::Ampersand => {
+            Token::Ampersand =>
+            {
                 self.eat();
-                match &self.current_token.token {
-                    Token::Identifier(name) => {
+                match &self.current_token.token
+                {
+                    Token::Identifier(name) =>
+                    {
                         let n = intern::intern_symbol_owned(name.clone());
                         self.eat();
                         self.make_expr(ExprKind::Reference(n), line)
-                    },
+                    }
                     _ => panic!("Expected identifier after & at line {}", self.current_token.line),
                 }
             }
-            _ => panic!("Unexpected token: {:?} at line {}", self.current_token.token, self.current_token.line),
+            _ => panic!(
+                "Unexpected token: {:?} at line {}",
+                self.current_token.token, self.current_token.line
+            ),
         }
     }
 
@@ -490,26 +650,36 @@ impl Parser
         let line = self.current_token.line;
         self.eat(); // [
         let mut elements = Vec::new();
-        if self.current_token.token != Token::RightBracket {
+        if self.current_token.token != Token::RightBracket
+        {
             let first = self.parse_expression();
-            if self.current_token.token == Token::Semicolon {
+            if self.current_token.token == Token::Semicolon
+            {
                 self.eat(); // ;
                 let size = self.parse_expression();
                 self.expect(Token::RightBracket);
-                return self.make_expr(ExprKind::ArrayGenerator {
-                    generator: Box::new(first),
-                    size: Box::new(size),
-                }, line);
+                return self.make_expr(
+                    ExprKind::ArrayGenerator {
+                        generator: Box::new(first),
+                        size: Box::new(size),
+                    },
+                    line,
+                );
             }
-            
+
             elements.push(first);
-            if self.current_token.token == Token::Comma {
+            if self.current_token.token == Token::Comma
+            {
                 self.eat();
-                loop {
+                loop
+                {
                     elements.push(self.parse_expression());
-                    if self.current_token.token == Token::Comma {
+                    if self.current_token.token == Token::Comma
+                    {
                         self.eat();
-                    } else {
+                    }
+                    else
+                    {
                         break;
                     }
                 }
@@ -524,16 +694,21 @@ impl Parser
         let line = self.current_token.line;
         self.eat(); // {
         let mut entries = Vec::new();
-        if self.current_token.token != Token::RightBrace {
-            loop {
+        if self.current_token.token != Token::RightBrace
+        {
+            loop
+            {
                 let key = self.parse_expression();
                 self.expect(Token::Colon);
                 let value = self.parse_expression();
                 entries.push((key, value));
-                
-                if self.current_token.token == Token::Comma {
+
+                if self.current_token.token == Token::Comma
+                {
                     self.eat();
-                } else {
+                }
+                else
+                {
                     break;
                 }
             }
@@ -542,23 +717,29 @@ impl Parser
         self.make_expr(ExprKind::Map(entries), line)
     }
 
-    fn parse_use(&mut self) -> Expr {
+    fn parse_use(&mut self) -> Expr
+    {
         let line = self.current_token.line;
         self.eat(); // eat 'use'
 
         let mut path = Vec::new();
-        match &self.current_token.token {
-            Token::Identifier(n) => {
+        match &self.current_token.token
+        {
+            Token::Identifier(n) =>
+            {
                 path.push(intern::intern_symbol_owned(n.clone()));
                 self.eat();
             }
             _ => panic!("Expected module name after use at line {}", self.current_token.line),
         }
 
-        while self.current_token.token == Token::ColonColon {
+        while self.current_token.token == Token::ColonColon
+        {
             self.eat(); // ::
-            match &self.current_token.token {
-                Token::Identifier(n) => {
+            match &self.current_token.token
+            {
+                Token::Identifier(n) =>
+                {
                     path.push(intern::intern_symbol_owned(n.clone()));
                     self.eat();
                 }
@@ -569,23 +750,29 @@ impl Parser
         self.make_expr(ExprKind::Use(path), line)
     }
 
-    fn parse_load(&mut self) -> Expr {
+    fn parse_load(&mut self) -> Expr
+    {
         let line = self.current_token.line;
         self.eat(); // eat 'load'
 
         let mut path = Vec::new();
-        match &self.current_token.token {
-            Token::Identifier(n) => {
+        match &self.current_token.token
+        {
+            Token::Identifier(n) =>
+            {
                 path.push(intern::intern_symbol_owned(n.clone()));
                 self.eat();
             }
             _ => panic!("Expected module name after load at line {}", self.current_token.line),
         }
 
-        while self.current_token.token == Token::ColonColon {
+        while self.current_token.token == Token::ColonColon
+        {
             self.eat(); // ::
-            match &self.current_token.token {
-                Token::Identifier(n) => {
+            match &self.current_token.token
+            {
+                Token::Identifier(n) =>
+                {
                     path.push(intern::intern_symbol_owned(n.clone()));
                     self.eat();
                 }
@@ -601,11 +788,14 @@ impl Parser
         let line = self.current_token.line;
         self.eat(); // eat 'fn'
 
-        let name = if let Token::Identifier(n) = &self.current_token.token {
+        let name = if let Token::Identifier(n) = &self.current_token.token
+        {
             let name = intern::intern_symbol_owned(n.clone());
             self.eat();
             Some(name)
-        } else {
+        }
+        else
+        {
             None
         };
 
@@ -615,16 +805,22 @@ impl Parser
         {
             loop
             {
-                let is_ref = if self.current_token.token == Token::Ampersand {
+                let is_ref = if self.current_token.token == Token::Ampersand
+                {
                     self.eat();
                     true
-                } else {
+                }
+                else
+                {
                     false
                 };
 
                 match &self.current_token.token
                 {
-                    Token::Identifier(arg) => params.push((intern::intern_symbol_owned(arg.clone()), is_ref)),
+                    Token::Identifier(arg) =>
+                    {
+                        params.push((intern::intern_symbol_owned(arg.clone()), is_ref))
+                    }
                     _ => panic!("Expected parameter name at line {}", self.current_token.line),
                 }
                 self.eat();
@@ -643,19 +839,28 @@ impl Parser
         let body = self.parse_block();
         self.expect(Token::End);
 
-        if let Some(name) = name {
-            self.make_expr(ExprKind::FunctionDef {
-                name,
-                params,
-                body: Box::new(body),
-                slots: None,
-            }, line)
-        } else {
-            self.make_expr(ExprKind::AnonymousFunction {
-                params,
-                body: Box::new(body),
-                slots: None,
-            }, line)
+        if let Some(name) = name
+        {
+            self.make_expr(
+                ExprKind::FunctionDef {
+                    name,
+                    params,
+                    body: Box::new(body),
+                    slots: None,
+                },
+                line,
+            )
+        }
+        else
+        {
+            self.make_expr(
+                ExprKind::AnonymousFunction {
+                    params,
+                    body: Box::new(body),
+                    slots: None,
+                },
+                line,
+            )
         }
     }
 
@@ -669,10 +874,7 @@ impl Parser
 
         let else_branch = match self.current_token.token
         {
-            Token::Elif =>
-            {
-                Some(Box::new(self.parse_if()))
-            }
+            Token::Elif => Some(Box::new(self.parse_if())),
             Token::Else =>
             {
                 self.eat();
@@ -687,11 +889,14 @@ impl Parser
             }
             _ => panic!("Expected elif, else, or end at line {}", self.current_token.line),
         };
-        self.make_expr(ExprKind::If {
-            condition: Box::new(condition),
-            then_branch: Box::new(then_branch),
-            else_branch,
-        }, line)
+        self.make_expr(
+            ExprKind::If {
+                condition: Box::new(condition),
+                then_branch: Box::new(then_branch),
+                else_branch,
+            },
+            line,
+        )
     }
 
     fn parse_while(&mut self) -> Expr
@@ -704,10 +909,13 @@ impl Parser
 
         self.expect(Token::End);
 
-        self.make_expr(ExprKind::While {
-            condition: Box::new(condition),
-            body: Box::new(body),
-        }, line)
+        self.make_expr(
+            ExprKind::While {
+                condition: Box::new(condition),
+                body: Box::new(body),
+            },
+            line,
+        )
     }
 
     fn parse_for(&mut self) -> Expr
@@ -716,7 +924,8 @@ impl Parser
         self.eat(); // eat 'for'
 
         // Expect variable name
-        let var_name = match &self.current_token.token {
+        let var_name = match &self.current_token.token
+        {
             Token::Identifier(name) => intern::intern_symbol_owned(name.clone()),
             _ => panic!("Expected identifier after 'for' at line {}", self.current_token.line),
         };
@@ -729,12 +938,15 @@ impl Parser
         let body = self.parse_block();
         self.expect(Token::End);
 
-        self.make_expr(ExprKind::For {
-            var: var_name,
-            var_slot: None,
-            iterable: Box::new(iterable),
-            body: Box::new(body),
-        }, line)
+        self.make_expr(
+            ExprKind::For {
+                var: var_name,
+                var_slot: None,
+                iterable: Box::new(iterable),
+                body: Box::new(body),
+            },
+            line,
+        )
     }
 
     fn parse_loop(&mut self) -> Expr
@@ -744,28 +956,35 @@ impl Parser
 
         let count = self.parse_expression();
 
-        let var = if self.current_token.token == Token::Pipe {
+        let var = if self.current_token.token == Token::Pipe
+        {
             self.eat(); // |
-            let name = match &self.current_token.token {
+            let name = match &self.current_token.token
+            {
                 Token::Identifier(n) => intern::intern_symbol_owned(n.clone()),
                 _ => panic!("Expected loop variable name at line {}", self.current_token.line),
             };
             self.eat();
             self.expect(Token::Pipe);
             Some(name)
-        } else {
+        }
+        else
+        {
             None
         };
 
         let body = self.parse_block();
         self.expect(Token::End);
 
-        self.make_expr(ExprKind::Loop {
-            count: Box::new(count),
-            var,
-            var_slot: None,
-            body: Box::new(body),
-        }, line)
+        self.make_expr(
+            ExprKind::Loop {
+                count: Box::new(count),
+                var,
+                var_slot: None,
+                body: Box::new(body),
+            },
+            line,
+        )
     }
 
     fn parse_block(&mut self) -> Expr
@@ -792,27 +1011,40 @@ impl Parser
         }
     }
 
-    fn parse_closure_literal(&mut self) -> Expr {
+    fn parse_closure_literal(&mut self) -> Expr
+    {
         let line = self.current_token.line;
         self.eat(); // {
         let mut params = Vec::new();
-        if self.current_token.token == Token::Pipe {
+        if self.current_token.token == Token::Pipe
+        {
             self.eat(); // |
-            loop {
-                let is_ref = if self.current_token.token == Token::Ampersand {
+            loop
+            {
+                let is_ref = if self.current_token.token == Token::Ampersand
+                {
                     self.eat();
                     true
-                } else {
+                }
+                else
+                {
                     false
                 };
-                match &self.current_token.token {
-                    Token::Identifier(p) => params.push((intern::intern_symbol_owned(p.clone()), is_ref)),
+                match &self.current_token.token
+                {
+                    Token::Identifier(p) =>
+                    {
+                        params.push((intern::intern_symbol_owned(p.clone()), is_ref))
+                    }
                     _ => panic!("Expected param name at line {}", self.current_token.line),
                 }
                 self.eat();
-                if self.current_token.token == Token::Comma {
+                if self.current_token.token == Token::Comma
+                {
                     self.eat();
-                } else {
+                }
+                else
+                {
                     break;
                 }
             }
@@ -820,78 +1052,110 @@ impl Parser
         }
         let body = self.parse_block();
         self.expect(Token::RightBrace);
-        self.make_expr(ExprKind::AnonymousFunction { params, body: Box::new(body), slots: None }, line)
+        self.make_expr(
+            ExprKind::AnonymousFunction {
+                params,
+                body: Box::new(body),
+                slots: None,
+            },
+            line,
+        )
     }
 
-    fn parse_format_string(&mut self, content: String, line: usize) -> Expr {
+    fn parse_format_string(&mut self, content: String, line: usize) -> Expr
+    {
         let mut parts: Vec<FormatPart> = Vec::new();
         let mut literal = String::new();
         let chars: Vec<char> = content.chars().collect();
         let mut i = 0;
-        while i < chars.len() {
+        while i < chars.len()
+        {
             let ch = chars[i];
-            if ch == '{' {
-                if i + 1 < chars.len() && chars[i + 1] == '{' {
+            if ch == '{'
+            {
+                if i + 1 < chars.len() && chars[i + 1] == '{'
+                {
                     literal.push('{');
                     i += 2;
                     continue;
                 }
-                if !literal.is_empty() {
+                if !literal.is_empty()
+                {
                     parts.push(FormatPart::Literal(intern::intern_owned(literal.clone())));
                     literal.clear();
                 }
                 let start = i + 1;
                 let mut end = start;
-                while end < chars.len() && chars[end] != '}' {
+                while end < chars.len() && chars[end] != '}'
+                {
                     end += 1;
                 }
-                if end >= chars.len() {
+                if end >= chars.len()
+                {
                     panic!("Unclosed format string expression at line {}", line);
                 }
                 let expr_slice: String = chars[start..end].iter().collect();
                 let (expr_str, spec) = self.split_format_expr(&expr_slice, line);
-                if expr_str.trim().is_empty() {
+                if expr_str.trim().is_empty()
+                {
                     panic!("Empty format string expression at line {}", line);
                 }
                 let lexer = Lexer::new(&expr_str);
                 let mut parser = Parser::new(lexer);
                 let expr = parser.parse();
-                parts.push(FormatPart::Expr { expr: Box::new(expr), spec });
+                parts.push(FormatPart::Expr {
+                    expr: Box::new(expr),
+                    spec,
+                });
                 i = end + 1;
-            } else if ch == '}' {
-                if i + 1 < chars.len() && chars[i + 1] == '}' {
+            }
+            else if ch == '}'
+            {
+                if i + 1 < chars.len() && chars[i + 1] == '}'
+                {
                     literal.push('}');
                     i += 2;
-                } else {
+                }
+                else
+                {
                     panic!("Unmatched '}}' in format string at line {}", line);
                 }
-            } else {
+            }
+            else
+            {
                 literal.push(ch);
                 i += 1;
             }
         }
-        if !literal.is_empty() {
+        if !literal.is_empty()
+        {
             parts.push(FormatPart::Literal(intern::intern_owned(literal)));
         }
         self.make_expr(ExprKind::FormatString(parts), line)
     }
 
-    fn split_format_expr(&self, input: &str, line: usize) -> (String, Option<FormatSpec>) {
+    fn split_format_expr(&self, input: &str, line: usize) -> (String, Option<FormatSpec>)
+    {
         let mut depth_paren = 0usize;
         let mut depth_brack = 0usize;
         let mut depth_brace = 0usize;
         let mut in_string = false;
         let mut string_delim = '\0';
         let mut split_at: Option<usize> = None;
-        for (idx, ch) in input.chars().enumerate() {
-            if in_string {
-                if ch == string_delim {
+        for (idx, ch) in input.chars().enumerate()
+        {
+            if in_string
+            {
+                if ch == string_delim
+                {
                     in_string = false;
                 }
                 continue;
             }
-            match ch {
-                '"' | '`' => {
+            match ch
+            {
+                '"' | '`' =>
+                {
                     in_string = true;
                     string_delim = ch;
                 }
@@ -901,36 +1165,47 @@ impl Parser
                 ']' => depth_brack = depth_brack.saturating_sub(1),
                 '{' => depth_brace += 1,
                 '}' => depth_brace = depth_brace.saturating_sub(1),
-                ':' if depth_paren == 0 && depth_brack == 0 && depth_brace == 0 => {
+                ':' if depth_paren == 0 && depth_brack == 0 && depth_brace == 0 =>
+                {
                     split_at = Some(idx);
                     break;
                 }
-                _ => {}
+                _ =>
+                {}
             }
         }
 
-        if let Some(idx) = split_at {
+        if let Some(idx) = split_at
+        {
             let expr = input[..idx].trim().to_string();
             let spec_str = input[idx + 1..].trim();
-            if spec_str.is_empty() {
+            if spec_str.is_empty()
+            {
                 panic!("Empty format specifier at line {}", line);
             }
             let spec = self.parse_format_spec(spec_str, line);
             (expr, Some(spec))
-        } else {
+        }
+        else
+        {
             (input.trim().to_string(), None)
         }
     }
 
-    fn parse_format_spec(&self, spec: &str, line: usize) -> FormatSpec {
-        if let Some(rest) = spec.strip_prefix('.') {
-            if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_digit()) {
+    fn parse_format_spec(&self, spec: &str, line: usize) -> FormatSpec
+    {
+        if let Some(rest) = spec.strip_prefix('.')
+        {
+            if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_digit())
+            {
                 panic!("Invalid format precision at line {}", line);
             }
-            let precision = rest.parse::<usize>().unwrap_or_else(|_| {
-                panic!("Invalid format precision at line {}", line)
-            });
-            return FormatSpec { precision: Some(precision) };
+            let precision = rest
+                .parse::<usize>()
+                .unwrap_or_else(|_| panic!("Invalid format precision at line {}", line));
+            return FormatSpec {
+                precision: Some(precision),
+            };
         }
         panic!("Unsupported format specifier at line {}", line);
     }

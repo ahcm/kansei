@@ -6,7 +6,8 @@ use std::rc::Rc;
 use wasmi::{Engine, ExternType, Func, FuncType, Instance, Linker, Memory, Module, Store};
 
 #[derive(Debug)]
-pub struct WasmModule {
+pub struct WasmModule
+{
     pub store: Store<()>,
     pub instance: Instance,
     pub memory: Option<Memory>,
@@ -20,13 +21,16 @@ pub struct WasmModule {
 }
 
 #[derive(Debug, Clone)]
-pub struct WasmFunction {
+pub struct WasmFunction
+{
     pub name: Rc<String>,
     pub module: Rc<RefCell<WasmModule>>,
 }
 
-impl WasmModule {
-    pub fn load(path: &Path) -> Result<Rc<RefCell<WasmModule>>, String> {
+impl WasmModule
+{
+    pub fn load(path: &Path) -> Result<Rc<RefCell<WasmModule>>, String>
+    {
         let engine = Engine::default();
         let bytes = fs::read(path).map_err(|e| format!("Failed to read wasm module: {}", e))?;
         let module = Module::new(&engine, &mut &bytes[..])
@@ -34,14 +38,22 @@ impl WasmModule {
         let mut store = Store::new(&engine, ());
         let mut linker = Linker::new(&engine);
 
-        for import in module.imports() {
-            if let ExternType::Func(func_type) = import.ty() {
-                let func = Func::new(&mut store, func_type.clone(), |_caller, _params, _results| {
-                    Ok(())
-                });
+        for import in module.imports()
+        {
+            if let ExternType::Func(func_type) = import.ty()
+            {
+                let func =
+                    Func::new(&mut store, func_type.clone(), |_caller, _params, _results| Ok(()));
                 linker
                     .define(import.module(), import.name(), func)
-                    .map_err(|e| format!("Failed to define import {}::{}: {}", import.module(), import.name(), e))?;
+                    .map_err(|e| {
+                        format!(
+                            "Failed to define import {}::{}: {}",
+                            import.module(),
+                            import.name(),
+                            e
+                        )
+                    })?;
             }
         }
 
@@ -77,9 +89,11 @@ impl WasmModule {
 
         let mut functions = FxHashMap::default();
         let mut func_types = FxHashMap::default();
-        for export in module.exports() {
+        for export in module.exports()
+        {
             let name: &str = export.name();
-            if let ExternType::Func(func_type) = export.ty() {
+            if let ExternType::Func(func_type) = export.ty()
+            {
                 if let Some(func) = instance
                     .get_export(&store, name)
                     .and_then(|e| e.into_func())

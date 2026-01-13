@@ -3069,6 +3069,26 @@ fn collect_cache_metrics(code: &[Instruction])
     )
 }
 
+fn format_bytecode_instruction(inst: &Instruction) -> String
+{
+    match inst
+    {
+        Instruction::CallValueWithBlock(_, argc) =>
+        {
+            format!("CallValueWithBlock(<block>, {argc})")
+        }
+        Instruction::CallValueWithBlockCached(_, _, argc) =>
+        {
+            format!("CallValueWithBlockCached(<cache>, <block>, {argc})")
+        }
+        Instruction::CallMethodWithBlockCached(name, _, _, _, argc) =>
+        {
+            format!("CallMethodWithBlockCached({:?}, <map_cache>, <call_cache>, <block>, {argc})", name)
+        }
+        _ => format!("{:?}", inst),
+    }
+}
+
 pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String
 {
     let mut out = String::new();
@@ -3114,7 +3134,7 @@ pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String
                 out.push_str("  Bytecode:\n");
                 for (idx, inst) in code.iter().enumerate()
                 {
-                    out.push_str(&format!("  {idx:04} {:?}\n", inst));
+                    out.push_str(&format!("  {idx:04} {}\n", format_bytecode_instruction(inst)));
                 }
                 let (
                     bin_hits,
@@ -3223,7 +3243,7 @@ pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String
                 out.push_str("  Bytecode:\n");
                 for (idx, inst) in code.iter().enumerate()
                 {
-                    out.push_str(&format!("  {idx:04} {:?}\n", inst));
+                    out.push_str(&format!("  {idx:04} {}\n", format_bytecode_instruction(inst)));
                 }
                 let (
                     bin_hits,

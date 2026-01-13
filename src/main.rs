@@ -34,18 +34,8 @@ fn main() -> rustyline::Result<()>
         let mut handled = false;
         match args[idx].as_str()
         {
-            "--dump-ast" =>
-            {
-                if !dump_bytecode
-                {
-                    dump_ast = true;
-                }
-            }
-            "--dump-bytecode" =>
-            {
-                dump_bytecode = true;
-                dump_ast = false;
-            }
+            "--dump-ast" => dump_ast = true,
+            "--dump-bytecode" => dump_bytecode = true,
             "--bytecode" =>
             {
                 if idx + 1 >= args.len()

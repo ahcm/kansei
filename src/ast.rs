@@ -171,6 +171,16 @@ pub enum ExprKind
         index: Box<Expr>,
     },
     Use(Vec<SymbolId>),
+    Import
+    {
+        path: Rc<String>,
+        alias: Option<SymbolId>,
+    },
+    Export
+    {
+        namespace: Vec<SymbolId>,
+        names: Vec<SymbolId>,
+    },
 
     // A block of code (so an 'if' can run multiple lines)
     Block(Vec<Expr>),

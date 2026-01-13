@@ -131,11 +131,16 @@ fn main() -> rustyline::Result<()>
 
     if let Some(path) = script_path
     {
+        interpreter.set_main_path(std::path::Path::new(&path));
         run_file(&path, interpreter, dump_ast, dump_bytecode, bytecode_mode);
         Ok(())
     }
     else
     {
+        if let Ok(dir) = env::current_dir()
+        {
+            interpreter.set_main_path(&dir);
+        }
         run_repl(interpreter)
     }
 }

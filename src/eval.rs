@@ -10,6 +10,7 @@ use crate::wasm::{WasmFunction, WasmModule};
 use rustc_hash::FxHashMap;
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
+use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -17,6 +18,7 @@ use std::process::Command;
 use std::rc::Rc;
 use std::simd::Simd;
 use std::simd::num::SimdFloat;
+use std::time::SystemTime;
 use wasmi::Value as WasmValue;
 use wasmi::core::ValueType;
 
@@ -960,7 +962,10 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<SymbolId>)
                 }
             }
         }
-        ExprKind::Load(_) =>
+        ExprKind::Use(_)
+        | ExprKind::Load(_)
+        | ExprKind::Import { .. }
+        | ExprKind::Export { .. } =>
         {}
         _ =>
         {}
@@ -1142,9 +1147,10 @@ fn resolve_functions(expr: &mut Expr)
                 }
             }
         }
-        ExprKind::Use(_) =>
-        {}
-        ExprKind::Load(_) =>
+        ExprKind::Use(_)
+        | ExprKind::Load(_)
+        | ExprKind::Import { .. }
+        | ExprKind::Export { .. } =>
         {}
         ExprKind::Yield(args) =>
         {
@@ -1182,6 +1188,8 @@ fn uses_environment(expr: &Expr) -> bool
         ExprKind::Clone(expr) => uses_environment(expr),
         ExprKind::Use(_) => true,
         ExprKind::Load(_) => true,
+        ExprKind::Import { .. } => true,
+        ExprKind::Export { .. } => true,
         ExprKind::FormatString(parts) => parts.iter().any(|part| {
             if let crate::ast::FormatPart::Expr { expr, .. } = part
             {
@@ -2112,11 +2120,10 @@ fn compile_expr(
                 code.push(Instruction::Pop);
             }
         }
-        ExprKind::Use(_) =>
-        {
-            return false;
-        }
-        ExprKind::Load(_) =>
+        ExprKind::Use(_)
+        | ExprKind::Load(_)
+        | ExprKind::Import { .. }
+        | ExprKind::Export { .. } =>
         {
             return false;
         }
@@ -2688,6 +2695,14 @@ fn find_compile_failure(expr: &Expr) -> Option<String>
         {
             return Some("load not supported in bytecode".to_string());
         }
+        ExprKind::Import { .. } =>
+        {
+            return Some("import not supported in bytecode".to_string());
+        }
+        ExprKind::Export { .. } =>
+        {
+            return Some("export not supported in bytecode".to_string());
+        }
         ExprKind::FormatString(_) =>
         {
             return Some("format string not supported in bytecode".to_string());
@@ -2959,7 +2974,9 @@ fn collect_function_exprs(
         | ExprKind::Nil
         | ExprKind::Shell(_)
         | ExprKind::Use(_)
-        | ExprKind::Load(_) =>
+        | ExprKind::Load(_)
+        | ExprKind::Import { .. }
+        | ExprKind::Export { .. } =>
         {}
     }
 }
@@ -3523,7 +3540,9 @@ fn is_reg_simple(expr: &Expr) -> bool
         | ExprKind::FunctionDef { .. }
         | ExprKind::AnonymousFunction { .. }
         | ExprKind::Use(_)
-        | ExprKind::Load(_) => false,
+        | ExprKind::Load(_)
+        | ExprKind::Import { .. }
+        | ExprKind::Export { .. } => false,
         ExprKind::If { .. }
         | ExprKind::While { .. }
         | ExprKind::For { .. }
@@ -6630,7 +6649,9 @@ fn is_simple(expr: &Expr) -> bool
         | ExprKind::FunctionDef { .. }
         | ExprKind::AnonymousFunction { .. }
         | ExprKind::Use(_)
-        | ExprKind::Load(_) => false,
+        | ExprKind::Load(_)
+        | ExprKind::Import { .. }
+        | ExprKind::Export { .. } => false,
         ExprKind::Block(stmts) => stmts.iter().all(is_simple),
         ExprKind::FormatString(parts) => parts.iter().all(|part| {
             if let crate::ast::FormatPart::Expr { expr, .. } = part
@@ -6840,9 +6861,10 @@ fn resolve(expr: &mut Expr, slot_map: &FxHashMap<SymbolId, usize>)
                 }
             }
         }
-        ExprKind::Use(_) =>
-        {}
-        ExprKind::Load(_) =>
+        ExprKind::Use(_)
+        | ExprKind::Load(_)
+        | ExprKind::Import { .. }
+        | ExprKind::Export { .. } =>
         {}
         ExprKind::Yield(args) =>
         {
@@ -6856,6 +6878,60 @@ fn resolve(expr: &mut Expr, slot_map: &FxHashMap<SymbolId, usize>)
     }
 }
 
+fn default_module_search_paths(main_path: Option<&std::path::Path>) -> Vec<PathBuf>
+{
+    if let Ok(paths) = env::var("KANSEI_MODULE_PATH")
+    {
+        let mut out = Vec::new();
+        for entry in paths.split(':')
+        {
+            if !entry.is_empty()
+            {
+                out.push(PathBuf::from(entry));
+            }
+        }
+        return out;
+    }
+
+    let mut out = Vec::new();
+    let base = main_path
+        .and_then(|p| p.parent().map(PathBuf::from))
+        .or_else(|| env::current_dir().ok());
+    if let Some(base) = base
+    {
+        out.push(base.join("modules"));
+    }
+    out.push(PathBuf::from("/usr/local/lib/kansai/modules"));
+    out.push(PathBuf::from("/usr/lib/kansai/modules"));
+    if let Ok(home) = env::var("HOME")
+    {
+        out.push(PathBuf::from(home).join(".local/lib/kansai/modules"));
+    }
+    out
+}
+
+struct ModuleCacheEntry
+{
+    exports: Rc<RefCell<MapValue>>,
+    namespace: Vec<SymbolId>,
+    env: Rc<RefCell<Environment>>,
+    modified: Option<SystemTime>,
+    size: u64,
+}
+
+struct ModuleLookupEntry
+{
+    env_version: u64,
+    value: Value,
+}
+
+struct ExportSpec
+{
+    namespace: Vec<SymbolId>,
+    names: Vec<SymbolId>,
+    line: usize,
+}
+
 pub struct Interpreter
 {
     // Current environment (scope)
@@ -6867,24 +6943,59 @@ pub struct Interpreter
     // Pool of reusable register buffers for reg-simple functions
     reg_pool: Vec<Vec<Value>>,
     bytecode_mode: BytecodeMode,
+    module_cache: FxHashMap<String, ModuleCacheEntry>,
+    module_lookup_cache: FxHashMap<String, ModuleLookupEntry>,
+    module_search_paths: Vec<PathBuf>,
 }
 
 impl Interpreter
 {
     pub fn new() -> Self
     {
+        let module_search_paths = default_module_search_paths(None);
         Self {
             env: Rc::new(RefCell::new(Environment::new(None))),
             block_stack: Vec::new(),
             env_pool: Vec::with_capacity(32),
             reg_pool: Vec::with_capacity(32),
             bytecode_mode: BytecodeMode::Simple,
+            module_cache: FxHashMap::default(),
+            module_lookup_cache: FxHashMap::default(),
+            module_search_paths,
         }
     }
 
     pub fn set_bytecode_mode(&mut self, mode: BytecodeMode)
     {
         self.bytecode_mode = mode;
+    }
+
+    pub fn set_main_path(&mut self, path: &std::path::Path)
+    {
+        self.module_search_paths = default_module_search_paths(Some(path));
+        self.module_lookup_cache.clear();
+    }
+
+    fn get_local_value(&self, name: SymbolId) -> Option<Value>
+    {
+        let env_ref = self.env.borrow();
+        let idx = name as usize;
+        if idx < env_ref.values.len()
+        {
+            let val = env_ref.values[idx].clone();
+            if matches!(val, Value::Uninitialized)
+            {
+                None
+            }
+            else
+            {
+                Some(val)
+            }
+        }
+        else
+        {
+            None
+        }
     }
 
     fn get_env(
@@ -7080,6 +7191,330 @@ impl Interpreter
         }
     }
 
+    fn env_chain_version(&self) -> u64
+    {
+        let mut version = 0u64;
+        let mut shift = 0u32;
+        let mut current = Some(self.env.clone());
+        while let Some(env_rc) = current
+        {
+            let env_ref = env_rc.borrow();
+            version ^= env_ref.version.rotate_left(shift);
+            shift = (shift + 11) % 64;
+            current = env_ref.parent.clone();
+        }
+        version
+    }
+
+    fn module_lookup_key(path: &[SymbolId]) -> String
+    {
+        let mut out = String::new();
+        for (idx, segment) in path.iter().enumerate()
+        {
+            if idx > 0
+            {
+                out.push_str("::");
+            }
+            out.push_str(symbol_name(*segment).as_str());
+        }
+        out
+    }
+
+    fn resolve_module_file(&self, import_path: &str, line: usize) -> Result<PathBuf, RuntimeError>
+    {
+        if !import_path.ends_with(".ks")
+        {
+            return Err(RuntimeError {
+                message: "import path must end with .ks".to_string(),
+                line,
+            });
+        }
+
+        let mut rel = PathBuf::new();
+        for segment in import_path.split("::")
+        {
+            for part in segment.split('/')
+            {
+                if !part.is_empty()
+                {
+                    rel.push(part);
+                }
+            }
+        }
+
+        for base in &self.module_search_paths
+        {
+            let candidate = base.join(&rel);
+            if candidate.exists()
+            {
+                return Ok(candidate);
+            }
+        }
+
+        Err(RuntimeError {
+            message: format!("Module file '{}' not found", import_path),
+            line,
+        })
+    }
+
+    fn extract_export_spec(&self, expr: &Expr) -> Result<(ExportSpec, Expr), RuntimeError>
+    {
+        let line = expr.line;
+        match &expr.kind
+        {
+            ExprKind::Export { namespace, names } =>
+            {
+                let spec = ExportSpec {
+                    namespace: namespace.clone(),
+                    names: names.clone(),
+                    line,
+                };
+                let body = Expr {
+                    kind: ExprKind::Nil,
+                    line,
+                };
+                Ok((spec, body))
+            }
+            ExprKind::Block(stmts) =>
+            {
+                if stmts.is_empty()
+                {
+                    return Err(RuntimeError {
+                        message: "export declaration required at top of module".to_string(),
+                        line,
+                    });
+                }
+                match &stmts[0].kind
+                {
+                    ExprKind::Export { namespace, names } =>
+                    {
+                        let spec = ExportSpec {
+                            namespace: namespace.clone(),
+                            names: names.clone(),
+                            line: stmts[0].line,
+                        };
+                        let rest = &stmts[1..];
+                        let body = if rest.is_empty()
+                        {
+                            Expr {
+                                kind: ExprKind::Nil,
+                                line,
+                            }
+                        }
+                        else if rest.len() == 1
+                        {
+                            rest[0].clone()
+                        }
+                        else
+                        {
+                            Expr {
+                                kind: ExprKind::Block(rest.to_vec()),
+                                line,
+                            }
+                        };
+                        Ok((spec, body))
+                    }
+                    _ => Err(RuntimeError {
+                        message: "export declaration required at top of module".to_string(),
+                        line,
+                    }),
+                }
+            }
+            _ => Err(RuntimeError {
+                message: "export declaration required at top of module".to_string(),
+                line,
+            }),
+        }
+    }
+
+    fn build_exports(
+        &self,
+        env: &Rc<RefCell<Environment>>,
+        spec: &ExportSpec,
+    ) -> Result<Rc<RefCell<MapValue>>, RuntimeError>
+    {
+        let mut exports = FxHashMap::default();
+        let env_ref = env.borrow();
+        for name in &spec.names
+        {
+            let val = env_ref.get(*name).ok_or_else(|| RuntimeError {
+                message: format!(
+                    "export '{}' not found in module",
+                    symbol_name(*name).as_str()
+                ),
+                line: spec.line,
+            })?;
+            if matches!(val, Value::Uninitialized)
+            {
+                return Err(RuntimeError {
+                    message: format!(
+                        "export '{}' not found in module",
+                        symbol_name(*name).as_str()
+                    ),
+                    line: spec.line,
+                });
+            }
+            exports.insert(symbol_name(*name), val);
+        }
+        Ok(Rc::new(RefCell::new(MapValue::new(exports))))
+    }
+
+    fn bind_module_namespace(
+        &mut self,
+        namespace: &[SymbolId],
+        module_map: Rc<RefCell<MapValue>>,
+        line: usize,
+    ) -> Result<(), RuntimeError>
+    {
+        if namespace.is_empty()
+        {
+            return Err(RuntimeError {
+                message: "export namespace must not be empty".to_string(),
+                line,
+            });
+        }
+
+        let first = namespace[0];
+        let mut current = match self.get_local_value(first)
+        {
+            Some(Value::Map(map)) => map,
+            Some(_) => {
+                return Err(RuntimeError {
+                    message: format!(
+                        "Module namespace '{}' is not a module",
+                        symbol_name(first).as_str()
+                    ),
+                    line,
+                })
+            }
+            None =>
+            {
+                let map = Rc::new(RefCell::new(MapValue::new(FxHashMap::default())));
+                self.define_global(first, Value::Map(map.clone()));
+                map
+            }
+        };
+
+        for segment in &namespace[1..namespace.len() - 1]
+        {
+            let seg_name = symbol_name(*segment);
+            let next = {
+                let mut map_mut = current.borrow_mut();
+                if let Some(Value::Map(next_map)) = map_mut.data.get(&seg_name).cloned()
+                {
+                    next_map
+                }
+                else
+                {
+                    let new_map = Rc::new(RefCell::new(MapValue::new(FxHashMap::default())));
+                    map_mut.data.insert(seg_name.clone(), Value::Map(new_map.clone()));
+                    map_mut.version = map_mut.version.wrapping_add(1);
+                    new_map
+                }
+            };
+            current = next;
+        }
+
+        let last = *namespace.last().unwrap();
+        let mut map_mut = current.borrow_mut();
+        map_mut.data.insert(symbol_name(last), Value::Map(module_map));
+        map_mut.version = map_mut.version.wrapping_add(1);
+        Ok(())
+    }
+
+    fn import_module(&mut self, path: &Rc<String>, alias: Option<SymbolId>, line: usize) -> EvalResult
+    {
+        let file_path = self.resolve_module_file(path.as_str(), line)?;
+        let metadata = fs::metadata(&file_path).map_err(|e| RuntimeError {
+            message: format!("Failed to read module metadata: {}", e),
+            line,
+        })?;
+        let modified = metadata.modified().ok();
+        let size = metadata.len();
+        let key = file_path.to_string_lossy().to_string();
+
+        let (exports_map, namespace) = if let Some(entry) = self.module_cache.get(&key)
+        {
+            if entry.size == size && entry.modified == modified
+            {
+                let _ = entry.env.clone();
+                (entry.exports.clone(), entry.namespace.clone())
+            }
+            else
+            {
+                self.load_module_from_file(&file_path, modified, size, line)?
+            }
+        }
+        else
+        {
+            self.load_module_from_file(&file_path, modified, size, line)?
+        };
+
+        self.bind_module_namespace(&namespace, exports_map.clone(), line)?;
+        if let Some(alias) = alias
+        {
+            self.env.borrow_mut().define(alias, Value::Map(exports_map));
+        }
+        self.module_lookup_cache.remove(&Self::module_lookup_key(&namespace));
+        Ok(Value::Nil)
+    }
+
+    fn load_module_from_file(
+        &mut self,
+        file_path: &std::path::Path,
+        modified: Option<SystemTime>,
+        size: u64,
+        line: usize,
+    ) -> Result<(Rc<RefCell<MapValue>>, Vec<SymbolId>), RuntimeError>
+    {
+        let source = fs::read_to_string(file_path).map_err(|e| RuntimeError {
+            message: format!("Failed to read module file: {}", e),
+            line,
+        })?;
+
+        let parse_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let lexer = crate::lexer::Lexer::new(&source);
+            let mut parser = crate::parser::Parser::new(lexer);
+            parser.parse()
+        }));
+
+        let mut ast = match parse_result
+        {
+            Ok(ast) => ast,
+            Err(_) => {
+                return Err(RuntimeError {
+                    message: "Failed to parse module file".to_string(),
+                    line,
+                })
+            }
+        };
+
+        resolve_slots(&mut ast);
+        let (export_spec, body) = self.extract_export_spec(&ast)?;
+
+        let module_env = self.get_env(Some(self.env.clone()), false);
+        let original_env = self.env.clone();
+        self.env = module_env.clone();
+        let eval_result = self.eval(&body, &mut []);
+        self.env = original_env;
+        if let Err(err) = eval_result
+        {
+            return Err(err);
+        }
+
+        let exports_map = self.build_exports(&module_env, &export_spec)?;
+        let entry = ModuleCacheEntry {
+            exports: exports_map.clone(),
+            namespace: export_spec.namespace.clone(),
+            env: module_env.clone(),
+            modified,
+            size,
+        };
+        let key = file_path.to_string_lossy().to_string();
+        self.module_cache.insert(key, entry);
+        Ok((exports_map, export_spec.namespace))
+    }
+
     fn load_wasm_module(&mut self, path: &[SymbolId], line: usize) -> EvalResult
     {
         if path.len() < 2
@@ -7147,6 +7582,17 @@ impl Interpreter
             self.ensure_std_module();
         }
 
+        let key = Self::module_lookup_key(path);
+        let env_version = self.env_chain_version();
+        if let Some(entry) = self.module_lookup_cache.get(&key)
+        {
+            if entry.env_version == env_version
+            {
+                let _ = entry.value.clone();
+                return Ok(Value::Nil);
+            }
+        }
+
         let mut current = self.env.borrow().get(path[0]).ok_or_else(|| RuntimeError {
             message: format!("Module '{}' not found", symbol_name(path[0]).as_str()),
             line,
@@ -7187,6 +7633,13 @@ impl Interpreter
             }
         }
 
+        self.module_lookup_cache.insert(
+            key,
+            ModuleLookupEntry {
+                env_version,
+                value: current.clone(),
+            },
+        );
         Ok(Value::Nil)
     }
 
@@ -8111,6 +8564,19 @@ impl Interpreter
             {
                 self.import_path(path, line)?;
                 Ok(Value::Nil)
+            }
+            ExprKind::Import { path, alias } =>
+            {
+                self.import_module(path, *alias, line)?;
+                Ok(Value::Nil)
+            }
+            ExprKind::Export { .. } =>
+            {
+                Err(RuntimeError {
+                    message: "export declarations are only valid at the top of module files"
+                        .to_string(),
+                    line,
+                })
             }
             ExprKind::Load(path) =>
             {

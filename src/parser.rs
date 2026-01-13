@@ -551,6 +551,7 @@ impl Parser
             Token::For => self.parse_for(),
             Token::Loop => self.parse_loop(),
             Token::Use => self.parse_use(),
+            Token::Import => self.parse_import(),
             Token::Load => self.parse_load(),
             Token::LeftBracket => self.parse_array(),
             Token::LeftBrace =>
@@ -750,6 +751,40 @@ impl Parser
         self.make_expr(ExprKind::Use(path), line)
     }
 
+    fn parse_import(&mut self) -> Expr
+    {
+        let line = self.current_token.line;
+        self.eat(); // eat 'import'
+
+        let path = match &self.current_token.token
+        {
+            Token::StringLiteral(content) =>
+            {
+                let value = Rc::new(content.clone());
+                self.eat();
+                value
+            }
+            _ => panic!("Expected string literal after import at line {}", self.current_token.line),
+        };
+
+        let mut alias = None;
+        if self.current_token.token == Token::As
+        {
+            self.eat(); // eat 'as'
+            match &self.current_token.token
+            {
+                Token::Identifier(name) =>
+                {
+                    alias = Some(intern::intern_symbol_owned(name.clone()));
+                    self.eat();
+                }
+                _ => panic!("Expected identifier after as at line {}", self.current_token.line),
+            }
+        }
+
+        self.make_expr(ExprKind::Import { path, alias }, line)
+    }
+
     fn parse_load(&mut self) -> Expr
     {
         let line = self.current_token.line;
@@ -781,6 +816,74 @@ impl Parser
         }
 
         self.make_expr(ExprKind::Load(path), line)
+    }
+
+    fn parse_export(&mut self) -> Expr
+    {
+        let line = self.current_token.line;
+        self.eat(); // eat 'export'
+
+        let mut namespace = Vec::new();
+        match &self.current_token.token
+        {
+            Token::Identifier(n) =>
+            {
+                namespace.push(intern::intern_symbol_owned(n.clone()));
+                self.eat();
+            }
+            _ => panic!("Expected namespace after export at line {}", self.current_token.line),
+        }
+
+        loop
+        {
+            if self.current_token.token != Token::ColonColon
+            {
+                panic!("Expected :: after export namespace at line {}", self.current_token.line);
+            }
+            self.eat(); // ::
+            if self.current_token.token == Token::LeftBracket
+            {
+                break;
+            }
+            match &self.current_token.token
+            {
+                Token::Identifier(n) =>
+                {
+                    namespace.push(intern::intern_symbol_owned(n.clone()));
+                    self.eat();
+                }
+                _ => panic!("Expected namespace segment at line {}", self.current_token.line),
+            }
+        }
+
+        self.expect(Token::LeftBracket);
+        let mut names = Vec::new();
+        if self.current_token.token != Token::RightBracket
+        {
+            loop
+            {
+                match &self.current_token.token
+                {
+                    Token::Identifier(n) =>
+                    {
+                        names.push(intern::intern_symbol_owned(n.clone()));
+                        self.eat();
+                    }
+                    _ => panic!("Expected export name at line {}", self.current_token.line),
+                }
+                if self.current_token.token == Token::Comma
+                {
+                    self.eat();
+                }
+                else
+                {
+                    break;
+                }
+            }
+        }
+        self.expect(Token::RightBracket);
+
+        self.make_expr(ExprKind::Export { namespace, names }, line)
     }
 
     fn parse_fn(&mut self) -> Expr
@@ -991,6 +1094,7 @@ impl Parser
     {
         let line = self.current_token.line;
         let mut statements = Vec::new();
+        let mut seen_export = false;
 
         while self.current_token.token != Token::End
             && self.current_token.token != Token::Else
@@ -998,6 +1102,16 @@ impl Parser
             && self.current_token.token != Token::RightBrace // Handle block end }
             && self.current_token.token != Token::EOF
         {
+            if self.current_token.token == Token::Export
+            {
+                if seen_export || !statements.is_empty()
+                {
+                    panic!("export must appear at the top of the file at line {}", self.current_token.line);
+                }
+                seen_export = true;
+                statements.push(self.parse_export());
+                continue;
+            }
             statements.push(self.parse_assignment());
         }
 

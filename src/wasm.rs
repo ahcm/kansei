@@ -8,7 +8,6 @@ use wasmi::{Engine, ExternType, Func, FuncType, Instance, Linker, Memory, Module
 #[derive(Debug)]
 pub struct WasmModule {
     pub store: Store<()>,
-    #[allow(dead_code)]
     pub instance: Instance,
     pub memory: Option<Memory>,
     pub alloc: Option<Func>,

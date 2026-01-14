@@ -7,4 +7,6 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-plotters = { version = "0.3", default-features = false, features = ["svg_backend"] }
+plotters = { version = "0.3", default-features = false, features = ["svg_backend", "bitmap_backend"] }
+image = { version = "0.24", default-features = false, features = ["png"] }
+base64 = "0.22"

@@ -8030,7 +8030,10 @@ impl Interpreter
 
         let estimated_params = arg_vals
             .iter()
-            .map(|v| if matches!(v, Value::String(_)) { 2 } else { 1 })
+            .map(|v| match v {
+                Value::String(_) | Value::F64Array(_) | Value::Array(_) => 2,
+                _ => 1,
+            })
             .sum::<usize>();
         let wbindgen_mode = !params.is_empty()
             && params[0] == ValueType::I32
@@ -8208,6 +8211,222 @@ impl Interpreter
                     allocs.push((ptr, bytes.len() as i32));
                     wasm_args.push(WasmValue::I32(ptr));
                     wasm_args.push(WasmValue::I32(bytes.len() as i32));
+                    arg_index += 1;
+                    param_index += 2;
+                }
+                Value::F64Array(arr) =>
+                {
+                    if param_index + 1 >= params.len()
+                        || params[param_index] != ValueType::I32
+                        || params[param_index + 1] != ValueType::I32
+                    {
+                        return Err(RuntimeError {
+                            message: "Wasm f64 array arguments require two i32 params".to_string(),
+                            line,
+                        });
+                    }
+                    let len = arr.borrow().len();
+                    let len_i32 = i32::try_from(len).map_err(|_| RuntimeError {
+                        message: "Wasm array length too large".to_string(),
+                        line,
+                    })?;
+                    if len == 0
+                    {
+                        wasm_args.push(WasmValue::I32(0));
+                        wasm_args.push(WasmValue::I32(0));
+                        arg_index += 1;
+                        param_index += 2;
+                        continue;
+                    }
+                    let memory = module.memory.ok_or_else(|| RuntimeError {
+                        message: "Wasm module has no memory export".to_string(),
+                        line,
+                    })?;
+                    let (alloc, alloc_name) = if let Some(func) = module.alloc
+                    {
+                        (func, "alloc")
+                    }
+                    else if let Some(func) = module.wbindgen_malloc
+                    {
+                        (func, "__wbindgen_malloc")
+                    }
+                    else
+                    {
+                        return Err(RuntimeError {
+                            message: "Wasm module has no alloc export".to_string(),
+                            line,
+                        });
+                    };
+                    let byte_len = len
+                        .checked_mul(8)
+                        .ok_or_else(|| RuntimeError {
+                            message: "Wasm array length too large".to_string(),
+                            line,
+                        })?;
+                    let mut results = [WasmValue::I32(0)];
+                    let alloc_params = module
+                        .func_types
+                        .get(&intern::intern(alloc_name))
+                        .map(|t| t.params().len())
+                        .unwrap_or(1);
+                    let alloc_args = if alloc_params == 2
+                    {
+                        vec![WasmValue::I32(byte_len as i32), WasmValue::I32(8)]
+                    }
+                    else
+                    {
+                        vec![WasmValue::I32(byte_len as i32)]
+                    };
+                    alloc
+                        .call(&mut module.store, &alloc_args, &mut results)
+                        .map_err(|e| RuntimeError {
+                            message: format!("Wasm alloc failed: {}", e),
+                            line,
+                        })?;
+                    let ptr = match results[0]
+                    {
+                        WasmValue::I32(v) => v,
+                        _ =>
+                        {
+                            return Err(RuntimeError {
+                                message: "Wasm alloc returned non-i32".to_string(),
+                                line,
+                            });
+                        }
+                    };
+                    let mem = memory.data_mut(&mut module.store);
+                    let start = ptr as usize;
+                    let end = start + byte_len;
+                    if end > mem.len()
+                    {
+                        return Err(RuntimeError {
+                            message: "Wasm memory overflow writing array".to_string(),
+                            line,
+                        });
+                    }
+                    let slice = arr.borrow();
+                    for (idx, value) in slice.iter().enumerate()
+                    {
+                        let offset = start + idx * 8;
+                        mem[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+                    }
+                    allocs.push((ptr, byte_len as i32));
+                    wasm_args.push(WasmValue::I32(ptr));
+                    wasm_args.push(WasmValue::I32(len_i32));
+                    arg_index += 1;
+                    param_index += 2;
+                }
+                Value::Array(arr) =>
+                {
+                    if param_index + 1 >= params.len()
+                        || params[param_index] != ValueType::I32
+                        || params[param_index + 1] != ValueType::I32
+                    {
+                        return Err(RuntimeError {
+                            message: "Wasm array arguments require two i32 params".to_string(),
+                            line,
+                        });
+                    }
+                    let values = arr.borrow();
+                    let len = values.len();
+                    let len_i32 = i32::try_from(len).map_err(|_| RuntimeError {
+                        message: "Wasm array length too large".to_string(),
+                        line,
+                    })?;
+                    if len == 0
+                    {
+                        wasm_args.push(WasmValue::I32(0));
+                        wasm_args.push(WasmValue::I32(0));
+                        arg_index += 1;
+                        param_index += 2;
+                        continue;
+                    }
+                    let memory = module.memory.ok_or_else(|| RuntimeError {
+                        message: "Wasm module has no memory export".to_string(),
+                        line,
+                    })?;
+                    let (alloc, alloc_name) = if let Some(func) = module.alloc
+                    {
+                        (func, "alloc")
+                    }
+                    else if let Some(func) = module.wbindgen_malloc
+                    {
+                        (func, "__wbindgen_malloc")
+                    }
+                    else
+                    {
+                        return Err(RuntimeError {
+                            message: "Wasm module has no alloc export".to_string(),
+                            line,
+                        });
+                    };
+                    let byte_len = len
+                        .checked_mul(4)
+                        .ok_or_else(|| RuntimeError {
+                            message: "Wasm array length too large".to_string(),
+                            line,
+                        })?;
+                    let mut results = [WasmValue::I32(0)];
+                    let alloc_params = module
+                        .func_types
+                        .get(&intern::intern(alloc_name))
+                        .map(|t| t.params().len())
+                        .unwrap_or(1);
+                    let alloc_args = if alloc_params == 2
+                    {
+                        vec![WasmValue::I32(byte_len as i32), WasmValue::I32(4)]
+                    }
+                    else
+                    {
+                        vec![WasmValue::I32(byte_len as i32)]
+                    };
+                    alloc
+                        .call(&mut module.store, &alloc_args, &mut results)
+                        .map_err(|e| RuntimeError {
+                            message: format!("Wasm alloc failed: {}", e),
+                            line,
+                        })?;
+                    let ptr = match results[0]
+                    {
+                        WasmValue::I32(v) => v,
+                        _ =>
+                        {
+                            return Err(RuntimeError {
+                                message: "Wasm alloc returned non-i32".to_string(),
+                                line,
+                            });
+                        }
+                    };
+                    let mem = memory.data_mut(&mut module.store);
+                    let start = ptr as usize;
+                    let end = start + byte_len;
+                    if end > mem.len()
+                    {
+                        return Err(RuntimeError {
+                            message: "Wasm memory overflow writing array".to_string(),
+                            line,
+                        });
+                    }
+                    for (idx, value) in values.iter().enumerate()
+                    {
+                        let num = int_value_as_i64(value).ok_or_else(|| RuntimeError {
+                            message: "Wasm array elements must be integers".to_string(),
+                            line,
+                        })?;
+                        if num < 0 || num > u32::MAX as i64
+                        {
+                            return Err(RuntimeError {
+                                message: "Wasm array elements must fit in u32".to_string(),
+                                line,
+                            });
+                        }
+                        let bytes = (num as u32).to_le_bytes();
+                        let offset = start + idx * 4;
+                        mem[offset..offset + 4].copy_from_slice(&bytes);
+                    }
+                    allocs.push((ptr, byte_len as i32));
+                    wasm_args.push(WasmValue::I32(ptr));
+                    wasm_args.push(WasmValue::I32(len_i32));
                     arg_index += 1;
                     param_index += 2;
                 }

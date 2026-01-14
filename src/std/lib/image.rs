@@ -41,6 +41,20 @@ fn native_image_load_png(args: &[Value]) -> Result<Value, String>
     Ok(Value::Map(Rc::new(RefCell::new(MapValue::new(map)))))
 }
 
+fn native_image_load_png_bytes(args: &[Value]) -> Result<Value, String>
+{
+    let path = str_arg(args, 0, "Image.load_png_bytes")?;
+    let img = image::open(&path).map_err(|e| format!("Image.load_png_bytes failed: {e}"))?;
+    let rgba = img.to_rgba8();
+    let width = rgba.width();
+    let height = rgba.height();
+    let mut map = FxHashMap::default();
+    map.insert(intern::intern("width"), Value::Integer { value: width as i128, kind: crate::ast::IntKind::I64 });
+    map.insert(intern::intern("height"), Value::Integer { value: height as i128, kind: crate::ast::IntKind::I64 });
+    map.insert(intern::intern("rgba"), Value::Bytes(Rc::new(rgba.into_raw())));
+    Ok(Value::Map(Rc::new(RefCell::new(MapValue::new(map)))))
+}
+
 fn native_image_save_png(args: &[Value]) -> Result<Value, String>
 {
     let path = str_arg(args, 0, "Image.save_png")?;
@@ -59,10 +73,47 @@ fn native_image_save_png(args: &[Value]) -> Result<Value, String>
     Ok(Value::Boolean(true))
 }
 
+fn native_image_save_png_bytes(args: &[Value]) -> Result<Value, String>
+{
+    let path = str_arg(args, 0, "Image.save_png_bytes")?;
+    let width = int_arg(args, 1, "Image.save_png_bytes")?;
+    let height = int_arg(args, 2, "Image.save_png_bytes")?;
+    let bytes = match args.get(3)
+    {
+        Some(Value::Bytes(b)) => b.as_ref().clone(),
+        Some(Value::ByteBuf(b)) => b.borrow().clone(),
+        Some(Value::BytesView(view)) =>
+        {
+            let end = view.offset.saturating_add(view.len);
+            match &view.source
+            {
+                crate::value::BytesViewSource::Mmap(mmap) => mmap[view.offset..end].to_vec(),
+                crate::value::BytesViewSource::MmapMut(mmap) =>
+                {
+                    let data = mmap.borrow();
+                    data[view.offset..end].to_vec()
+                }
+            }
+        }
+        _ => return Err("Image.save_png_bytes expects bytes".to_string()),
+    };
+    let expected = width as usize * height as usize * 4;
+    if bytes.len() != expected
+    {
+        return Err("Image.save_png_bytes rgba length mismatch".to_string());
+    }
+    let img: ImageBuffer<Rgba<u8>, _> = ImageBuffer::from_raw(width, height, bytes)
+        .ok_or_else(|| "Image.save_png_bytes invalid image buffer".to_string())?;
+    img.save(&path).map_err(|e| format!("Image.save_png_bytes failed: {e}"))?;
+    Ok(Value::Boolean(true))
+}
+
 pub fn build_image_module() -> Value
 {
     let mut map = FxHashMap::default();
     map.insert(intern::intern("load_png"), Value::NativeFunction(native_image_load_png));
     map.insert(intern::intern("save_png"), Value::NativeFunction(native_image_save_png));
+    map.insert(intern::intern("load_png_bytes"), Value::NativeFunction(native_image_load_png_bytes));
+    map.insert(intern::intern("save_png_bytes"), Value::NativeFunction(native_image_save_png_bytes));
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
 }

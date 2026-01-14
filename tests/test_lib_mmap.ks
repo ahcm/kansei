@@ -12,6 +12,8 @@ IO.write(path, "hello")
 map = Mmap.open(path, "r")
 bytes = Mmap.read(map, 0, 5)
 puts Bytes.to_string(bytes)
+view = Bytes.slice_view(map, 1, 3)
+puts Bytes.to_string(view)
 
 rw = Mmap.open(path, "rw")
 Mmap.write(rw, 0, Bytes.from_string("HELLO"))

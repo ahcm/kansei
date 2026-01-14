@@ -420,6 +420,7 @@ fn clone_value(value: &Value) -> Value
             let vals = buf.borrow().clone();
             Value::ByteBuf(Rc::new(RefCell::new(vals)))
         }
+        Value::BytesView(view) => Value::BytesView(view.clone()),
         Value::Map(map) =>
         {
             let map_ref = map.borrow();
@@ -1858,6 +1859,52 @@ fn compile_expr(
                     code.push(Instruction::Pop);
                 }
                 return true;
+            }
+            if let ExprKind::Index { target, index } = &function.kind
+            {
+                if let ExprKind::String(name) = &index.kind
+                {
+                    if let ExprKind::Identifier { name: target_name, .. } = &target.kind
+                    {
+                        if symbol_name(*target_name).as_str() == "Bytes"
+                        {
+                            match name.as_str()
+                            {
+                                "len" if args.len() == 1 =>
+                                {
+                                    if !compile_expr(&args[0], code, consts, true)
+                                    {
+                                        return false;
+                                    }
+                                    code.push(Instruction::Len);
+                                    if !want_value
+                                    {
+                                        code.push(Instruction::Pop);
+                                    }
+                                    return true;
+                                }
+                                "get" if args.len() == 2 =>
+                                {
+                                    if !compile_expr(&args[0], code, consts, true)
+                                    {
+                                        return false;
+                                    }
+                                    if !compile_expr(&args[1], code, consts, true)
+                                    {
+                                        return false;
+                                    }
+                                    code.push(Instruction::Index);
+                                    if !want_value
+                                    {
+                                        code.push(Instruction::Pop);
+                                    }
+                                    return true;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
             }
             if let ExprKind::Identifier { name, .. } = &function.kind
             {
@@ -3774,6 +3821,42 @@ fn compile_reg_expr(
             {
                 return None;
             }
+            if let ExprKind::Index { target, index } = &function.kind
+            {
+                if let ExprKind::String(name) = &index.kind
+                {
+                    if let ExprKind::Identifier { name: target_name, .. } = &target.kind
+                    {
+                        if symbol_name(*target_name).as_str() == "Bytes"
+                        {
+                            match name.as_str()
+                            {
+                                "len" if args.len() == 1 =>
+                                {
+                                    let src = compile_reg_expr(&args[0], code, consts, alloc)?;
+                                    let dst = alloc.alloc();
+                                    code.push(RegInstruction::Len { dst, src });
+                                    return Some(dst);
+                                }
+                                "get" if args.len() == 2 =>
+                                {
+                                    let target_reg = compile_reg_expr(&args[0], code, consts, alloc)?;
+                                    let index_reg = compile_reg_expr(&args[1], code, consts, alloc)?;
+                                    let dst = alloc.alloc();
+                                    code.push(RegInstruction::F64IndexCached {
+                                        dst,
+                                        target: target_reg,
+                                        index: index_reg,
+                                        cache: Rc::new(RefCell::new(IndexCache::default())),
+                                    });
+                                    return Some(dst);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
             if let ExprKind::Identifier { name, .. } = &function.kind
             {
                 if let Some(builtin) = builtin_from_symbol(*name)
@@ -4182,6 +4265,46 @@ fn eval_index_cached_value(
                 if i < bytes.len()
                 {
                     default_int(bytes[i] as i128)
+                }
+                else
+                {
+                    Value::Nil
+                }
+            }
+            else
+            {
+                return Err(err_index_requires_int());
+            }
+        }
+        Value::BytesView(view) =>
+        {
+            if let Some(i) = int_value_as_usize(&index_val)
+            {
+                let view_ptr = Rc::as_ptr(&view) as usize;
+                let mut cache_mut = cache.borrow_mut();
+                if cache_mut.array_ptr == Some(view_ptr) && cache_mut.index_usize == Some(i)
+                {
+                    cache_mut.hits += 1;
+                }
+                else
+                {
+                    cache_mut.array_ptr = Some(view_ptr);
+                    cache_mut.index_usize = Some(i);
+                    cache_mut.misses += 1;
+                }
+                if i < view.len
+                {
+                    let idx = view.offset + i;
+                    let byte = match &view.source
+                    {
+                        crate::value::BytesViewSource::Mmap(mmap) => mmap[idx],
+                        crate::value::BytesViewSource::MmapMut(mmap) =>
+                        {
+                            let data = mmap.borrow();
+                            data[idx]
+                        }
+                    };
+                    default_int(byte as i128)
                 }
                 else
                 {
@@ -5050,6 +5173,7 @@ fn execute_reg_instructions(
                         Value::F64Array(arr) => default_int(arr.borrow().len() as i128),
                         Value::Bytes(bytes) => default_int(bytes.len() as i128),
                         Value::ByteBuf(buf) => default_int(buf.borrow().len() as i128),
+                        Value::BytesView(view) => default_int(view.len as i128),
                         Value::Map(map) => default_int(map.borrow().data.len() as i128),
                         Value::Mmap(mmap) => default_int(mmap.len() as i128),
                         Value::MmapMut(mmap) => default_int(mmap.borrow().len() as i128),
@@ -5371,6 +5495,7 @@ fn execute_instructions(
                     Value::F64Array(arr) => default_int(arr.borrow().len() as i128),
                     Value::Bytes(bytes) => default_int(bytes.len() as i128),
                     Value::ByteBuf(buf) => default_int(buf.borrow().len() as i128),
+                    Value::BytesView(view) => default_int(view.len as i128),
                     Value::Map(map) => default_int(map.borrow().data.len() as i128),
                     Value::Mmap(mmap) => default_int(mmap.len() as i128),
                     Value::MmapMut(mmap) => default_int(mmap.borrow().len() as i128),
@@ -6146,6 +6271,34 @@ fn execute_instructions(
                             if i < bytes.len()
                             {
                                 default_int(bytes[i] as i128)
+                            }
+                            else
+                            {
+                                Value::Nil
+                            }
+                        }
+                        else
+                        {
+                            return Err(err_index_requires_int());
+                        }
+                    }
+                    Value::BytesView(view) =>
+                    {
+                        if let Some(i) = int_value_as_usize(&index_val)
+                        {
+                            if i < view.len
+                            {
+                                let idx = view.offset + i;
+                                let byte = match &view.source
+                                {
+                                    crate::value::BytesViewSource::Mmap(mmap) => mmap[idx],
+                                    crate::value::BytesViewSource::MmapMut(mmap) =>
+                                    {
+                                        let data = mmap.borrow();
+                                        data[idx]
+                                    }
+                                };
+                                default_int(byte as i128)
                             }
                             else
                             {
@@ -8038,6 +8191,7 @@ impl Interpreter
                     Value::F64Array(arr) => Ok(default_int(arr.borrow().len() as i128)),
                     Value::Bytes(bytes) => Ok(default_int(bytes.len() as i128)),
                     Value::ByteBuf(buf) => Ok(default_int(buf.borrow().len() as i128)),
+                    Value::BytesView(view) => Ok(default_int(view.len as i128)),
                     Value::Map(map) => Ok(default_int(map.borrow().data.len() as i128)),
                     Value::Mmap(mmap) => Ok(default_int(mmap.len() as i128)),
                     Value::MmapMut(mmap) => Ok(default_int(mmap.borrow().len() as i128)),
@@ -9908,6 +10062,7 @@ impl Interpreter
                                 Value::F64Array(arr) => Ok(default_int(arr.borrow().len() as i128)),
                                 Value::Bytes(bytes) => Ok(default_int(bytes.len() as i128)),
                                 Value::ByteBuf(buf) => Ok(default_int(buf.borrow().len() as i128)),
+                                Value::BytesView(view) => Ok(default_int(view.len as i128)),
                                 Value::Map(map) => Ok(default_int(map.borrow().data.len() as i128)),
                                 Value::Mmap(mmap) => Ok(default_int(mmap.len() as i128)),
                                 Value::MmapMut(mmap) => Ok(default_int(mmap.borrow().len() as i128)),

@@ -38,14 +38,43 @@ fn bytes_from_array(value: &Value, name: &str) -> Result<Vec<u8>, String>
             }
             Ok(out)
         }
-        _ => Err(format!("{name} expects array of integers")),
+        Value::Bytes(bytes) => Ok(bytes.as_ref().clone()),
+        Value::ByteBuf(buf) => Ok(buf.borrow().clone()),
+        Value::BytesView(view) =>
+        {
+            let end = view.offset.saturating_add(view.len);
+            match &view.source
+            {
+                crate::value::BytesViewSource::Mmap(mmap) =>
+                {
+                    Ok(mmap[view.offset..end].to_vec())
+                }
+                crate::value::BytesViewSource::MmapMut(mmap) =>
+                {
+                    let data = mmap.borrow();
+                    Ok(data[view.offset..end].to_vec())
+                }
+            }
+        }
+        _ => Err(format!("{name} expects bytes or array of integers")),
     }
 }
 
 fn native_base64_encode(args: &[Value]) -> Result<Value, String>
 {
-    let text = str_arg(args, 0, "Base64.encode")?;
-    Ok(Value::String(intern::intern_owned(BASE64_STD.encode(text.as_bytes()))))
+    match args.get(0)
+    {
+        Some(Value::String(s)) =>
+        {
+            Ok(Value::String(intern::intern_owned(BASE64_STD.encode(s.as_bytes()))))
+        }
+        Some(other) =>
+        {
+            let bytes = bytes_from_array(other, "Base64.encode")?;
+            Ok(Value::String(intern::intern_owned(BASE64_STD.encode(bytes))))
+        }
+        None => Err("Base64.encode expects a value".to_string()),
+    }
 }
 
 fn native_base64_encode_bytes(args: &[Value]) -> Result<Value, String>
@@ -73,6 +102,15 @@ fn native_base64_decode_bytes(args: &[Value]) -> Result<Value, String>
     let bytes = BASE64_STD
         .decode(text.as_bytes())
         .map_err(|e| format!("Base64.decode_bytes failed: {e}"))?;
+    Ok(Value::Bytes(Rc::new(bytes)))
+}
+
+fn native_base64_decode_array(args: &[Value]) -> Result<Value, String>
+{
+    let text = str_arg(args, 0, "Base64.decode_array")?;
+    let bytes = BASE64_STD
+        .decode(text.as_bytes())
+        .map_err(|e| format!("Base64.decode_array failed: {e}"))?;
     let vals = bytes
         .into_iter()
         .map(|b| Value::Integer { value: b as i128, kind: crate::ast::IntKind::I64 })
@@ -87,5 +125,6 @@ pub fn build_base64_module() -> Value
     map.insert(intern::intern("encode_bytes"), Value::NativeFunction(native_base64_encode_bytes));
     map.insert(intern::intern("decode"), Value::NativeFunction(native_base64_decode));
     map.insert(intern::intern("decode_bytes"), Value::NativeFunction(native_base64_decode_bytes));
+    map.insert(intern::intern("decode_array"), Value::NativeFunction(native_base64_decode_array));
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
 }

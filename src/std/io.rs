@@ -26,6 +26,33 @@ fn io_content_arg(args: &[Value], idx: usize) -> Result<String, String>
         .to_string())
 }
 
+fn io_bytes_arg(args: &[Value], idx: usize, name: &str) -> Result<Vec<u8>, String>
+{
+    match args.get(idx)
+    {
+        Some(Value::String(s)) => Ok(s.as_bytes().to_vec()),
+        Some(Value::Bytes(bytes)) => Ok(bytes.as_ref().clone()),
+        Some(Value::ByteBuf(buf)) => Ok(buf.borrow().clone()),
+        Some(Value::BytesView(view)) =>
+        {
+            let end = view.offset.saturating_add(view.len);
+            match &view.source
+            {
+                crate::value::BytesViewSource::Mmap(mmap) =>
+                {
+                    Ok(mmap[view.offset..end].to_vec())
+                }
+                crate::value::BytesViewSource::MmapMut(mmap) =>
+                {
+                    let data = mmap.borrow();
+                    Ok(data[view.offset..end].to_vec())
+                }
+            }
+        }
+        _ => Err(format!("{name} expects bytes")),
+    }
+}
+
 fn native_io_read(args: &[Value]) -> Result<Value, String>
 {
     let path = io_path_arg(args, 0, "IO.read")?;
@@ -58,6 +85,46 @@ fn native_io_append(args: &[Value]) -> Result<Value, String>
         .and_then(|mut file| {
             use std::io::Write as _;
             file.write_all(content.as_bytes())
+        });
+    match result
+    {
+        Ok(()) => Ok(Value::Boolean(true)),
+        Err(_) => Ok(Value::Boolean(false)),
+    }
+}
+
+fn native_io_read_bytes(args: &[Value]) -> Result<Value, String>
+{
+    let path = io_path_arg(args, 0, "IO.read_bytes")?;
+    match fs::read(&path)
+    {
+        Ok(content) => Ok(Value::Bytes(Rc::new(content))),
+        Err(_) => Ok(Value::Nil),
+    }
+}
+
+fn native_io_write_bytes(args: &[Value]) -> Result<Value, String>
+{
+    let path = io_path_arg(args, 0, "IO.write_bytes")?;
+    let content = io_bytes_arg(args, 1, "IO.write_bytes")?;
+    match fs::write(&path, content)
+    {
+        Ok(()) => Ok(Value::Boolean(true)),
+        Err(_) => Ok(Value::Boolean(false)),
+    }
+}
+
+fn native_io_append_bytes(args: &[Value]) -> Result<Value, String>
+{
+    let path = io_path_arg(args, 0, "IO.append_bytes")?;
+    let content = io_bytes_arg(args, 1, "IO.append_bytes")?;
+    let result = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .and_then(|mut file| {
+            use std::io::Write as _;
+            file.write_all(&content)
         });
     match result
     {
@@ -109,6 +176,9 @@ pub fn build_io_module() -> Value
     io_map.insert(intern::intern("read"), Value::NativeFunction(native_io_read));
     io_map.insert(intern::intern("write"), Value::NativeFunction(native_io_write));
     io_map.insert(intern::intern("append"), Value::NativeFunction(native_io_append));
+    io_map.insert(intern::intern("read_bytes"), Value::NativeFunction(native_io_read_bytes));
+    io_map.insert(intern::intern("write_bytes"), Value::NativeFunction(native_io_write_bytes));
+    io_map.insert(intern::intern("append_bytes"), Value::NativeFunction(native_io_append_bytes));
     io_map.insert(intern::intern("exists"), Value::NativeFunction(native_io_exists));
     io_map.insert(intern::intern("remove"), Value::NativeFunction(native_io_remove));
     io_map.insert(intern::intern("mkdirs"), Value::NativeFunction(native_io_mkdirs));

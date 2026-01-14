@@ -31,7 +31,24 @@ fn bytes_from_value(value: &Value, name: &str) -> Result<Vec<u8>, String>
     {
         Value::Bytes(bytes) => Ok(bytes.as_ref().clone()),
         Value::ByteBuf(buf) => Ok(buf.borrow().clone()),
-        _ => Err(format!("{name} expects Bytes or ByteBuf")),
+        Value::BytesView(view) =>
+        {
+            let end = view.offset.saturating_add(view.len);
+            match &view.source
+            {
+                crate::value::BytesViewSource::Mmap(mmap) =>
+                {
+                    Ok(mmap[view.offset..end].to_vec())
+                }
+                crate::value::BytesViewSource::MmapMut(mmap) =>
+                {
+                    let data = mmap.borrow();
+                    Ok(data[view.offset..end].to_vec())
+                }
+            }
+        }
+        Value::String(s) => Ok(s.as_bytes().to_vec()),
+        _ => Err(format!("{name} expects Bytes, ByteBuf, BytesView, or String")),
     }
 }
 

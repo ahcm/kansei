@@ -12,6 +12,21 @@ use smallvec::SmallVec;
 
 pub type NativeFunction = fn(&[Value]) -> Result<Value, String>;
 
+#[derive(Clone)]
+pub enum BytesViewSource
+{
+    Mmap(Rc<Mmap>),
+    MmapMut(Rc<RefCell<MmapMut>>),
+}
+
+#[derive(Clone)]
+pub struct BytesView
+{
+    pub source: BytesViewSource,
+    pub offset: usize,
+    pub len: usize,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Environment
 {
@@ -672,6 +687,7 @@ pub enum Value
     F64Array(Rc<RefCell<Vec<f64>>>),
     Bytes(Rc<Vec<u8>>),
     ByteBuf(Rc<RefCell<Vec<u8>>>),
+    BytesView(Rc<BytesView>),
     Map(Rc<RefCell<MapValue>>),
     DataFrame(Rc<RefCell<polars::prelude::DataFrame>>),
     Sqlite(Rc<RefCell<Connection>>),
@@ -697,6 +713,24 @@ impl MapValue
     pub fn new(data: FxHashMap<Rc<String>, Value>) -> Self
     {
         Self { data, version: 0 }
+    }
+}
+
+fn bytes_view_to_vec(view: &BytesView) -> Vec<u8>
+{
+    match &view.source
+    {
+        BytesViewSource::Mmap(mmap) =>
+        {
+            let end = view.offset.saturating_add(view.len);
+            mmap[view.offset..end].to_vec()
+        }
+        BytesViewSource::MmapMut(mmap) =>
+        {
+            let data = mmap.borrow();
+            let end = view.offset.saturating_add(view.len);
+            data[view.offset..end].to_vec()
+        }
     }
 }
 
@@ -739,6 +773,22 @@ impl PartialEq for Value
             | (Value::ByteBuf(b), Value::Bytes(a)) =>
             {
                 a.as_slice() == b.borrow().as_slice()
+            }
+            (Value::BytesView(a), Value::BytesView(b)) =>
+            {
+                a.offset == b.offset
+                    && a.len == b.len
+                    && bytes_view_to_vec(a) == bytes_view_to_vec(b)
+            }
+            (Value::BytesView(a), Value::Bytes(b))
+            | (Value::Bytes(b), Value::BytesView(a)) =>
+            {
+                bytes_view_to_vec(a) == b.as_ref().as_slice()
+            }
+            (Value::BytesView(a), Value::ByteBuf(b))
+            | (Value::ByteBuf(b), Value::BytesView(a)) =>
+            {
+                bytes_view_to_vec(a) == b.borrow().as_slice()
             }
             (Value::Map(a), Value::Map(b)) =>
             {
@@ -793,6 +843,7 @@ impl fmt::Debug for Value
             Value::F64Array(a) => write!(f, "F64Array({:?})", a.borrow()),
             Value::Bytes(b) => write!(f, "Bytes({} bytes)", b.len()),
             Value::ByteBuf(b) => write!(f, "ByteBuf({} bytes)", b.borrow().len()),
+            Value::BytesView(b) => write!(f, "BytesView({} bytes)", b.len),
             Value::Map(m) => write!(f, "Map({:?})", m.borrow().data),
             Value::DataFrame(df) => write!(f, "DataFrame({}x{})", df.borrow().height(), df.borrow().width()),
             Value::Sqlite(_) => write!(f, "Sqlite(<connection>)"),
@@ -831,6 +882,7 @@ impl Value
             }
             Value::Bytes(b) => format!("<Bytes {}>", b.len()),
             Value::ByteBuf(b) => format!("<ByteBuf {}>", b.borrow().len()),
+            Value::BytesView(b) => format!("<BytesView {}>", b.len),
             Value::Map(map) =>
             {
                 let entries: Vec<String> = map
@@ -900,6 +952,7 @@ impl fmt::Display for Value
             }
             Value::Bytes(b) => write!(f, "<Bytes {}>", b.len()),
             Value::ByteBuf(b) => write!(f, "<ByteBuf {}>", b.borrow().len()),
+            Value::BytesView(b) => write!(f, "<BytesView {}>", b.len),
             Value::Map(map) =>
             {
                 let entries: Vec<String> = map

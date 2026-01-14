@@ -129,6 +129,9 @@ IO = std::IO
 IO.write("out.txt", "hello")
 IO.append("out.txt", "\nworld")
 puts IO.read("out.txt")
+bytes = IO.read_bytes("out.txt")
+IO.write_bytes("out.bin", bytes)
+IO.append_bytes("out.bin", bytes)
 
 puts IO.exists("out.txt")
 puts IO.cwd()
@@ -182,6 +185,7 @@ puts Crypto.sha256("hello")
 puts Crypto.blake3("hello")
 puts Crypto.hmac_sha256("key", "msg")
 puts Crypto.random_bytes(16)
+rand_bytes = Crypto.random_bytes_buf(16)
 ```
 
 ### std::lib::Http
@@ -232,9 +236,13 @@ Bytes = std::lib::Bytes
 buf = Bytes.buf(4, 0)
 Bytes.set(buf, 0, 255)
 Bytes.push(buf, 1)
+Bytes.fill(buf, 3)
+Bytes.copy(buf, 1, Bytes.from_string("hi"), 0, 2)
 bytes = Bytes.freeze(buf)
 puts Bytes.len(bytes)
 puts Bytes.to_string(Bytes.from_string("hello"))
+puts Bytes.find(Bytes.from_string("hello"), Bytes.from_string("ell"))
+view = Bytes.slice_view(bytes, 0, 2)
 ```
 
 ### std::lib::Mmap
@@ -247,6 +255,7 @@ Bytes = std::lib::Bytes
 map = Mmap.open("data.bin", "r")
 chunk = Mmap.read(map, 0, 16)
 puts Bytes.len(chunk)
+view = Bytes.slice_view(map, 0, 16)
 ```
 
 ### std::lib::Polars
@@ -275,6 +284,8 @@ Base64 = std::lib::Base64
 
 encoded = Base64.encode("hello")
 puts Base64.decode(encoded)
+bytes = Base64.decode_bytes(encoded)
+array = Base64.decode_array(encoded)
 ```
 
 ### std::lib::Uuid
@@ -321,6 +332,9 @@ Image = std::lib::Image
 img = Image.load_png("in.png")
 puts img.width
 Image.save_png("out.png", img.width, img.height, img.rgba)
+
+img_bytes = Image.load_png_bytes("in.png")
+Image.save_png_bytes("out.png", img_bytes.width, img_bytes.height, img_bytes.rgba)
 ```
 
 ### std::lib::Sqlite
@@ -332,6 +346,7 @@ db = Sqlite.open("example.db")
 Sqlite.exec(db, "create table if not exists items (id integer, name text)")
 Sqlite.exec(db, "insert into items values (1, 'a')")
 rows = Sqlite.query(db, "select id, name from items")
+rows_bytes = Sqlite.query_bytes(db, "select id, name from items")
 puts rows
 ```
 

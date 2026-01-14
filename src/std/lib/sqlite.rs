@@ -26,7 +26,7 @@ fn str_arg(args: &[Value], idx: usize, name: &str) -> Result<String, String>
     }
 }
 
-fn row_to_value(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value>
+fn row_to_value(row: &rusqlite::Row<'_>, blob_as_bytes: bool) -> rusqlite::Result<Value>
 {
     let mut map = FxHashMap::default();
     let stmt = row.as_ref();
@@ -52,7 +52,14 @@ fn row_to_value(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value>
             }
             ValueRef::Blob(v) =>
             {
-                Value::String(intern::intern_owned(BASE64_STD.encode(v)))
+                if blob_as_bytes
+                {
+                    Value::Bytes(Rc::new(v.to_vec()))
+                }
+                else
+                {
+                    Value::String(intern::intern_owned(BASE64_STD.encode(v)))
+                }
             }
         };
         map.insert(intern::intern_owned(name.to_string()), value);
@@ -86,12 +93,32 @@ fn native_sqlite_query(args: &[Value]) -> Result<Value, String>
         .prepare(&sql)
         .map_err(|e| format!("Sqlite.query failed: {e}"))?;
     let rows = stmt
-        .query_map([], |row| row_to_value(row))
+        .query_map([], |row| row_to_value(row, false))
         .map_err(|e| format!("Sqlite.query failed: {e}"))?;
     let mut out = Vec::new();
     for row in rows
     {
         let value = row.map_err(|e| format!("Sqlite.query failed: {e}"))?;
+        out.push(value);
+    }
+    Ok(Value::Array(Rc::new(RefCell::new(out))))
+}
+
+fn native_sqlite_query_bytes(args: &[Value]) -> Result<Value, String>
+{
+    let conn = conn_arg(args, 0, "Sqlite.query_bytes")?;
+    let sql = str_arg(args, 1, "Sqlite.query_bytes")?;
+    let conn_ref = conn.borrow();
+    let mut stmt = conn_ref
+        .prepare(&sql)
+        .map_err(|e| format!("Sqlite.query_bytes failed: {e}"))?;
+    let rows = stmt
+        .query_map([], |row| row_to_value(row, true))
+        .map_err(|e| format!("Sqlite.query_bytes failed: {e}"))?;
+    let mut out = Vec::new();
+    for row in rows
+    {
+        let value = row.map_err(|e| format!("Sqlite.query_bytes failed: {e}"))?;
         out.push(value);
     }
     Ok(Value::Array(Rc::new(RefCell::new(out))))
@@ -103,5 +130,6 @@ pub fn build_sqlite_module() -> Value
     map.insert(intern::intern("open"), Value::NativeFunction(native_sqlite_open));
     map.insert(intern::intern("exec"), Value::NativeFunction(native_sqlite_exec));
     map.insert(intern::intern("query"), Value::NativeFunction(native_sqlite_query));
+    map.insert(intern::intern("query_bytes"), Value::NativeFunction(native_sqlite_query_bytes));
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
 }

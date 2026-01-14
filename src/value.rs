@@ -1,6 +1,7 @@
 use crate::ast::{Closure, Expr, FloatKind, IntKind};
 use crate::intern::SymbolId;
 use crate::wasm::WasmFunction;
+use rusqlite::Connection;
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::fmt;
@@ -670,6 +671,7 @@ pub enum Value
     F64Array(Rc<RefCell<Vec<f64>>>),
     Map(Rc<RefCell<MapValue>>),
     DataFrame(Rc<RefCell<polars::prelude::DataFrame>>),
+    Sqlite(Rc<RefCell<Connection>>),
     Nil,
     Function(Rc<FunctionData>),
     NativeFunction(NativeFunction),
@@ -751,6 +753,7 @@ impl PartialEq for Value
                 true
             }
             (Value::DataFrame(a), Value::DataFrame(b)) => Rc::ptr_eq(a, b),
+            (Value::Sqlite(a), Value::Sqlite(b)) => Rc::ptr_eq(a, b),
             (Value::Nil, Value::Nil) => true,
             (Value::Function(a), Value::Function(b)) => Rc::ptr_eq(a, b),
             (Value::NativeFunction(a), Value::NativeFunction(b)) => std::ptr::fn_addr_eq(*a, *b),
@@ -776,6 +779,7 @@ impl fmt::Debug for Value
             Value::F64Array(a) => write!(f, "F64Array({:?})", a.borrow()),
             Value::Map(m) => write!(f, "Map({:?})", m.borrow().data),
             Value::DataFrame(df) => write!(f, "DataFrame({}x{})", df.borrow().height(), df.borrow().width()),
+            Value::Sqlite(_) => write!(f, "Sqlite(<connection>)"),
             Value::Nil => write!(f, "Nil"),
             Value::Function(_) => write!(f, "Function(...)"),
             Value::NativeFunction(_) => write!(f, "NativeFunction(...)"),
@@ -822,6 +826,7 @@ impl Value
                 let df_ref = df.borrow();
                 format!("<DataFrame {}x{}>", df_ref.height(), df_ref.width())
             }
+            Value::Sqlite(_) => "<Sqlite>".to_string(),
             Value::Nil => "nil".to_string(),
             Value::Function(data) =>
             {
@@ -886,6 +891,7 @@ impl fmt::Display for Value
                 let df_ref = df.borrow();
                 write!(f, "<DataFrame {}x{}>", df_ref.height(), df_ref.width())
             }
+            Value::Sqlite(_) => write!(f, "<Sqlite>"),
             Value::Nil => write!(f, "nil"),
             Value::Function(data) =>
             {

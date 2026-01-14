@@ -152,6 +152,164 @@ puts parsed.count
 puts parsed.args # remaining positional args
 ```
 
+### std::lib::Regex
+```ruby
+use std::lib::Regex
+Regex = std::lib::Regex
+
+puts Regex.is_match("[a-z]+", "abc123")
+match = Regex.find("[0-9]+", "abc123")
+puts match.match
+puts Regex.replace("[0-9]+", "abc123", "###")
+parts = Regex.split("\\s+", "a  b   c")
+```
+
+### std::lib::DateTime
+```ruby
+use std::lib::DateTime
+DateTime = std::lib::DateTime
+
+now = DateTime.now_ms
+puts DateTime.format(now, "%Y-%m-%d %H:%M:%S")
+```
+
+### std::lib::Crypto
+```ruby
+use std::lib::Crypto
+Crypto = std::lib::Crypto
+
+puts Crypto.sha256("hello")
+puts Crypto.blake3("hello")
+puts Crypto.hmac_sha256("key", "msg")
+puts Crypto.random_bytes(16)
+```
+
+### std::lib::Http
+```ruby
+use std::lib::Http
+Http = std::lib::Http
+
+resp = Http.get("https://example.com")
+puts resp.status
+puts resp.body
+```
+
+### std::lib::Csv
+```ruby
+use std::lib::Csv
+Csv = std::lib::Csv
+
+rows = Csv.parse("a,b\n1,2\n")
+puts rows
+text = Csv.stringify(rows)
+```
+
+### std::lib::Path
+```ruby
+use std::lib::Path
+Path = std::lib::Path
+
+puts Path.join("/tmp", "file.txt")
+puts Path.basename("/tmp/file.txt")
+puts Path.dirname("/tmp/file.txt")
+puts Path.ext("/tmp/file.txt")
+```
+
+### std::lib::Math
+```ruby
+use std::lib::Math
+Math = std::lib::Math
+
+puts Math.sin(1.0)
+puts Math.pow(2, 8)
+```
+
+### std::lib::Polars
+```ruby
+use std::lib::Polars
+Polars = std::lib::Polars
+
+df = Polars.read_csv("data.csv")
+puts Polars.shape(df)
+puts Polars.columns(df)
+```
+
+### std::lib::Serde
+```ruby
+use std::lib::Serde
+Serde = std::lib::Serde
+
+data = Serde.parse("{\"ok\":true}")
+puts Serde.stringify(data)
+```
+
+### std::lib::Base64
+```ruby
+use std::lib::Base64
+Base64 = std::lib::Base64
+
+encoded = Base64.encode("hello")
+puts Base64.decode(encoded)
+```
+
+### std::lib::Uuid
+```ruby
+use std::lib::Uuid
+Uuid = std::lib::Uuid
+
+id = Uuid.v4()
+puts Uuid.is_valid(id)
+```
+
+### std::lib::Toml
+```ruby
+use std::lib::Toml
+Toml = std::lib::Toml
+
+val = Toml.parse("a = 1")
+puts Toml.stringify(val)
+```
+
+### std::lib::Yaml
+```ruby
+use std::lib::Yaml
+Yaml = std::lib::Yaml
+
+val = Yaml.parse("a: 1")
+puts Yaml.stringify(val)
+```
+
+### std::lib::Flate2
+```ruby
+use std::lib::Flate2
+Flate2 = std::lib::Flate2
+
+compressed = Flate2.compress("hello")
+puts Flate2.decompress(compressed)
+```
+
+### std::lib::Image
+```ruby
+use std::lib::Image
+Image = std::lib::Image
+
+img = Image.load_png("in.png")
+puts img.width
+Image.save_png("out.png", img.width, img.height, img.rgba)
+```
+
+### std::lib::Sqlite
+```ruby
+use std::lib::Sqlite
+Sqlite = std::lib::Sqlite
+
+db = Sqlite.open("example.db")
+Sqlite.exec(db, "create table if not exists items (id integer, name text)")
+Sqlite.exec(db, "insert into items values (1, 'a')")
+rows = Sqlite.query(db, "select id, name from items")
+puts rows
+```
+
 ### File modules with `import`
 Modules are file-based and loaded with `import` using a `.ks` path string:
 ```ruby

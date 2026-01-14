@@ -420,6 +420,7 @@ fn clone_value(value: &Value) -> Value
             Value::Map(Rc::new(RefCell::new(MapValue::new(map_ref.data.clone()))))
         }
         Value::DataFrame(df) => Value::DataFrame(df.clone()),
+        Value::Sqlite(conn) => Value::Sqlite(conn.clone()),
         Value::String(s) => Value::String(s.clone()),
         Value::Reference(r) => clone_value(&r.borrow()),
         v => v.clone(),

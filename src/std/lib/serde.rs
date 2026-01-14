@@ -5,7 +5,7 @@ use serde_json::Value as JsonValue;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-fn json_to_value(json: JsonValue) -> Value
+pub(crate) fn json_to_value(json: JsonValue) -> Value
 {
     match json
     {
@@ -44,7 +44,7 @@ fn json_to_value(json: JsonValue) -> Value
     }
 }
 
-fn value_to_json(value: &Value) -> JsonValue
+pub(crate) fn value_to_json(value: &Value) -> JsonValue
 {
     match value
     {

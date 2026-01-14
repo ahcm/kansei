@@ -343,7 +343,13 @@ short_pi = f"{pi:.2}"
 Use `{{` and `}}` to include literal braces. Precision formatting uses `{expr:.N}`.
 
 ## WASM Modules
-Use `load wasm::name` to load a WebAssembly module from `wasm/name.wasm`. The module is exposed under the `wasm` namespace.
+Use `load wasm::name` to load a WebAssembly module. Kansei searches `KANSEI_WASM_PATH` (colon-separated). If unset, it looks in:
+1) `<main-file-dir>/wasm`
+2) `/usr/local/lib/kansai/wasm`
+3) `/usr/lib/kansai/wasm`
+4) `~/.local/lib/kansai/wasm`
+
+The module is exposed under the `wasm` namespace.
 
 ```ruby
 load wasm::Json

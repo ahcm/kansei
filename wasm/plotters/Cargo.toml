@@ -1,0 +1,10 @@
+[package]
+name = "plotters_wasm"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+plotters = { version = "0.3", default-features = false, features = ["svg_backend"] }

@@ -6912,6 +6912,38 @@ fn default_module_search_paths(main_path: Option<&std::path::Path>) -> Vec<PathB
     out
 }
 
+fn default_wasm_search_paths(main_path: Option<&std::path::Path>) -> Vec<PathBuf>
+{
+    if let Ok(paths) = env::var("KANSEI_WASM_PATH")
+    {
+        let mut out = Vec::new();
+        for entry in paths.split(':')
+        {
+            if !entry.is_empty()
+            {
+                out.push(PathBuf::from(entry));
+            }
+        }
+        return out;
+    }
+
+    let mut out = Vec::new();
+    let base = main_path
+        .and_then(|p| p.parent().map(PathBuf::from))
+        .or_else(|| env::current_dir().ok());
+    if let Some(base) = base
+    {
+        out.push(base.join("wasm"));
+    }
+    out.push(PathBuf::from("/usr/local/lib/kansai/wasm"));
+    out.push(PathBuf::from("/usr/lib/kansai/wasm"));
+    if let Ok(home) = env::var("HOME")
+    {
+        out.push(PathBuf::from(home).join(".local/lib/kansai/wasm"));
+    }
+    out
+}
+
 struct ModuleCacheEntry
 {
     exports: Rc<RefCell<MapValue>>,
@@ -6948,6 +6980,7 @@ pub struct Interpreter
     module_cache: FxHashMap<String, ModuleCacheEntry>,
     module_lookup_cache: FxHashMap<String, ModuleLookupEntry>,
     module_search_paths: Vec<PathBuf>,
+    wasm_search_paths: Vec<PathBuf>,
 }
 
 impl Interpreter
@@ -6955,6 +6988,7 @@ impl Interpreter
     pub fn new() -> Self
     {
         let module_search_paths = default_module_search_paths(None);
+        let wasm_search_paths = default_wasm_search_paths(None);
         Self {
             env: Rc::new(RefCell::new(Environment::new(None))),
             block_stack: Vec::new(),
@@ -6964,6 +6998,7 @@ impl Interpreter
             module_cache: FxHashMap::default(),
             module_lookup_cache: FxHashMap::default(),
             module_search_paths,
+            wasm_search_paths,
         }
     }
 
@@ -6975,6 +7010,7 @@ impl Interpreter
     pub fn set_main_path(&mut self, path: &std::path::Path)
     {
         self.module_search_paths = default_module_search_paths(Some(path));
+        self.wasm_search_paths = default_wasm_search_paths(Some(path));
         self.module_lookup_cache.clear();
     }
 
@@ -7540,7 +7576,7 @@ impl Interpreter
             });
         }
 
-        let mut rel = PathBuf::from("wasm");
+        let mut rel = PathBuf::new();
         for segment in &path[1..path.len() - 1]
         {
             rel.push(symbol_name(*segment).as_str());
@@ -7548,7 +7584,22 @@ impl Interpreter
         let module_name = symbol_name(*path.last().unwrap());
         rel.push(format!("{}.wasm", module_name.as_str()));
 
-        let module = WasmModule::load(&rel).map_err(|message| RuntimeError { message, line })?;
+        let mut resolved = None;
+        for base in &self.wasm_search_paths
+        {
+            let candidate = base.join(&rel);
+            if candidate.exists()
+            {
+                resolved = Some(candidate);
+                break;
+            }
+        }
+        let resolved = resolved.ok_or_else(|| RuntimeError {
+            message: format!("Wasm module '{}' not found", rel.display()),
+            line,
+        })?;
+
+        let module = WasmModule::load(&resolved).map_err(|message| RuntimeError { message, line })?;
         let mut exports = FxHashMap::default();
         {
             let module_ref = module.borrow();

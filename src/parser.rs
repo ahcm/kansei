@@ -1,5 +1,6 @@
-use crate::ast::{Closure, Expr, ExprKind, FormatPart, FormatSpec, Op};
+use crate::ast::{Closure, Expr, ExprKind, FormatPart, FormatSpec, Op, Param, ParamType, TypeRef};
 use crate::intern;
+use crate::intern::SymbolId;
 use crate::lexer::{Lexer, Span, Token};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -243,57 +244,21 @@ impl Parser
                 self.expect(Token::RightParen);
 
                 // Check for Block { |params| body }
-                let block =
-                    if self.current_token.token == Token::LeftBrace
-                    {
-                        self.eat(); // {
-                        let mut params = Vec::new();
-                        if self.current_token.token == Token::Pipe
-                        {
-                            self.eat(); // |
-                            loop
-                            {
-                                let is_ref = if self.current_token.token == Token::Ampersand
-                                {
-                                    self.eat();
-                                    true
-                                }
-                                else
-                                {
-                                    false
-                                };
-                                match &self.current_token.token
-                                {
-                                    Token::Identifier(p) => params
-                                        .push((intern::intern_symbol_owned(p.clone()), is_ref)),
-                                    _ => panic!(
-                                        "Expected param name at line {}",
-                                        self.current_token.line
-                                    ),
-                                }
-                                self.eat();
-                                if self.current_token.token == Token::Comma
-                                {
-                                    self.eat();
-                                }
-                                else
-                                {
-                                    break;
-                                }
-                            }
-                            self.expect(Token::Pipe);
-                        }
-                        let body = self.parse_block();
-                        self.expect(Token::RightBrace);
-                        Some(Closure {
-                            params,
-                            body: Box::new(body),
-                        })
-                    }
-                    else
-                    {
-                        None
-                    };
+                let block = if self.current_token.token == Token::LeftBrace
+                {
+                    self.eat(); // {
+                    let params = self.parse_pipe_params();
+                    let body = self.parse_block();
+                    self.expect(Token::RightBrace);
+                    Some(Closure {
+                        params,
+                        body: Box::new(body),
+                    })
+                }
+                else
+                {
+                    None
+                };
 
                 expr = self.make_expr(
                     ExprKind::Call {
@@ -307,43 +272,45 @@ impl Parser
             }
             else if self.current_token.token == Token::LeftBrace
             {
+                if let ExprKind::Identifier { name, .. } = &expr.kind
+                {
+                    let mut temp_lexer = self.lexer.clone();
+                    let next = temp_lexer.next_token().token;
+                    let is_struct = if next == Token::Pipe
+                    {
+                        false
+                    }
+                    else if next == Token::RightBrace
+                    {
+                        true
+                    }
+                    else if matches!(next, Token::Identifier(_))
+                    {
+                        temp_lexer.next_token().token == Token::Colon
+                    }
+                    else
+                    {
+                        false
+                    };
+                    if is_struct
+                    {
+                        self.eat(); // {
+                        let fields = self.parse_struct_literal_fields();
+                        self.expect(Token::RightBrace);
+                        expr = self.make_expr(
+                            ExprKind::StructLiteral {
+                                name: *name,
+                                fields,
+                            },
+                            line,
+                        );
+                        continue;
+                    }
+                }
+
                 // Call with block and no parentheses: foo { |x| ... }
                 self.eat(); // {
-                let mut params = Vec::new();
-                if self.current_token.token == Token::Pipe
-                {
-                    self.eat(); // |
-                    loop
-                    {
-                        let is_ref = if self.current_token.token == Token::Ampersand
-                        {
-                            self.eat();
-                            true
-                        }
-                        else
-                        {
-                            false
-                        };
-                        match &self.current_token.token
-                        {
-                            Token::Identifier(p) =>
-                            {
-                                params.push((intern::intern_symbol_owned(p.clone()), is_ref))
-                            }
-                            _ => panic!("Expected param name at line {}", self.current_token.line),
-                        }
-                        self.eat();
-                        if self.current_token.token == Token::Comma
-                        {
-                            self.eat();
-                        }
-                        else
-                        {
-                            break;
-                        }
-                    }
-                    self.expect(Token::Pipe);
-                }
+                let params = self.parse_pipe_params();
                 let body = self.parse_block();
                 self.expect(Token::RightBrace);
                 expr = self.make_expr(
@@ -371,44 +338,7 @@ impl Parser
                     };
                     self.eat(); // identifier
                     self.eat(); // {
-                    let mut params = Vec::new();
-                    if self.current_token.token == Token::Pipe
-                    {
-                        self.eat(); // |
-                        loop
-                        {
-                            let is_ref = if self.current_token.token == Token::Ampersand
-                            {
-                                self.eat();
-                                true
-                            }
-                            else
-                            {
-                                false
-                            };
-                            match &self.current_token.token
-                            {
-                                Token::Identifier(p) =>
-                                {
-                                    params.push((intern::intern_symbol_owned(p.clone()), is_ref))
-                                }
-                                _ => panic!(
-                                    "Expected param name at line {}",
-                                    self.current_token.line
-                                ),
-                            }
-                            self.eat();
-                            if self.current_token.token == Token::Comma
-                            {
-                                self.eat();
-                            }
-                            else
-                            {
-                                break;
-                            }
-                        }
-                        self.expect(Token::Pipe);
-                    }
+                    let params = self.parse_pipe_params();
                     let body = self.parse_block();
                     self.expect(Token::RightBrace);
                     let index = self.make_expr(ExprKind::String(name), line);
@@ -546,6 +476,7 @@ impl Parser
                 self.make_expr(ExprKind::Identifier { name, slot: None }, line)
             }
             Token::Fn => self.parse_fn(),
+            Token::Struct => self.parse_struct_def(),
             Token::If => self.parse_if(),
             Token::While => self.parse_while(),
             Token::For => self.parse_for(),
@@ -716,6 +647,120 @@ impl Parser
         }
         self.expect(Token::RightBrace);
         self.make_expr(ExprKind::Map(entries), line)
+    }
+
+    fn parse_struct_type_fields(&mut self) -> Vec<(SymbolId, TypeRef)>
+    {
+        let mut fields = Vec::new();
+        if self.current_token.token != Token::RightBrace
+        {
+            loop
+            {
+                let field_name = match &self.current_token.token
+                {
+                    Token::Identifier(n) =>
+                    {
+                        let field = intern::intern_symbol_owned(n.clone());
+                        self.eat();
+                        field
+                    }
+                    _ => panic!("Expected field name at line {}", self.current_token.line),
+                };
+                self.expect(Token::Colon);
+                let type_ref = self.parse_type_ref();
+                fields.push((field_name, type_ref));
+                if self.current_token.token == Token::Comma
+                {
+                    self.eat();
+                }
+                else
+                {
+                    break;
+                }
+            }
+        }
+        fields
+    }
+
+    fn parse_struct_def(&mut self) -> Expr
+    {
+        let line = self.current_token.line;
+        self.eat(); // struct
+        let name = match &self.current_token.token
+        {
+            Token::Identifier(n) =>
+            {
+                let name = intern::intern_symbol_owned(n.clone());
+                self.eat();
+                name
+            }
+            _ => panic!("Expected struct name at line {}", self.current_token.line),
+        };
+        self.expect(Token::LeftBrace);
+        let fields = self.parse_struct_type_fields();
+        self.expect(Token::RightBrace);
+        self.make_expr(ExprKind::StructDef { name, fields }, line)
+    }
+
+    fn parse_struct_literal_fields(&mut self) -> Vec<(SymbolId, Expr)>
+    {
+        let mut fields = Vec::new();
+        if self.current_token.token != Token::RightBrace
+        {
+            loop
+            {
+                let field_name = match &self.current_token.token
+                {
+                    Token::Identifier(n) =>
+                    {
+                        let field = intern::intern_symbol_owned(n.clone());
+                        self.eat();
+                        field
+                    }
+                    _ => panic!("Expected field name at line {}", self.current_token.line),
+                };
+                self.expect(Token::Colon);
+                let value = self.parse_expression();
+                fields.push((field_name, value));
+                if self.current_token.token == Token::Comma
+                {
+                    self.eat();
+                }
+                else
+                {
+                    break;
+                }
+            }
+        }
+        fields
+    }
+
+    fn parse_type_ref(&mut self) -> TypeRef
+    {
+        let mut path = Vec::new();
+        match &self.current_token.token
+        {
+            Token::Identifier(n) =>
+            {
+                path.push(intern::intern_symbol_owned(n.clone()));
+                self.eat();
+            }
+            _ => panic!("Expected type name at line {}", self.current_token.line),
+        }
+        while self.current_token.token == Token::ColonColon
+        {
+            self.eat();
+            match &self.current_token.token
+            {
+                Token::Identifier(n) =>
+                {
+                    path.push(intern::intern_symbol_owned(n.clone()));
+                    self.eat();
+                }
+                _ => panic!("Expected type name after :: at line {}", self.current_token.line),
+            }
+        }
+        TypeRef { path }
     }
 
     fn parse_use(&mut self) -> Expr
@@ -891,11 +936,42 @@ impl Parser
         let line = self.current_token.line;
         self.eat(); // eat 'fn'
 
-        let name = if let Token::Identifier(n) = &self.current_token.token
+        let base_name = if let Token::Identifier(n) = &self.current_token.token
         {
             let name = intern::intern_symbol_owned(n.clone());
             self.eat();
             Some(name)
+        }
+        else
+        {
+            None
+        };
+
+        let mut method_target = None;
+        let mut method_name = None;
+        let name = if let Some(name) = base_name
+        {
+            if self.current_token.token == Token::Dot
+            {
+                self.eat();
+                let method = if let Token::Identifier(n) = &self.current_token.token
+                {
+                    let method = intern::intern_symbol_owned(n.clone());
+                    self.eat();
+                    method
+                }
+                else
+                {
+                    panic!("Expected method name after '.' at line {}", self.current_token.line);
+                };
+                method_target = Some(name);
+                method_name = Some(method);
+                None
+            }
+            else
+            {
+                Some(name)
+            }
         }
         else
         {
@@ -908,25 +984,8 @@ impl Parser
         {
             loop
             {
-                let is_ref = if self.current_token.token == Token::Ampersand
-                {
-                    self.eat();
-                    true
-                }
-                else
-                {
-                    false
-                };
-
-                match &self.current_token.token
-                {
-                    Token::Identifier(arg) =>
-                    {
-                        params.push((intern::intern_symbol_owned(arg.clone()), is_ref))
-                    }
-                    _ => panic!("Expected parameter name at line {}", self.current_token.line),
-                }
-                self.eat();
+                let param = self.parse_param();
+                params.push(param);
                 if self.current_token.token == Token::Comma
                 {
                     self.eat();
@@ -942,7 +1001,21 @@ impl Parser
         let body = self.parse_block();
         self.expect(Token::End);
 
-        if let Some(name) = name
+        if let Some(type_name) = method_target
+        {
+            let method_name = method_name.expect("Expected method name");
+            self.make_expr(
+                ExprKind::MethodDef {
+                    type_name,
+                    name: method_name,
+                    params,
+                    body: Box::new(body),
+                    slots: None,
+                },
+                line,
+            )
+        }
+        else if let Some(name) = name
         {
             self.make_expr(
                 ExprKind::FunctionDef {
@@ -1129,30 +1202,29 @@ impl Parser
     {
         let line = self.current_token.line;
         self.eat(); // {
+        let params = self.parse_pipe_params();
+        let body = self.parse_block();
+        self.expect(Token::RightBrace);
+        self.make_expr(
+            ExprKind::AnonymousFunction {
+                params,
+                body: Box::new(body),
+                slots: None,
+            },
+            line,
+        )
+    }
+
+    fn parse_pipe_params(&mut self) -> Vec<Param>
+    {
         let mut params = Vec::new();
         if self.current_token.token == Token::Pipe
         {
             self.eat(); // |
             loop
             {
-                let is_ref = if self.current_token.token == Token::Ampersand
-                {
-                    self.eat();
-                    true
-                }
-                else
-                {
-                    false
-                };
-                match &self.current_token.token
-                {
-                    Token::Identifier(p) =>
-                    {
-                        params.push((intern::intern_symbol_owned(p.clone()), is_ref))
-                    }
-                    _ => panic!("Expected param name at line {}", self.current_token.line),
-                }
-                self.eat();
+                let param = self.parse_param();
+                params.push(param);
                 if self.current_token.token == Token::Comma
                 {
                     self.eat();
@@ -1164,16 +1236,45 @@ impl Parser
             }
             self.expect(Token::Pipe);
         }
-        let body = self.parse_block();
-        self.expect(Token::RightBrace);
-        self.make_expr(
-            ExprKind::AnonymousFunction {
-                params,
-                body: Box::new(body),
-                slots: None,
-            },
-            line,
-        )
+        params
+    }
+
+    fn parse_param(&mut self) -> Param
+    {
+        let is_ref = if self.current_token.token == Token::Ampersand
+        {
+            self.eat();
+            true
+        }
+        else
+        {
+            false
+        };
+
+        let name = match &self.current_token.token
+        {
+            Token::Identifier(arg) => intern::intern_symbol_owned(arg.clone()),
+            _ => panic!("Expected parameter name at line {}", self.current_token.line),
+        };
+        self.eat();
+
+        let type_ann = if self.current_token.token == Token::LeftBrace
+        {
+            self.eat(); // {
+            let fields = self.parse_struct_type_fields();
+            self.expect(Token::RightBrace);
+            Some(ParamType::Struct(fields))
+        }
+        else
+        {
+            None
+        };
+
+        Param {
+            name,
+            is_ref,
+            type_ann,
+        }
     }
 
     fn parse_format_string(&mut self, content: String, line: usize) -> Expr

@@ -120,6 +120,22 @@ root128 = Float128.sqrt(9)
 
 The `::` operator accesses module members, similar to map dot access.
 
+### Structs
+```ruby
+struct Point {
+  x: Float64,
+  y: Float64
+}
+
+fn sum(point { x: Float64, y: Float64 })
+  point.x + point.y
+end
+
+p = Point { x: 1.0, y: 2.0 }
+p.x = 3
+puts sum(p)
+```
+
 ### std::IO
 The `std::IO` module provides basic file and path utilities:
 ```ruby

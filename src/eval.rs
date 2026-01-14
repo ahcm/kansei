@@ -1,10 +1,11 @@
-use crate::ast::{Closure, Expr, ExprKind, FloatKind, IntKind, Op};
+use crate::ast::{Closure, Expr, ExprKind, FloatKind, IntKind, Op, Param, ParamType, TypeRef};
 use crate::intern;
 use crate::intern::{SymbolId, symbol_name};
 use crate::value::{
-    BinaryOpCache, BinaryOpCacheKind, Builtin, CallSiteCache, Environment, FastRegFunction,
-    FastRegInstruction, GlobalCache, IndexCache, Instruction, MapAccessCache, MapAccessCacheEntry,
-    MapValue, RangeEnd, RegBinOp, RegFunction, RegInstruction, Value,
+    BinaryOpCache, BinaryOpCacheKind, BoundMethod, Builtin, CallSiteCache, Environment,
+    FastRegFunction, FastRegInstruction, GlobalCache, IndexCache, Instruction, MapAccessCache,
+    MapAccessCacheEntry, MapValue, RangeEnd, RegBinOp, RegFunction, RegInstruction, StructType,
+    Value,
 };
 use crate::wasm::{WasmFunction, WasmModule};
 use rustc_hash::FxHashMap;
@@ -173,6 +174,486 @@ fn unsigned_int_max(kind: IntKind) -> u128
         IntKind::U128 => u128::MAX,
         _ => panic!("Expected unsigned int kind, got {:?}", kind),
     }
+}
+
+enum ResolvedType
+{
+    Int(IntKind),
+    Uint(IntKind),
+    Float(FloatKind),
+    Bool,
+    String,
+    Bytes,
+    ByteBuf,
+    Array,
+    Map,
+    F64Array,
+    Struct(Rc<StructType>),
+    Any,
+}
+
+impl PartialEq for ResolvedType
+{
+    fn eq(&self, other: &Self) -> bool
+    {
+        match (self, other)
+        {
+            (ResolvedType::Int(a), ResolvedType::Int(b)) => a == b,
+            (ResolvedType::Uint(a), ResolvedType::Uint(b)) => a == b,
+            (ResolvedType::Float(a), ResolvedType::Float(b)) => a == b,
+            (ResolvedType::Bool, ResolvedType::Bool) => true,
+            (ResolvedType::String, ResolvedType::String) => true,
+            (ResolvedType::Bytes, ResolvedType::Bytes) => true,
+            (ResolvedType::ByteBuf, ResolvedType::ByteBuf) => true,
+            (ResolvedType::Array, ResolvedType::Array) => true,
+            (ResolvedType::Map, ResolvedType::Map) => true,
+            (ResolvedType::F64Array, ResolvedType::F64Array) => true,
+            (ResolvedType::Struct(a), ResolvedType::Struct(b)) => Rc::ptr_eq(a, b),
+            (ResolvedType::Any, ResolvedType::Any) => true,
+            _ => false,
+        }
+    }
+}
+
+fn lookup_value_path(env: &Rc<RefCell<Environment>>, path: &[SymbolId]) -> Option<Value>
+{
+    if path.is_empty()
+    {
+        return None;
+    }
+    let mut value = env.borrow().get(path[0])?;
+    for segment in &path[1..]
+    {
+        let key = symbol_name(*segment);
+        match value
+        {
+            Value::Map(map) =>
+            {
+                value = map.borrow().data.get(&key).cloned().unwrap_or(Value::Nil);
+            }
+            _ => return None,
+        }
+    }
+    Some(value)
+}
+
+fn resolve_type_ref(
+    env: &Rc<RefCell<Environment>>,
+    type_ref: &TypeRef,
+    line: usize,
+) -> Result<ResolvedType, RuntimeError>
+{
+    if type_ref.path.is_empty()
+    {
+        return Err(RuntimeError {
+            message: "Empty type reference".to_string(),
+            line,
+        });
+    }
+    if type_ref.path.len() == 1
+    {
+        let name = symbol_name(type_ref.path[0]);
+        let kind = match name.as_str()
+        {
+            "Int8" => Some(ResolvedType::Int(IntKind::I8)),
+            "Int16" => Some(ResolvedType::Int(IntKind::I16)),
+            "Int32" => Some(ResolvedType::Int(IntKind::I32)),
+            "Int64" => Some(ResolvedType::Int(IntKind::I64)),
+            "Int128" => Some(ResolvedType::Int(IntKind::I128)),
+            "Uint8" => Some(ResolvedType::Uint(IntKind::U8)),
+            "Uint16" => Some(ResolvedType::Uint(IntKind::U16)),
+            "Uint32" => Some(ResolvedType::Uint(IntKind::U32)),
+            "Uint64" => Some(ResolvedType::Uint(IntKind::U64)),
+            "Uint128" => Some(ResolvedType::Uint(IntKind::U128)),
+            "Float32" => Some(ResolvedType::Float(FloatKind::F32)),
+            "Float64" => Some(ResolvedType::Float(FloatKind::F64)),
+            "Float128" => Some(ResolvedType::Float(FloatKind::F128)),
+            "Bool" => Some(ResolvedType::Bool),
+            "String" => Some(ResolvedType::String),
+            "Bytes" => Some(ResolvedType::Bytes),
+            "ByteBuf" => Some(ResolvedType::ByteBuf),
+            "Array" => Some(ResolvedType::Array),
+            "Map" => Some(ResolvedType::Map),
+            "F64Array" => Some(ResolvedType::F64Array),
+            "Any" => Some(ResolvedType::Any),
+            _ => None,
+        };
+        if let Some(kind) = kind
+        {
+            return Ok(kind);
+        }
+    }
+
+    if let Some(value) = lookup_value_path(env, &type_ref.path)
+    {
+        if let Value::StructType(ty) = value
+        {
+            return Ok(ResolvedType::Struct(ty));
+        }
+    }
+    Err(RuntimeError {
+        message: format!(
+            "Unknown type '{}'",
+            symbol_name(*type_ref.path.last().unwrap()).as_str()
+        ),
+        line,
+    })
+}
+
+fn int_kind_label(kind: IntKind) -> &'static str
+{
+    match kind
+    {
+        IntKind::I8 => "Int8",
+        IntKind::I16 => "Int16",
+        IntKind::I32 => "Int32",
+        IntKind::I64 => "Int64",
+        IntKind::I128 => "Int128",
+        IntKind::U8 => "Uint8",
+        IntKind::U16 => "Uint16",
+        IntKind::U32 => "Uint32",
+        IntKind::U64 => "Uint64",
+        IntKind::U128 => "Uint128",
+    }
+}
+
+fn float_kind_label(kind: FloatKind) -> &'static str
+{
+    match kind
+    {
+        FloatKind::F32 => "Float32",
+        FloatKind::F64 => "Float64",
+        FloatKind::F128 => "Float128",
+    }
+}
+
+fn resolved_type_name(resolved: &ResolvedType) -> String
+{
+    match resolved
+    {
+        ResolvedType::Int(kind) | ResolvedType::Uint(kind) => int_kind_label(*kind).to_string(),
+        ResolvedType::Float(kind) => float_kind_label(*kind).to_string(),
+        ResolvedType::Bool => "Bool".to_string(),
+        ResolvedType::String => "String".to_string(),
+        ResolvedType::Bytes => "Bytes".to_string(),
+        ResolvedType::ByteBuf => "ByteBuf".to_string(),
+        ResolvedType::Array => "Array".to_string(),
+        ResolvedType::Map => "Map".to_string(),
+        ResolvedType::F64Array => "F64Array".to_string(),
+        ResolvedType::Struct(ty) => ty.name.as_str().to_string(),
+        ResolvedType::Any => "Any".to_string(),
+    }
+}
+
+fn value_to_bytes(value: &Value, line: usize, label: &str) -> Result<Vec<u8>, RuntimeError>
+{
+    match value
+    {
+        Value::String(s) => Ok(s.as_bytes().to_vec()),
+        Value::Bytes(bytes) => Ok(bytes.as_ref().clone()),
+        Value::ByteBuf(buf) => Ok(buf.borrow().clone()),
+        Value::BytesView(view) =>
+        {
+            let end = view.offset.saturating_add(view.len);
+            match &view.source
+            {
+                crate::value::BytesViewSource::Mmap(mmap) =>
+                {
+                    Ok(mmap[view.offset..end].to_vec())
+                }
+                crate::value::BytesViewSource::MmapMut(mmap) =>
+                {
+                    let data = mmap.borrow();
+                    Ok(data[view.offset..end].to_vec())
+                }
+            }
+        }
+        Value::Mmap(mmap) => Ok(mmap.as_ref().to_vec()),
+        Value::MmapMut(mmap) => Ok(mmap.borrow().as_ref().to_vec()),
+        _ => Err(RuntimeError {
+            message: format!("{label} expects bytes"),
+            line,
+        }),
+    }
+}
+
+fn coerce_value_to_type(
+    value: Value,
+    resolved: &ResolvedType,
+    line: usize,
+    label: &str,
+) -> Result<Value, RuntimeError>
+{
+    match resolved
+    {
+        ResolvedType::Any => Ok(value),
+        ResolvedType::Bool =>
+        {
+            if matches!(value, Value::Boolean(_))
+            {
+                Ok(value)
+            }
+            else
+            {
+                Err(RuntimeError {
+                    message: format!("{label} expects Bool"),
+                    line,
+                })
+            }
+        }
+        ResolvedType::String =>
+        {
+            if matches!(value, Value::String(_))
+            {
+                Ok(value)
+            }
+            else
+            {
+                Err(RuntimeError {
+                    message: format!("{label} expects String"),
+                    line,
+                })
+            }
+        }
+        ResolvedType::Bytes =>
+        {
+            let bytes = value_to_bytes(&value, line, label)?;
+            Ok(Value::Bytes(Rc::new(bytes)))
+        }
+        ResolvedType::ByteBuf =>
+        {
+            let bytes = value_to_bytes(&value, line, label)?;
+            Ok(Value::ByteBuf(Rc::new(RefCell::new(bytes))))
+        }
+        ResolvedType::Array =>
+        {
+            if matches!(value, Value::Array(_))
+            {
+                Ok(value)
+            }
+            else
+            {
+                Err(RuntimeError {
+                    message: format!("{label} expects Array"),
+                    line,
+                })
+            }
+        }
+        ResolvedType::Map =>
+        {
+            if matches!(value, Value::Map(_))
+            {
+                Ok(value)
+            }
+            else
+            {
+                Err(RuntimeError {
+                    message: format!("{label} expects Map"),
+                    line,
+                })
+            }
+        }
+        ResolvedType::F64Array =>
+        {
+            if matches!(value, Value::F64Array(_))
+            {
+                Ok(value)
+            }
+            else
+            {
+                Err(RuntimeError {
+                    message: format!("{label} expects F64Array"),
+                    line,
+                })
+            }
+        }
+        ResolvedType::Int(kind) =>
+        {
+            let num = match value
+            {
+                Value::Integer { value, .. } => value,
+                Value::Unsigned { value, .. } =>
+                {
+                    if value > i128::MAX as u128
+                    {
+                        return Err(RuntimeError {
+                            message: format!("{label} out of range for {:?}", kind),
+                            line,
+                        });
+                    }
+                    value as i128
+                }
+                Value::Float { value, .. } => value as i128,
+                _ =>
+                {
+                    return Err(RuntimeError {
+                        message: format!("{label} expects Int"),
+                        line,
+                    });
+                }
+            };
+            let min = signed_int_min(*kind);
+            let max = signed_int_max(*kind);
+            if num < min || num > max
+            {
+                return Err(RuntimeError {
+                    message: format!("{label} out of range for {:?}", kind),
+                    line,
+                });
+            }
+            Ok(make_signed_int(num, *kind))
+        }
+        ResolvedType::Uint(kind) =>
+        {
+            let num = match value
+            {
+                Value::Unsigned { value, .. } => value,
+                Value::Integer { value, .. } =>
+                {
+                    if value < 0
+                    {
+                        return Err(RuntimeError {
+                            message: format!("{label} out of range for {:?}", kind),
+                            line,
+                        });
+                    }
+                    value as u128
+                }
+                Value::Float { value, .. } =>
+                {
+                    if value < 0.0
+                    {
+                        return Err(RuntimeError {
+                            message: format!("{label} out of range for {:?}", kind),
+                            line,
+                        });
+                    }
+                    value as u128
+                }
+                _ =>
+                {
+                    return Err(RuntimeError {
+                        message: format!("{label} expects Uint"),
+                        line,
+                    });
+                }
+            };
+            let max = unsigned_int_max(*kind);
+            if num > max
+            {
+                return Err(RuntimeError {
+                    message: format!("{label} out of range for {:?}", kind),
+                    line,
+                });
+            }
+            Ok(make_unsigned_int(num, *kind))
+        }
+        ResolvedType::Float(kind) =>
+        {
+            let num = match value
+            {
+                Value::Float { value, .. } => value,
+                v => int_value_as_f64(&v).ok_or_else(|| RuntimeError {
+                    message: format!("{label} expects Float"),
+                    line,
+                })?,
+            };
+            Ok(make_float(num, *kind))
+        }
+        ResolvedType::Struct(ty) =>
+        {
+            if let Value::StructInstance(inst) = value
+            {
+                if Rc::ptr_eq(&inst.ty, ty)
+                {
+                    Ok(Value::StructInstance(inst))
+                }
+                else
+                {
+                    Err(RuntimeError {
+                        message: format!("{label} expects {}", ty.name),
+                        line,
+                    })
+                }
+            }
+            else
+            {
+                Err(RuntimeError {
+                    message: format!("{label} expects {}", ty.name),
+                    line,
+                })
+            }
+        }
+    }
+}
+
+fn coerce_param_value(
+    env: &Rc<RefCell<Environment>>,
+    param: &Param,
+    value: Value,
+    line: usize,
+) -> Result<Value, RuntimeError>
+{
+    match &param.type_ann
+    {
+        Some(ParamType::Struct(fields)) =>
+        {
+            let label = symbol_name(param.name);
+            coerce_struct_param(env, value, fields, line, label.as_str())
+        }
+        None => Ok(value),
+    }
+}
+
+fn coerce_struct_param(
+    env: &Rc<RefCell<Environment>>,
+    value: Value,
+    fields: &[(SymbolId, TypeRef)],
+    line: usize,
+    label: &str,
+) -> Result<Value, RuntimeError>
+{
+    let inst = match value
+    {
+        Value::StructInstance(inst) => inst,
+        _ =>
+        {
+            return Err(RuntimeError {
+                message: format!("{label} expects a struct value"),
+                line,
+            });
+        }
+    };
+    for (field_name, type_ref) in fields
+    {
+        let key = symbol_name(*field_name);
+        let idx = inst.ty.field_map.get(&key).ok_or_else(|| RuntimeError {
+            message: format!("{label} missing field '{}'", key.as_str()),
+            line,
+        })?;
+        let field = inst.ty.fields.get(*idx).ok_or_else(|| RuntimeError {
+            message: format!("Struct field '{}' out of bounds", key.as_str()),
+            line,
+        })?;
+        let expected = resolve_type_ref(env, type_ref, line)?;
+        let actual = resolve_type_ref(env, &field.type_ref, line)?;
+        if actual != expected
+        {
+            return Err(RuntimeError {
+                message: format!(
+                    "{label} expects field '{}' to be {}",
+                    key.as_str(),
+                    resolved_type_name(&expected)
+                ),
+                line,
+            });
+        }
+        let mut field_values = inst.fields.borrow_mut();
+        let current = field_values[*idx].clone();
+        let coerced = coerce_value_to_type(current, &expected, line, key.as_str())?;
+        field_values[*idx] = coerced;
+    }
+    Ok(Value::StructInstance(inst))
 }
 
 fn map_keys_array(map: &MapValue) -> Value
@@ -421,6 +902,16 @@ fn clone_value(value: &Value) -> Value
             Value::ByteBuf(Rc::new(RefCell::new(vals)))
         }
         Value::BytesView(view) => Value::BytesView(view.clone()),
+        Value::StructType(ty) => Value::StructType(ty.clone()),
+        Value::StructInstance(inst) =>
+        {
+            let vals = inst.fields.borrow().clone();
+            Value::StructInstance(Rc::new(crate::value::StructInstance {
+                ty: inst.ty.clone(),
+                fields: RefCell::new(vals),
+            }))
+        }
+        Value::BoundMethod(method) => Value::BoundMethod(method.clone()),
         Value::Map(map) =>
         {
             let map_ref = map.borrow();
@@ -987,18 +1478,18 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<SymbolId>)
 }
 
 fn build_slot_map(
-    params: &[(SymbolId, bool)],
+    params: &[Param],
     locals: HashSet<SymbolId>,
 ) -> (FxHashMap<SymbolId, usize>, Vec<Rc<String>>)
 {
     let mut slot_map = FxHashMap::default();
     let mut slot_names = Vec::new();
-    for (p, _) in params
+    for param in params
     {
-        if !slot_map.contains_key(p)
+        if !slot_map.contains_key(&param.name)
         {
-            slot_map.insert(p.clone(), slot_names.len());
-            slot_names.push(symbol_name(*p));
+            slot_map.insert(param.name, slot_names.len());
+            slot_names.push(symbol_name(param.name));
         }
     }
     for l in locals
@@ -2661,6 +3152,12 @@ fn compile_expr(
                 code.push(Instruction::Pop);
             }
         }
+        ExprKind::StructDef { .. }
+        | ExprKind::StructLiteral { .. }
+        | ExprKind::MethodDef { .. } =>
+        {
+            return false;
+        }
         ExprKind::ArrayGenerator { generator, size } =>
         {
             let mut use_f64_gen = false;
@@ -2801,6 +3298,18 @@ fn find_compile_failure(expr: &Expr) -> Option<String>
                 );
             }
         },
+        ExprKind::StructDef { .. } =>
+        {
+            return Some("struct definition not supported in bytecode".to_string());
+        }
+        ExprKind::StructLiteral { .. } =>
+        {
+            return Some("struct literal not supported in bytecode".to_string());
+        }
+        ExprKind::MethodDef { .. } =>
+        {
+            return Some("method definition not supported in bytecode".to_string());
+        }
         _ =>
         {}
     }
@@ -2879,7 +3388,7 @@ fn collect_function_exprs(
     expr: &Expr,
     out: &mut Vec<(
         Option<SymbolId>,
-        Vec<(SymbolId, bool)>,
+        Vec<Param>,
         Expr,
         Option<Rc<Vec<Rc<String>>>>,
         usize,
@@ -2902,6 +3411,16 @@ fn collect_function_exprs(
             params,
             body,
             slots,
+        } =>
+        {
+            out.push((None, params.clone(), *body.clone(), slots.clone(), expr.line));
+            collect_function_exprs(body, out);
+        }
+        ExprKind::MethodDef {
+            params,
+            body,
+            slots,
+            ..
         } =>
         {
             out.push((None, params.clone(), *body.clone(), slots.clone(), expr.line));
@@ -2964,6 +3483,13 @@ fn collect_function_exprs(
             for e in elements
             {
                 collect_function_exprs(e, out);
+            }
+        }
+        ExprKind::StructLiteral { fields, .. } =>
+        {
+            for (_, expr) in fields
+            {
+                collect_function_exprs(expr, out);
             }
         }
         ExprKind::ArrayGenerator { generator, size } =>
@@ -3036,7 +3562,8 @@ fn collect_function_exprs(
         | ExprKind::Use(_)
         | ExprKind::Load(_)
         | ExprKind::Import { .. }
-        | ExprKind::Export { .. } =>
+        | ExprKind::Export { .. }
+        | ExprKind::StructDef { .. } =>
         {}
     }
 }
@@ -3490,6 +4017,16 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
             ),
             line: expr.line,
         },
+        ExprKind::StructLiteral { name, fields } => Expr {
+            kind: ExprKind::StructLiteral {
+                name: *name,
+                fields: fields
+                    .iter()
+                    .map(|(field, value)| (*field, substitute(value, args)))
+                    .collect(),
+            },
+            line: expr.line,
+        },
         ExprKind::Index { target, index } => Expr {
             kind: ExprKind::Index {
                 target: Box::new(substitute(target, args)),
@@ -3527,6 +4064,7 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
             ),
             line: expr.line,
         },
+        ExprKind::StructDef { .. } | ExprKind::MethodDef { .. } => expr.clone(),
         // Literals
         _ => expr.clone(),
     }
@@ -3561,6 +4099,10 @@ fn expr_size(expr: &Expr) -> usize
             1 + expr_size(function) + args.iter().map(expr_size).sum::<usize>()
         }
         ExprKind::Array(elements) => 1 + elements.iter().map(expr_size).sum::<usize>(),
+        ExprKind::StructLiteral { fields, .. } =>
+        {
+            1 + fields.iter().map(|(_, v)| expr_size(v)).sum::<usize>()
+        }
         ExprKind::ArrayGenerator { generator, size } => 1 + expr_size(generator) + expr_size(size),
         ExprKind::Map(entries) =>
         {
@@ -3598,11 +4140,13 @@ fn is_reg_simple(expr: &Expr) -> bool
     {
         ExprKind::Yield(_)
         | ExprKind::FunctionDef { .. }
+        | ExprKind::MethodDef { .. }
         | ExprKind::AnonymousFunction { .. }
         | ExprKind::Use(_)
         | ExprKind::Load(_)
         | ExprKind::Import { .. }
-        | ExprKind::Export { .. } => false,
+        | ExprKind::Export { .. }
+        | ExprKind::StructDef { .. } => false,
         ExprKind::If { .. }
         | ExprKind::While { .. }
         | ExprKind::For { .. }
@@ -3610,6 +4154,7 @@ fn is_reg_simple(expr: &Expr) -> bool
         ExprKind::Array(_)
         | ExprKind::ArrayGenerator { .. }
         | ExprKind::Map(_)
+        | ExprKind::StructLiteral { .. }
         | ExprKind::FormatString(_) => false,
         ExprKind::Block(stmts) => stmts.iter().all(is_reg_simple),
         ExprKind::BinaryOp { left, right, .. } => is_reg_simple(left) && is_reg_simple(right),
@@ -4119,6 +4664,24 @@ fn resolve_method_value(
 {
     let result = match target_val
     {
+        Value::StructInstance(inst) =>
+        {
+            if let Some(method) = inst.ty.methods.borrow().get(name).cloned()
+            {
+                Value::BoundMethod(Rc::new(BoundMethod {
+                    receiver: Value::StructInstance(inst.clone()),
+                    func: method,
+                }))
+            }
+            else
+            {
+                return Err(err_index_unsupported());
+            }
+        }
+        Value::StructType(ty) =>
+        {
+            ty.methods.borrow().get(name).cloned().unwrap_or(Value::Nil)
+        }
         Value::Map(map) =>
         {
             if name.as_str() == "keys"
@@ -4377,6 +4940,43 @@ fn eval_index_cached_value(
                 return Err(err_index_requires_int());
             }
         }
+        Value::StructInstance(inst) =>
+        {
+            if let Value::String(s) = index_val
+            {
+                if let Some(idx) = inst.ty.field_map.get(&s)
+                {
+                    let fields = inst.fields.borrow();
+                    fields.get(*idx).cloned().unwrap_or(Value::Nil)
+                }
+                else if let Some(method) = inst.ty.methods.borrow().get(&s).cloned()
+                {
+                    Value::BoundMethod(Rc::new(BoundMethod {
+                        receiver: Value::StructInstance(inst.clone()),
+                        func: method,
+                    }))
+                }
+                else
+                {
+                    Value::Nil
+                }
+            }
+            else
+            {
+                return Err(err_index_unsupported());
+            }
+        }
+        Value::StructType(ty) =>
+        {
+            if let Value::String(s) = index_val
+            {
+                ty.methods.borrow().get(&s).cloned().unwrap_or(Value::Nil)
+            }
+            else
+            {
+                return Err(err_index_unsupported());
+            }
+        }
         Value::Map(map) =>
         {
             if let Value::String(s) = index_val
@@ -4425,6 +5025,7 @@ fn eval_index_cached_value(
 }
 
 fn eval_index_assign_value(
+    interpreter: &mut Interpreter,
     target_val: Value,
     index_val: Value,
     value: Value,
@@ -4574,6 +5175,26 @@ fn eval_index_assign_value(
             {
                 return Err(err_index_requires_int());
             }
+        }
+        Value::StructInstance(inst) =>
+        {
+            let key = match index_val
+            {
+                Value::String(s) => s,
+                _ => return Err(err_index_unsupported()),
+            };
+            let idx = inst.ty.field_map.get(&key).ok_or_else(|| RuntimeError {
+                message: format!("Unknown field '{}'", key.as_str()),
+                line: 0,
+            })?;
+            let field = inst.ty.fields.get(*idx).ok_or_else(|| RuntimeError {
+                message: "Struct field out of bounds".to_string(),
+                line: 0,
+            })?;
+            let resolved = resolve_type_ref(&interpreter.env, &field.type_ref, 0)?;
+            let coerced = coerce_value_to_type(value.clone(), &resolved, 0, key.as_str())?;
+            inst.fields.borrow_mut()[*idx] = coerced.clone();
+            return Ok(coerced);
         }
         Value::Map(map) =>
         {
@@ -4776,14 +5397,15 @@ fn eval_call_value_cached_generic(
         if cache_mut.func_ptr == Some(func_ptr)
         {
             cache_mut.hits += 1;
-            if arg_vals.len() < func_data.params.len()
+            let arg_len = arg_vals.len();
+            if arg_len < func_data.params.len()
             {
                 return Err(RuntimeError {
                     message: "Too few arguments".to_string(),
                     line: 0,
                 });
             }
-            if arg_vals.len() > func_data.params.len()
+            if arg_len > func_data.params.len()
             {
                 return Err(RuntimeError {
                     message: "Too many arguments".to_string(),
@@ -4794,13 +5416,19 @@ fn eval_call_value_cached_generic(
             {
                 return interpreter.invoke_function(func_data.clone(), arg_vals, 0, block_owned);
             }
+            let mut coerced_args: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
+            for (param, val) in func_data.params.iter().zip(arg_vals.iter().cloned())
+            {
+                let coerced = coerce_param_value(&func_data.env, param, val, 0)?;
+                coerced_args.push(coerced);
+            }
             if let Some(fast) = &func_data.fast_reg_code
             {
                 let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(
                     Value::Uninitialized,
                     func_data.declarations.len(),
                 );
-                for (i, val) in arg_vals.iter().cloned().enumerate()
+                for (i, val) in coerced_args.iter().cloned().enumerate()
                 {
                     new_slots[i + func_data.param_offset] = val;
                 }
@@ -4815,7 +5443,7 @@ fn eval_call_value_cached_generic(
                     Value::Uninitialized,
                     func_data.declarations.len(),
                 );
-                for (i, val) in arg_vals.iter().cloned().enumerate()
+                for (i, val) in coerced_args.iter().cloned().enumerate()
                 {
                     new_slots[i + func_data.param_offset] = val;
                 }
@@ -4827,7 +5455,7 @@ fn eval_call_value_cached_generic(
                     Value::Uninitialized,
                     func_data.declarations.len(),
                 );
-                for (i, val) in arg_vals.iter().cloned().enumerate()
+                for (i, val) in coerced_args.iter().cloned().enumerate()
                 {
                     new_slots[i + func_data.param_offset] = val;
                 }
@@ -4947,6 +5575,43 @@ fn execute_reg_instructions(
                     let index_val = regs[*index].clone();
                     let result = match target_val
                     {
+                        Value::StructInstance(inst) =>
+                        {
+                            if let Value::String(s) = index_val
+                            {
+                                if let Some(idx) = inst.ty.field_map.get(&s)
+                                {
+                                    let fields = inst.fields.borrow();
+                                    fields.get(*idx).cloned().unwrap_or(Value::Nil)
+                                }
+                                else if let Some(method) = inst.ty.methods.borrow().get(&s).cloned()
+                                {
+                                    Value::BoundMethod(Rc::new(BoundMethod {
+                                        receiver: Value::StructInstance(inst.clone()),
+                                        func: method,
+                                    }))
+                                }
+                                else
+                                {
+                                    Value::Nil
+                                }
+                            }
+                            else
+                            {
+                                return Err(err_index_unsupported());
+                            }
+                        }
+                        Value::StructType(ty) =>
+                        {
+                            if let Value::String(s) = index_val
+                            {
+                                ty.methods.borrow().get(&s).cloned().unwrap_or(Value::Nil)
+                            }
+                            else
+                            {
+                                return Err(err_index_unsupported());
+                            }
+                        }
                         Value::Map(map) =>
                         {
                             if let Value::String(s) = index_val
@@ -5051,7 +5716,12 @@ fn execute_reg_instructions(
                                 _ =>
                                 {
                                     let fallback = Value::F64Array(arr.clone());
-                                    return eval_index_assign_value(fallback, index_val, value_val);
+                                    return eval_index_assign_value(
+                                        interpreter,
+                                        fallback,
+                                        index_val,
+                                        value_val,
+                                    );
                                 }
                             };
                             let num = match &value_val
@@ -5063,6 +5733,7 @@ fn execute_reg_instructions(
                                 {
                                     let fallback = Value::F64Array(arr.clone());
                                     return eval_index_assign_value(
+                                        interpreter,
                                         fallback,
                                         index_val,
                                         other.clone(),
@@ -5096,7 +5767,12 @@ fn execute_reg_instructions(
                                 });
                             }
                         }
-                        other => eval_index_assign_value(other, index_val, value_val)?,
+                        other => eval_index_assign_value(
+                            interpreter,
+                            other,
+                            index_val,
+                            value_val,
+                        )?,
                     };
                     regs[*dst] = result;
                 }
@@ -6347,6 +7023,43 @@ fn execute_instructions(
                             return Err(err_index_requires_int());
                         }
                     }
+                    Value::StructInstance(inst) =>
+                    {
+                        if let Value::String(s) = index_val
+                        {
+                            if let Some(idx) = inst.ty.field_map.get(&s)
+                            {
+                                let fields = inst.fields.borrow();
+                                fields.get(*idx).cloned().unwrap_or(Value::Nil)
+                            }
+                            else if let Some(method) = inst.ty.methods.borrow().get(&s).cloned()
+                            {
+                                Value::BoundMethod(Rc::new(BoundMethod {
+                                    receiver: Value::StructInstance(inst.clone()),
+                                    func: method,
+                                }))
+                            }
+                            else
+                            {
+                                Value::Nil
+                            }
+                        }
+                        else
+                        {
+                            return Err(err_index_unsupported());
+                        }
+                    }
+                    Value::StructType(ty) =>
+                    {
+                        if let Value::String(s) = index_val
+                        {
+                            ty.methods.borrow().get(&s).cloned().unwrap_or(Value::Nil)
+                        }
+                        else
+                        {
+                            return Err(err_index_unsupported());
+                        }
+                    }
                     Value::Map(map) =>
                     {
                         let map_ref = map.borrow();
@@ -6400,6 +7113,43 @@ fn execute_instructions(
                 })?;
                 let result = match target_val
                 {
+                    Value::StructInstance(inst) =>
+                    {
+                        if let Value::String(s) = index_val
+                        {
+                            if let Some(idx) = inst.ty.field_map.get(&s)
+                            {
+                                let fields = inst.fields.borrow();
+                                fields.get(*idx).cloned().unwrap_or(Value::Nil)
+                            }
+                            else if let Some(method) = inst.ty.methods.borrow().get(&s).cloned()
+                            {
+                                Value::BoundMethod(Rc::new(BoundMethod {
+                                    receiver: Value::StructInstance(inst.clone()),
+                                    func: method,
+                                }))
+                            }
+                            else
+                            {
+                                Value::Nil
+                            }
+                        }
+                        else
+                        {
+                            return Err(err_index_unsupported());
+                        }
+                    }
+                    Value::StructType(ty) =>
+                    {
+                        if let Value::String(s) = index_val
+                        {
+                            ty.methods.borrow().get(&s).cloned().unwrap_or(Value::Nil)
+                        }
+                        else
+                        {
+                            return Err(err_index_unsupported());
+                        }
+                    }
                     Value::Map(map) =>
                     {
                         if let Value::String(s) = index_val
@@ -6497,7 +7247,7 @@ fn execute_instructions(
                     message: "Missing target for index assignment".to_string(),
                     line: 0,
                 })?;
-                let result = eval_index_assign_value(target_val, index_val, value)?;
+                let result = eval_index_assign_value(interpreter, target_val, index_val, value)?;
                 stack.push(result);
             }
             Instruction::F64IndexAssignCached(cache) =>
@@ -6526,7 +7276,12 @@ fn execute_instructions(
                             _ =>
                             {
                                 let fallback = Value::F64Array(arr.clone());
-                                return eval_index_assign_value(fallback, index_val, out_value);
+                                return eval_index_assign_value(
+                                    interpreter,
+                                    fallback,
+                                    index_val,
+                                    out_value,
+                                );
                             }
                         };
                         let num = match &out_value
@@ -6537,7 +7292,12 @@ fn execute_instructions(
                             other =>
                             {
                                 let fallback = Value::F64Array(arr.clone());
-                                return eval_index_assign_value(fallback, index_val, other.clone());
+                                return eval_index_assign_value(
+                                    interpreter,
+                                    fallback,
+                                    index_val,
+                                    other.clone(),
+                                );
                             }
                         };
                         let arr_ptr = Rc::as_ptr(&arr) as usize;
@@ -6567,7 +7327,12 @@ fn execute_instructions(
                             });
                         }
                     }
-                    other => eval_index_assign_value(other, index_val, value)?,
+                    other => eval_index_assign_value(
+                        interpreter,
+                        other,
+                        index_val,
+                        value,
+                    )?,
                 };
                 stack.push(result);
             }
@@ -7099,11 +7864,13 @@ fn is_simple(expr: &Expr) -> bool
     {
         ExprKind::Yield(_)
         | ExprKind::FunctionDef { .. }
+        | ExprKind::MethodDef { .. }
         | ExprKind::AnonymousFunction { .. }
         | ExprKind::Use(_)
         | ExprKind::Load(_)
         | ExprKind::Import { .. }
-        | ExprKind::Export { .. } => false,
+        | ExprKind::Export { .. }
+        | ExprKind::StructDef { .. } => false,
         ExprKind::Block(stmts) => stmts.iter().all(is_simple),
         ExprKind::FormatString(parts) => parts.iter().all(|part| {
             if let crate::ast::FormatPart::Expr { expr, .. } = part
@@ -7143,6 +7910,10 @@ fn is_simple(expr: &Expr) -> bool
             is_simple(function) && args.iter().all(is_simple)
         }
         ExprKind::Array(elements) => elements.iter().all(is_simple),
+        ExprKind::StructLiteral { fields, .. } =>
+        {
+            fields.iter().all(|(_, v)| is_simple(v))
+        }
         ExprKind::ArrayGenerator { generator, size } => is_simple(generator) && is_simple(size),
         ExprKind::Map(entries) => entries.iter().all(|(k, v)| is_simple(k) && is_simple(v)),
         ExprKind::Index { target, index } => is_simple(target) && is_simple(index),
@@ -7269,6 +8040,13 @@ fn resolve(expr: &mut Expr, slot_map: &FxHashMap<SymbolId, usize>)
             for e in elements
             {
                 resolve(e, slot_map);
+            }
+        }
+        ExprKind::StructLiteral { fields, .. } =>
+        {
+            for (_, expr) in fields
+            {
+                resolve(expr, slot_map);
             }
         }
         ExprKind::ArrayGenerator { generator, size } =>
@@ -8257,6 +9035,13 @@ impl Interpreter
                 }
                 self.call_wasm_function(func, arg_vals, line)
             }
+            Value::BoundMethod(method) =>
+            {
+                let mut args = smallvec::SmallVec::<[Value; 8]>::new();
+                args.push(method.receiver.clone());
+                args.extend(arg_vals.into_iter());
+                self.call_value(method.func.clone(), args, line, block)
+            }
             _ => Err(RuntimeError {
                 message: format!("Tried to call a non-function value: {}", func_val),
                 line,
@@ -8274,27 +9059,27 @@ impl Interpreter
     {
         let new_env = self.get_env(Some(saved_env.clone()), false);
         let mut arg_iter = args.iter();
-        for (param_name, is_ref) in &closure.params
+        for param in &closure.params
         {
-            if *is_ref
+            if param.is_ref
             {
                 let ref_val =
                     saved_env
                         .borrow_mut()
-                        .promote(*param_name)
+                        .promote(param.name)
                         .ok_or_else(|| RuntimeError {
                             message: format!(
                                 "Undefined variable captured: {}",
-                                symbol_name(*param_name).as_str()
+                                symbol_name(param.name).as_str()
                             ),
                             line,
                         })?;
-                new_env.borrow_mut().define(*param_name, ref_val);
+                new_env.borrow_mut().define(param.name, ref_val);
             }
             else
             {
                 let val = arg_iter.next().cloned().unwrap_or(Value::Nil);
-                new_env.borrow_mut().define(*param_name, val);
+                new_env.borrow_mut().define(param.name, val);
             }
         }
 
@@ -9148,12 +9933,14 @@ impl Interpreter
         block: Option<Closure>,
     ) -> EvalResult
     {
-        if arg_vals.len() < data.params.len()
+        let arg_len = arg_vals.len();
+        if arg_len < data.params.len()
         {
             let new_env = self.get_env(Some(data.env.clone()), true);
-            for ((param, _), val) in data.params.iter().zip(arg_vals.iter())
+            for (param, val) in data.params.iter().zip(arg_vals.iter())
             {
-                new_env.borrow_mut().define(*param, val.clone());
+                let coerced = coerce_param_value(&data.env, param, val.clone(), line)?;
+                new_env.borrow_mut().define(param.name, coerced);
             }
             let num_bound = arg_vals.len();
             let remaining_params = data.params[num_bound..].to_vec();
@@ -9171,12 +9958,19 @@ impl Interpreter
                 env: new_env,
             })));
         }
-        else if arg_vals.len() > data.params.len()
+        else if arg_len > data.params.len()
         {
             return Err(RuntimeError {
                 message: "Too many arguments".to_string(),
                 line,
             });
+        }
+
+        let mut coerced_args: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
+        for (param, val) in data.params.iter().zip(arg_vals.into_iter())
+        {
+            let coerced = coerce_param_value(&data.env, param, val, line)?;
+            coerced_args.push(coerced);
         }
 
         // FULL CALL
@@ -9186,7 +9980,7 @@ impl Interpreter
                 Value::Uninitialized,
                 data.declarations.len(),
             );
-            for (i, val) in arg_vals.iter().cloned().enumerate()
+            for (i, val) in coerced_args.iter().cloned().enumerate()
             {
                 new_slots[i + data.param_offset] = val;
             }
@@ -9201,7 +9995,7 @@ impl Interpreter
                 Value::Uninitialized,
                 data.declarations.len(),
             );
-            for (i, val) in arg_vals.into_iter().enumerate()
+            for (i, val) in coerced_args.iter().cloned().enumerate()
             {
                 new_slots[i + data.param_offset] = val;
             }
@@ -9213,7 +10007,7 @@ impl Interpreter
                 Value::Uninitialized,
                 data.declarations.len(),
             );
-            for (i, val) in arg_vals.into_iter().enumerate()
+            for (i, val) in coerced_args.iter().cloned().enumerate()
             {
                 new_slots[i + data.param_offset] = val;
             }
@@ -9234,7 +10028,7 @@ impl Interpreter
                 Value::Uninitialized,
                 data.declarations.len(),
             );
-            for (i, val) in arg_vals.into_iter().enumerate()
+            for (i, val) in coerced_args.iter().cloned().enumerate()
             {
                 new_slots[i + data.param_offset] = val;
             }
@@ -9263,7 +10057,7 @@ impl Interpreter
             Value::Uninitialized,
             data.declarations.len(),
         );
-        for (i, val) in arg_vals.into_iter().enumerate()
+        for (i, val) in coerced_args.into_iter().enumerate()
         {
             new_slots[i + data.param_offset] = val;
         }
@@ -9538,6 +10332,31 @@ impl Interpreter
                         map_mut.data.insert(key, val.clone());
                         map_mut.version = map_mut.version.wrapping_add(1);
                     }
+                    Value::StructInstance(inst) =>
+                    {
+                        let key = match index_val
+                        {
+                            Value::String(s) => s,
+                            _ =>
+                            {
+                                return Err(RuntimeError {
+                                    message: err_index_unsupported().message,
+                                    line,
+                                });
+                            }
+                        };
+                        let idx = inst.ty.field_map.get(&key).ok_or_else(|| RuntimeError {
+                            message: format!("Unknown field '{}'", key.as_str()),
+                            line,
+                        })?;
+                        let field = inst.ty.fields.get(*idx).ok_or_else(|| RuntimeError {
+                            message: "Struct field out of bounds".to_string(),
+                            line,
+                        })?;
+                        let resolved = resolve_type_ref(&self.env, &field.type_ref, line)?;
+                        let coerced = coerce_value_to_type(val.clone(), &resolved, line, key.as_str())?;
+                        inst.fields.borrow_mut()[*idx] = coerced.clone();
+                    }
                     _ =>
                     {
                         return Err(RuntimeError {
@@ -9689,6 +10508,113 @@ impl Interpreter
                     env: func_env,
                 })))
             }
+            ExprKind::MethodDef {
+                type_name,
+                name,
+                params,
+                body,
+                slots,
+            } =>
+            {
+                if params.is_empty()
+                {
+                    return Err(RuntimeError {
+                        message: "Method must take self as first parameter".to_string(),
+                        line,
+                    });
+                }
+                let self_name = symbol_name(params[0].name);
+                if self_name.as_str() != "self"
+                {
+                    return Err(RuntimeError {
+                        message: "Method must take self as first parameter".to_string(),
+                        line,
+                    });
+                }
+                let type_val = self.env.borrow().get(*type_name).ok_or_else(|| RuntimeError {
+                    message: format!("Unknown struct '{}'", symbol_name(*type_name).as_str()),
+                    line,
+                })?;
+                let ty = match type_val
+                {
+                    Value::StructType(ty) => ty,
+                    _ =>
+                    {
+                        return Err(RuntimeError {
+                            message: format!(
+                                "'{}' is not a struct type",
+                                symbol_name(*type_name).as_str()
+                            ),
+                            line,
+                        });
+                    }
+                };
+                let func_env = self.env.clone();
+                let (resolved_body, slot_names) = if let Some(slot_names) = slots
+                {
+                    (body.clone(), slot_names.clone())
+                }
+                else
+                {
+                    let mut locals = HashSet::new();
+                    collect_declarations(body, &mut locals);
+                    let (slot_map, slot_names) = build_slot_map(params, locals);
+                    let mut resolved = body.clone();
+                    resolve(resolved.as_mut(), &slot_map);
+                    (resolved, Rc::new(slot_names))
+                };
+                let simple = is_simple(&resolved_body);
+                let uses_env = uses_environment(&resolved_body);
+                let reg_simple = is_reg_simple(&resolved_body);
+
+                let mut code = Vec::new();
+                let mut const_pool = Vec::new();
+                let compiled = if should_compile(simple, uses_env, self.bytecode_mode)
+                {
+                    let use_caches = self.bytecode_mode == BytecodeMode::Advanced;
+                    with_compile_use_caches(use_caches, || {
+                        compile_expr(&resolved_body, &mut code, &mut const_pool, true)
+                    })
+                }
+                else
+                {
+                    false
+                };
+
+                let reg_code = if reg_simple && !uses_env && self.bytecode_mode != BytecodeMode::Off
+                {
+                    compile_reg_function(&resolved_body).map(Rc::new)
+                }
+                else
+                {
+                    None
+                };
+                let fast_reg_code =
+                    if reg_simple && !uses_env && self.bytecode_mode != BytecodeMode::Off
+                    {
+                        compile_fast_float_function(&resolved_body).map(Rc::new)
+                    }
+                    else
+                    {
+                        None
+                    };
+                let func = Value::Function(Rc::new(crate::value::FunctionData {
+                    params: params.clone(),
+                    body: *resolved_body,
+                    declarations: slot_names,
+                    param_offset: 0,
+                    is_simple: simple,
+                    uses_env,
+                    code: if compiled { Some(Rc::new(code)) } else { None },
+                    reg_code,
+                    fast_reg_code,
+                    const_pool: Rc::new(const_pool),
+                    env: func_env,
+                }));
+                let method_key = symbol_name(*name);
+                ty.methods.borrow_mut().insert(method_key, func.clone());
+                Ok(func)
+            }
             ExprKind::Yield(args) =>
             {
                 let block_data = self.block_stack.last().cloned();
@@ -9755,6 +10681,96 @@ impl Interpreter
                 {
                     Ok(Value::Array(Rc::new(RefCell::new(vals))))
                 }
+            }
+            ExprKind::StructDef { name, fields } =>
+            {
+                let struct_name = symbol_name(*name);
+                let mut field_map = FxHashMap::default();
+                let mut field_defs = Vec::new();
+                for (idx, (field_name, type_ref)) in fields.iter().enumerate()
+                {
+                    let field_str = symbol_name(*field_name);
+                    if field_map.contains_key(&field_str)
+                    {
+                        return Err(RuntimeError {
+                            message: format!("Duplicate field '{}'", field_str.as_str()),
+                            line,
+                        });
+                    }
+                    field_map.insert(field_str.clone(), idx);
+                    field_defs.push(crate::value::StructField {
+                        name: field_str,
+                        type_ref: type_ref.clone(),
+                    });
+                }
+                let ty = StructType {
+                    name: struct_name.clone(),
+                    fields: field_defs,
+                    field_map,
+                    methods: RefCell::new(FxHashMap::default()),
+                };
+                let value = Value::StructType(Rc::new(ty));
+                self.env.borrow_mut().define(*name, value.clone());
+                Ok(value)
+            }
+            ExprKind::StructLiteral { name, fields } =>
+            {
+                let type_val = self.env.borrow().get(*name).ok_or_else(|| RuntimeError {
+                    message: format!("Unknown struct '{}'", symbol_name(*name).as_str()),
+                    line,
+                })?;
+                let ty = match type_val
+                {
+                    Value::StructType(ty) => ty,
+                    _ =>
+                    {
+                        return Err(RuntimeError {
+                            message: format!(
+                                "'{}' is not a struct type",
+                                symbol_name(*name).as_str()
+                            ),
+                            line,
+                        });
+                    }
+                };
+                let mut field_values = FxHashMap::default();
+                for (field_name, expr) in fields
+                {
+                    let val = self.eval(expr, slots)?;
+                    let field_str = symbol_name(*field_name);
+                    if !ty.field_map.contains_key(&field_str)
+                    {
+                        return Err(RuntimeError {
+                            message: format!(
+                                "Unknown field '{}' for {}",
+                                field_str.as_str(),
+                                ty.name
+                            ),
+                            line,
+                        });
+                    }
+                    field_values.insert(field_str, val);
+                }
+                let mut values = Vec::with_capacity(ty.fields.len());
+                for field in &ty.fields
+                {
+                    let val = field_values.remove(&field.name).ok_or_else(|| RuntimeError {
+                        message: format!(
+                            "Missing field '{}' for {}",
+                            field.name.as_str(),
+                            ty.name
+                        ),
+                        line,
+                    })?;
+                    let resolved = resolve_type_ref(&self.env, &field.type_ref, line)?;
+                    let coerced = coerce_value_to_type(val, &resolved, line, field.name.as_str())?;
+                    values.push(coerced);
+                }
+                let inst = crate::value::StructInstance {
+                    ty: ty.clone(),
+                    fields: RefCell::new(values),
+                };
+                Ok(Value::StructInstance(Rc::new(inst)))
             }
             ExprKind::ArrayGenerator { generator, size } =>
             {
@@ -9904,6 +10920,49 @@ impl Interpreter
                 let index_val = self.eval(index, slots)?;
                 match target_val
                 {
+                    Value::StructInstance(inst) =>
+                    {
+                        if let Value::String(s) = index_val
+                        {
+                            if let Some(idx) = inst.ty.field_map.get(&s)
+                            {
+                                let fields = inst.fields.borrow();
+                                Ok(fields.get(*idx).cloned().unwrap_or(Value::Nil))
+                            }
+                            else if let Some(method) = inst.ty.methods.borrow().get(&s).cloned()
+                            {
+                                Ok(Value::BoundMethod(Rc::new(BoundMethod {
+                                    receiver: Value::StructInstance(inst.clone()),
+                                    func: method,
+                                })))
+                            }
+                            else
+                            {
+                                Ok(Value::Nil)
+                            }
+                        }
+                        else
+                        {
+                            Err(RuntimeError {
+                                message: err_index_unsupported().message,
+                                line,
+                            })
+                        }
+                    }
+                    Value::StructType(ty) =>
+                    {
+                        if let Value::String(s) = index_val
+                        {
+                            Ok(ty.methods.borrow().get(&s).cloned().unwrap_or(Value::Nil))
+                        }
+                        else
+                        {
+                            Err(RuntimeError {
+                                message: err_index_unsupported().message,
+                                line,
+                            })
+                        }
+                    }
                     Value::Array(arr) =>
                     {
                         if let Some(i) = int_value_as_usize(&index_val)
@@ -10127,8 +11186,7 @@ impl Interpreter
                             let val = self.eval(arg_expr, slots)?;
                             if i < data.params.len()
                             {
-                                let (_, is_ref) = data.params[i];
-                                if is_ref
+                                if data.params[i].is_ref
                                 {
                                     if let Value::Reference(_) = val
                                     {
@@ -10191,6 +11249,17 @@ impl Interpreter
                             arg_vals.push(self.eval(arg_expr, slots)?);
                         }
                         self.call_wasm_function(func, arg_vals, line)
+                    }
+                    Value::BoundMethod(method) =>
+                    {
+                        let mut arg_vals: smallvec::SmallVec<[Value; 8]> =
+                            smallvec::SmallVec::new();
+                        arg_vals.push(method.receiver.clone());
+                        for arg_expr in args
+                        {
+                            arg_vals.push(self.eval(arg_expr, slots)?);
+                        }
+                        self.call_value(method.func.clone(), arg_vals, line, block.clone())
                     }
                     _ => Err(RuntimeError {
                         message: format!("Tried to call a non-function value: {}", func_val),

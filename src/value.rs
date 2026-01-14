@@ -1,4 +1,4 @@
-use crate::ast::{Closure, Expr, FloatKind, IntKind};
+use crate::ast::{Closure, Expr, FloatKind, IntKind, Param, ParamType, TypeRef};
 use crate::intern::SymbolId;
 use crate::wasm::WasmFunction;
 use memmap2::{Mmap, MmapMut};
@@ -11,6 +11,48 @@ use std::rc::Rc;
 use smallvec::SmallVec;
 
 pub type NativeFunction = fn(&[Value]) -> Result<Value, String>;
+
+fn type_ref_label(type_ref: &TypeRef) -> String
+{
+    let mut out = String::new();
+    for (idx, segment) in type_ref.path.iter().enumerate()
+    {
+        if idx > 0
+        {
+            out.push_str("::");
+        }
+        out.push_str(crate::intern::symbol_name(*segment).as_str());
+    }
+    out
+}
+
+fn param_label(param: &Param) -> String
+{
+    let mut out = String::new();
+    if param.is_ref
+    {
+        out.push('&');
+    }
+    out.push_str(crate::intern::symbol_name(param.name).as_str());
+    if let Some(ParamType::Struct(fields)) = &param.type_ann
+    {
+        out.push_str(" { ");
+        let mut first = true;
+        for (field_name, type_ref) in fields
+        {
+            if !first
+            {
+                out.push_str(", ");
+            }
+            first = false;
+            out.push_str(crate::intern::symbol_name(*field_name).as_str());
+            out.push_str(": ");
+            out.push_str(&type_ref_label(type_ref));
+        }
+        out.push_str(" }");
+    }
+    out
+}
 
 #[derive(Clone)]
 pub enum BytesViewSource
@@ -25,6 +67,36 @@ pub struct BytesView
     pub source: BytesViewSource,
     pub offset: usize,
     pub len: usize,
+}
+
+#[derive(Clone)]
+pub struct StructField
+{
+    pub name: Rc<String>,
+    pub type_ref: TypeRef,
+}
+
+#[derive(Clone)]
+pub struct StructType
+{
+    pub name: Rc<String>,
+    pub fields: Vec<StructField>,
+    pub field_map: FxHashMap<Rc<String>, usize>,
+    pub methods: RefCell<FxHashMap<Rc<String>, Value>>,
+}
+
+#[derive(Clone)]
+pub struct StructInstance
+{
+    pub ty: Rc<StructType>,
+    pub fields: RefCell<Vec<Value>>,
+}
+
+#[derive(Clone)]
+pub struct BoundMethod
+{
+    pub receiver: Value,
+    pub func: Value,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -650,7 +722,7 @@ pub enum Builtin
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionData
 {
-    pub params: Vec<(SymbolId, bool)>,
+    pub params: Vec<Param>,
     pub body: Expr,
     pub declarations: Rc<Vec<Rc<String>>>,
     pub param_offset: usize,
@@ -688,6 +760,9 @@ pub enum Value
     Bytes(Rc<Vec<u8>>),
     ByteBuf(Rc<RefCell<Vec<u8>>>),
     BytesView(Rc<BytesView>),
+    StructType(Rc<StructType>),
+    StructInstance(Rc<StructInstance>),
+    BoundMethod(Rc<BoundMethod>),
     Map(Rc<RefCell<MapValue>>),
     DataFrame(Rc<RefCell<polars::prelude::DataFrame>>),
     Sqlite(Rc<RefCell<Connection>>),
@@ -790,6 +865,15 @@ impl PartialEq for Value
             {
                 bytes_view_to_vec(a) == b.borrow().as_slice()
             }
+            (Value::StructType(a), Value::StructType(b)) => Rc::ptr_eq(a, b),
+            (Value::StructInstance(a), Value::StructInstance(b)) =>
+            {
+                Rc::ptr_eq(&a.ty, &b.ty) && a.fields.borrow().as_slice() == b.fields.borrow().as_slice()
+            }
+            (Value::BoundMethod(a), Value::BoundMethod(b)) =>
+            {
+                a.receiver == b.receiver && a.func == b.func
+            }
             (Value::Map(a), Value::Map(b)) =>
             {
                 let map_a = a.borrow();
@@ -844,6 +928,9 @@ impl fmt::Debug for Value
             Value::Bytes(b) => write!(f, "Bytes({} bytes)", b.len()),
             Value::ByteBuf(b) => write!(f, "ByteBuf({} bytes)", b.borrow().len()),
             Value::BytesView(b) => write!(f, "BytesView({} bytes)", b.len),
+            Value::StructType(ty) => write!(f, "StructType({})", ty.name),
+            Value::StructInstance(inst) => write!(f, "StructInstance({})", inst.ty.name),
+            Value::BoundMethod(_) => write!(f, "BoundMethod(...)"),
             Value::Map(m) => write!(f, "Map({:?})", m.borrow().data),
             Value::DataFrame(df) => write!(f, "DataFrame({}x{})", df.borrow().height(), df.borrow().width()),
             Value::Sqlite(_) => write!(f, "Sqlite(<connection>)"),
@@ -883,6 +970,9 @@ impl Value
             Value::Bytes(b) => format!("<Bytes {}>", b.len()),
             Value::ByteBuf(b) => format!("<ByteBuf {}>", b.borrow().len()),
             Value::BytesView(b) => format!("<BytesView {}>", b.len),
+            Value::StructType(ty) => format!("<Struct {}>", ty.name),
+            Value::StructInstance(inst) => format!("<{}>", inst.ty.name),
+            Value::BoundMethod(_) => "<bound method>".to_string(),
             Value::Map(map) =>
             {
                 let entries: Vec<String> = map
@@ -904,21 +994,7 @@ impl Value
             Value::Nil => "nil".to_string(),
             Value::Function(data) =>
             {
-                let p_str: Vec<String> = data
-                    .params
-                    .iter()
-                    .map(|(n, r)| {
-                        let name = crate::intern::symbol_name(*n);
-                        if *r
-                        {
-                            format!("&{}", name.as_str())
-                        }
-                        else
-                        {
-                            name.as_str().to_string()
-                        }
-                    })
-                    .collect();
+                let p_str: Vec<String> = data.params.iter().map(param_label).collect();
                 format!("<function({})>", p_str.join(", "))
             }
             Value::NativeFunction(_) => "<native function>".to_string(),
@@ -953,6 +1029,9 @@ impl fmt::Display for Value
             Value::Bytes(b) => write!(f, "<Bytes {}>", b.len()),
             Value::ByteBuf(b) => write!(f, "<ByteBuf {}>", b.borrow().len()),
             Value::BytesView(b) => write!(f, "<BytesView {}>", b.len),
+            Value::StructType(ty) => write!(f, "<Struct {}>", ty.name),
+            Value::StructInstance(inst) => write!(f, "<{}>", inst.ty.name),
+            Value::BoundMethod(_) => write!(f, "<bound method>"),
             Value::Map(map) =>
             {
                 let entries: Vec<String> = map
@@ -974,21 +1053,7 @@ impl fmt::Display for Value
             Value::Nil => write!(f, "nil"),
             Value::Function(data) =>
             {
-                let p_str: Vec<String> = data
-                    .params
-                    .iter()
-                    .map(|(n, r)| {
-                        let name = crate::intern::symbol_name(*n);
-                        if *r
-                        {
-                            format!("&{}", name.as_str())
-                        }
-                        else
-                        {
-                            name.as_str().to_string()
-                        }
-                    })
-                    .collect();
+                let p_str: Vec<String> = data.params.iter().map(param_label).collect();
                 write!(f, "<function({})>", p_str.join(", "))
             }
             Value::NativeFunction(_) => write!(f, "<native function>"),

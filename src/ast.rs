@@ -39,9 +39,23 @@ pub enum IntKind
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum ParamType
+{
+    Struct(Vec<(SymbolId, TypeRef)>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Param
+{
+    pub name: SymbolId,
+    pub is_ref: bool,
+    pub type_ann: Option<ParamType>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Closure
 {
-    pub params: Vec<(SymbolId, bool)>,
+    pub params: Vec<Param>,
     pub body: Box<Expr>,
 }
 
@@ -50,6 +64,12 @@ pub struct Expr
 {
     pub kind: ExprKind,
     pub line: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeRef
+{
+    pub path: Vec<SymbolId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -147,18 +167,36 @@ pub enum ExprKind
     FunctionDef
     {
         name: SymbolId,
-        params: Vec<(SymbolId, bool)>,
+        params: Vec<Param>,
+        body: Box<Expr>,
+        slots: Option<Rc<Vec<Rc<String>>>>,
+    },
+    MethodDef
+    {
+        type_name: SymbolId,
+        name: SymbolId,
+        params: Vec<Param>,
         body: Box<Expr>,
         slots: Option<Rc<Vec<Rc<String>>>>,
     },
     AnonymousFunction
     {
-        params: Vec<(SymbolId, bool)>,
+        params: Vec<Param>,
         body: Box<Expr>,
         slots: Option<Rc<Vec<Rc<String>>>>,
     },
 
     Array(Vec<Expr>),
+    StructDef
+    {
+        name: SymbolId,
+        fields: Vec<(SymbolId, TypeRef)>,
+    },
+    StructLiteral
+    {
+        name: SymbolId,
+        fields: Vec<(SymbolId, Expr)>,
+    },
     ArrayGenerator
     {
         generator: Box<Expr>,

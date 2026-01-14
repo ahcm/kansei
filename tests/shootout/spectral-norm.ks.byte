@@ -1,0 +1,1489 @@
+AST:
+Expr {
+    kind: Block(
+        [
+            Expr {
+                kind: FunctionDef {
+                    name: 1,
+                    params: [
+                        (
+                            2,
+                            false,
+                        ),
+                        (
+                            3,
+                            false,
+                        ),
+                    ],
+                    body: Expr {
+                        kind: BinaryOp {
+                            left: Expr {
+                                kind: Float {
+                                    value: 1.0,
+                                    kind: F64,
+                                },
+                                line: 2,
+                            },
+                            op: Divide,
+                            right: Expr {
+                                kind: BinaryOp {
+                                    left: Expr {
+                                        kind: BinaryOp {
+                                            left: Expr {
+                                                kind: BinaryOp {
+                                                    left: Expr {
+                                                        kind: BinaryOp {
+                                                            left: Expr {
+                                                                kind: BinaryOp {
+                                                                    left: Expr {
+                                                                        kind: Identifier {
+                                                                            name: 2,
+                                                                            slot: Some(
+                                                                                0,
+                                                                            ),
+                                                                        },
+                                                                        line: 2,
+                                                                    },
+                                                                    op: Add,
+                                                                    right: Expr {
+                                                                        kind: Identifier {
+                                                                            name: 3,
+                                                                            slot: Some(
+                                                                                1,
+                                                                            ),
+                                                                        },
+                                                                        line: 2,
+                                                                    },
+                                                                },
+                                                                line: 2,
+                                                            },
+                                                            op: Multiply,
+                                                            right: Expr {
+                                                                kind: BinaryOp {
+                                                                    left: Expr {
+                                                                        kind: BinaryOp {
+                                                                            left: Expr {
+                                                                                kind: Identifier {
+                                                                                    name: 2,
+                                                                                    slot: Some(
+                                                                                        0,
+                                                                                    ),
+                                                                                },
+                                                                                line: 2,
+                                                                            },
+                                                                            op: Add,
+                                                                            right: Expr {
+                                                                                kind: Identifier {
+                                                                                    name: 3,
+                                                                                    slot: Some(
+                                                                                        1,
+                                                                                    ),
+                                                                                },
+                                                                                line: 2,
+                                                                            },
+                                                                        },
+                                                                        line: 2,
+                                                                    },
+                                                                    op: Add,
+                                                                    right: Expr {
+                                                                        kind: Integer {
+                                                                            value: 1,
+                                                                            kind: I64,
+                                                                        },
+                                                                        line: 2,
+                                                                    },
+                                                                },
+                                                                line: 2,
+                                                            },
+                                                        },
+                                                        line: 2,
+                                                    },
+                                                    op: Divide,
+                                                    right: Expr {
+                                                        kind: Integer {
+                                                            value: 2,
+                                                            kind: I64,
+                                                        },
+                                                        line: 2,
+                                                    },
+                                                },
+                                                line: 2,
+                                            },
+                                            op: Add,
+                                            right: Expr {
+                                                kind: Identifier {
+                                                    name: 2,
+                                                    slot: Some(
+                                                        0,
+                                                    ),
+                                                },
+                                                line: 2,
+                                            },
+                                        },
+                                        line: 2,
+                                    },
+                                    op: Add,
+                                    right: Expr {
+                                        kind: Integer {
+                                            value: 1,
+                                            kind: I64,
+                                        },
+                                        line: 2,
+                                    },
+                                },
+                                line: 2,
+                            },
+                        },
+                        line: 2,
+                    },
+                    slots: Some(
+                        [
+                            "i",
+                            "j",
+                        ],
+                    ),
+                },
+                line: 1,
+            },
+            Expr {
+                kind: FunctionDef {
+                    name: 4,
+                    params: [
+                        (
+                            5,
+                            false,
+                        ),
+                        (
+                            6,
+                            false,
+                        ),
+                        (
+                            7,
+                            false,
+                        ),
+                    ],
+                    body: Expr {
+                        kind: Loop {
+                            count: Expr {
+                                kind: Identifier {
+                                    name: 5,
+                                    slot: Some(
+                                        0,
+                                    ),
+                                },
+                                line: 6,
+                            },
+                            var: Some(
+                                2,
+                            ),
+                            var_slot: Some(
+                                4,
+                            ),
+                            body: Expr {
+                                kind: Block(
+                                    [
+                                        Expr {
+                                            kind: IndexAssignment {
+                                                target: Expr {
+                                                    kind: Identifier {
+                                                        name: 7,
+                                                        slot: Some(
+                                                            2,
+                                                        ),
+                                                    },
+                                                    line: 7,
+                                                },
+                                                index: Expr {
+                                                    kind: Identifier {
+                                                        name: 2,
+                                                        slot: Some(
+                                                            4,
+                                                        ),
+                                                    },
+                                                    line: 7,
+                                                },
+                                                value: Expr {
+                                                    kind: Float {
+                                                        value: 0.0,
+                                                        kind: F64,
+                                                    },
+                                                    line: 7,
+                                                },
+                                            },
+                                            line: 7,
+                                        },
+                                        Expr {
+                                            kind: Loop {
+                                                count: Expr {
+                                                    kind: Identifier {
+                                                        name: 5,
+                                                        slot: Some(
+                                                            0,
+                                                        ),
+                                                    },
+                                                    line: 8,
+                                                },
+                                                var: Some(
+                                                    3,
+                                                ),
+                                                var_slot: Some(
+                                                    3,
+                                                ),
+                                                body: Expr {
+                                                    kind: IndexAssignment {
+                                                        target: Expr {
+                                                            kind: Identifier {
+                                                                name: 7,
+                                                                slot: Some(
+                                                                    2,
+                                                                ),
+                                                            },
+                                                            line: 9,
+                                                        },
+                                                        index: Expr {
+                                                            kind: Identifier {
+                                                                name: 2,
+                                                                slot: Some(
+                                                                    4,
+                                                                ),
+                                                            },
+                                                            line: 9,
+                                                        },
+                                                        value: Expr {
+                                                            kind: BinaryOp {
+                                                                left: Expr {
+                                                                    kind: Index {
+                                                                        target: Expr {
+                                                                            kind: Identifier {
+                                                                                name: 7,
+                                                                                slot: Some(
+                                                                                    2,
+                                                                                ),
+                                                                            },
+                                                                            line: 9,
+                                                                        },
+                                                                        index: Expr {
+                                                                            kind: Identifier {
+                                                                                name: 2,
+                                                                                slot: Some(
+                                                                                    4,
+                                                                                ),
+                                                                            },
+                                                                            line: 9,
+                                                                        },
+                                                                    },
+                                                                    line: 9,
+                                                                },
+                                                                op: Add,
+                                                                right: Expr {
+                                                                    kind: BinaryOp {
+                                                                        left: Expr {
+                                                                            kind: Call {
+                                                                                function: Expr {
+                                                                                    kind: Identifier {
+                                                                                        name: 1,
+                                                                                        slot: None,
+                                                                                    },
+                                                                                    line: 9,
+                                                                                },
+                                                                                args: [
+                                                                                    Expr {
+                                                                                        kind: Identifier {
+                                                                                            name: 2,
+                                                                                            slot: Some(
+                                                                                                4,
+                                                                                            ),
+                                                                                        },
+                                                                                        line: 9,
+                                                                                    },
+                                                                                    Expr {
+                                                                                        kind: Identifier {
+                                                                                            name: 3,
+                                                                                            slot: Some(
+                                                                                                3,
+                                                                                            ),
+                                                                                        },
+                                                                                        line: 9,
+                                                                                    },
+                                                                                ],
+                                                                                block: None,
+                                                                                inlined_body: RefCell {
+                                                                                    value: None,
+                                                                                },
+                                                                            },
+                                                                            line: 9,
+                                                                        },
+                                                                        op: Multiply,
+                                                                        right: Expr {
+                                                                            kind: Index {
+                                                                                target: Expr {
+                                                                                    kind: Identifier {
+                                                                                        name: 6,
+                                                                                        slot: Some(
+                                                                                            1,
+                                                                                        ),
+                                                                                    },
+                                                                                    line: 9,
+                                                                                },
+                                                                                index: Expr {
+                                                                                    kind: Identifier {
+                                                                                        name: 3,
+                                                                                        slot: Some(
+                                                                                            3,
+                                                                                        ),
+                                                                                    },
+                                                                                    line: 9,
+                                                                                },
+                                                                            },
+                                                                            line: 9,
+                                                                        },
+                                                                    },
+                                                                    line: 9,
+                                                                },
+                                                            },
+                                                            line: 9,
+                                                        },
+                                                    },
+                                                    line: 9,
+                                                },
+                                            },
+                                            line: 8,
+                                        },
+                                    ],
+                                ),
+                                line: 7,
+                            },
+                        },
+                        line: 6,
+                    },
+                    slots: Some(
+                        [
+                            "n",
+                            "u",
+                            "au",
+                            "j",
+                            "i",
+                        ],
+                    ),
+                },
+                line: 5,
+            },
+            Expr {
+                kind: FunctionDef {
+                    name: 8,
+                    params: [
+                        (
+                            5,
+                            false,
+                        ),
+                        (
+                            6,
+                            false,
+                        ),
+                        (
+                            7,
+                            false,
+                        ),
+                    ],
+                    body: Expr {
+                        kind: Loop {
+                            count: Expr {
+                                kind: Identifier {
+                                    name: 5,
+                                    slot: Some(
+                                        0,
+                                    ),
+                                },
+                                line: 15,
+                            },
+                            var: Some(
+                                2,
+                            ),
+                            var_slot: Some(
+                                3,
+                            ),
+                            body: Expr {
+                                kind: Block(
+                                    [
+                                        Expr {
+                                            kind: IndexAssignment {
+                                                target: Expr {
+                                                    kind: Identifier {
+                                                        name: 7,
+                                                        slot: Some(
+                                                            2,
+                                                        ),
+                                                    },
+                                                    line: 16,
+                                                },
+                                                index: Expr {
+                                                    kind: Identifier {
+                                                        name: 2,
+                                                        slot: Some(
+                                                            3,
+                                                        ),
+                                                    },
+                                                    line: 16,
+                                                },
+                                                value: Expr {
+                                                    kind: Float {
+                                                        value: 0.0,
+                                                        kind: F64,
+                                                    },
+                                                    line: 16,
+                                                },
+                                            },
+                                            line: 16,
+                                        },
+                                        Expr {
+                                            kind: Loop {
+                                                count: Expr {
+                                                    kind: Identifier {
+                                                        name: 5,
+                                                        slot: Some(
+                                                            0,
+                                                        ),
+                                                    },
+                                                    line: 17,
+                                                },
+                                                var: Some(
+                                                    3,
+                                                ),
+                                                var_slot: Some(
+                                                    4,
+                                                ),
+                                                body: Expr {
+                                                    kind: IndexAssignment {
+                                                        target: Expr {
+                                                            kind: Identifier {
+                                                                name: 7,
+                                                                slot: Some(
+                                                                    2,
+                                                                ),
+                                                            },
+                                                            line: 18,
+                                                        },
+                                                        index: Expr {
+                                                            kind: Identifier {
+                                                                name: 2,
+                                                                slot: Some(
+                                                                    3,
+                                                                ),
+                                                            },
+                                                            line: 18,
+                                                        },
+                                                        value: Expr {
+                                                            kind: BinaryOp {
+                                                                left: Expr {
+                                                                    kind: Index {
+                                                                        target: Expr {
+                                                                            kind: Identifier {
+                                                                                name: 7,
+                                                                                slot: Some(
+                                                                                    2,
+                                                                                ),
+                                                                            },
+                                                                            line: 18,
+                                                                        },
+                                                                        index: Expr {
+                                                                            kind: Identifier {
+                                                                                name: 2,
+                                                                                slot: Some(
+                                                                                    3,
+                                                                                ),
+                                                                            },
+                                                                            line: 18,
+                                                                        },
+                                                                    },
+                                                                    line: 18,
+                                                                },
+                                                                op: Add,
+                                                                right: Expr {
+                                                                    kind: BinaryOp {
+                                                                        left: Expr {
+                                                                            kind: Call {
+                                                                                function: Expr {
+                                                                                    kind: Identifier {
+                                                                                        name: 1,
+                                                                                        slot: None,
+                                                                                    },
+                                                                                    line: 18,
+                                                                                },
+                                                                                args: [
+                                                                                    Expr {
+                                                                                        kind: Identifier {
+                                                                                            name: 3,
+                                                                                            slot: Some(
+                                                                                                4,
+                                                                                            ),
+                                                                                        },
+                                                                                        line: 18,
+                                                                                    },
+                                                                                    Expr {
+                                                                                        kind: Identifier {
+                                                                                            name: 2,
+                                                                                            slot: Some(
+                                                                                                3,
+                                                                                            ),
+                                                                                        },
+                                                                                        line: 18,
+                                                                                    },
+                                                                                ],
+                                                                                block: None,
+                                                                                inlined_body: RefCell {
+                                                                                    value: None,
+                                                                                },
+                                                                            },
+                                                                            line: 18,
+                                                                        },
+                                                                        op: Multiply,
+                                                                        right: Expr {
+                                                                            kind: Index {
+                                                                                target: Expr {
+                                                                                    kind: Identifier {
+                                                                                        name: 6,
+                                                                                        slot: Some(
+                                                                                            1,
+                                                                                        ),
+                                                                                    },
+                                                                                    line: 18,
+                                                                                },
+                                                                                index: Expr {
+                                                                                    kind: Identifier {
+                                                                                        name: 3,
+                                                                                        slot: Some(
+                                                                                            4,
+                                                                                        ),
+                                                                                    },
+                                                                                    line: 18,
+                                                                                },
+                                                                            },
+                                                                            line: 18,
+                                                                        },
+                                                                    },
+                                                                    line: 18,
+                                                                },
+                                                            },
+                                                            line: 18,
+                                                        },
+                                                    },
+                                                    line: 18,
+                                                },
+                                            },
+                                            line: 17,
+                                        },
+                                    ],
+                                ),
+                                line: 16,
+                            },
+                        },
+                        line: 15,
+                    },
+                    slots: Some(
+                        [
+                            "n",
+                            "u",
+                            "au",
+                            "i",
+                            "j",
+                        ],
+                    ),
+                },
+                line: 14,
+            },
+            Expr {
+                kind: FunctionDef {
+                    name: 9,
+                    params: [
+                        (
+                            5,
+                            false,
+                        ),
+                        (
+                            6,
+                            false,
+                        ),
+                        (
+                            10,
+                            false,
+                        ),
+                    ],
+                    body: Expr {
+                        kind: Block(
+                            [
+                                Expr {
+                                    kind: Assignment {
+                                        name: 11,
+                                        value: Expr {
+                                            kind: ArrayGenerator {
+                                                generator: Expr {
+                                                    kind: Float {
+                                                        value: 0.0,
+                                                        kind: F64,
+                                                    },
+                                                    line: 24,
+                                                },
+                                                size: Expr {
+                                                    kind: Identifier {
+                                                        name: 5,
+                                                        slot: Some(
+                                                            0,
+                                                        ),
+                                                    },
+                                                    line: 24,
+                                                },
+                                            },
+                                            line: 24,
+                                        },
+                                        slot: Some(
+                                            3,
+                                        ),
+                                    },
+                                    line: 24,
+                                },
+                                Expr {
+                                    kind: Call {
+                                        function: Expr {
+                                            kind: Identifier {
+                                                name: 4,
+                                                slot: None,
+                                            },
+                                            line: 25,
+                                        },
+                                        args: [
+                                            Expr {
+                                                kind: Identifier {
+                                                    name: 5,
+                                                    slot: Some(
+                                                        0,
+                                                    ),
+                                                },
+                                                line: 25,
+                                            },
+                                            Expr {
+                                                kind: Identifier {
+                                                    name: 6,
+                                                    slot: Some(
+                                                        1,
+                                                    ),
+                                                },
+                                                line: 25,
+                                            },
+                                            Expr {
+                                                kind: Identifier {
+                                                    name: 11,
+                                                    slot: Some(
+                                                        3,
+                                                    ),
+                                                },
+                                                line: 25,
+                                            },
+                                        ],
+                                        block: None,
+                                        inlined_body: RefCell {
+                                            value: None,
+                                        },
+                                    },
+                                    line: 25,
+                                },
+                                Expr {
+                                    kind: Call {
+                                        function: Expr {
+                                            kind: Identifier {
+                                                name: 8,
+                                                slot: None,
+                                            },
+                                            line: 26,
+                                        },
+                                        args: [
+                                            Expr {
+                                                kind: Identifier {
+                                                    name: 5,
+                                                    slot: Some(
+                                                        0,
+                                                    ),
+                                                },
+                                                line: 26,
+                                            },
+                                            Expr {
+                                                kind: Identifier {
+                                                    name: 11,
+                                                    slot: Some(
+                                                        3,
+                                                    ),
+                                                },
+                                                line: 26,
+                                            },
+                                            Expr {
+                                                kind: Identifier {
+                                                    name: 10,
+                                                    slot: Some(
+                                                        2,
+                                                    ),
+                                                },
+                                                line: 26,
+                                            },
+                                        ],
+                                        block: None,
+                                        inlined_body: RefCell {
+                                            value: None,
+                                        },
+                                    },
+                                    line: 26,
+                                },
+                            ],
+                        ),
+                        line: 24,
+                    },
+                    slots: Some(
+                        [
+                            "n",
+                            "u",
+                            "atAu",
+                            "v",
+                        ],
+                    ),
+                },
+                line: 23,
+            },
+            Expr {
+                kind: FunctionDef {
+                    name: 12,
+                    params: [
+                        (
+                            5,
+                            false,
+                        ),
+                    ],
+                    body: Expr {
+                        kind: Block(
+                            [
+                                Expr {
+                                    kind: Assignment {
+                                        name: 6,
+                                        value: Expr {
+                                            kind: ArrayGenerator {
+                                                generator: Expr {
+                                                    kind: Float {
+                                                        value: 1.0,
+                                                        kind: F64,
+                                                    },
+                                                    line: 30,
+                                                },
+                                                size: Expr {
+                                                    kind: Identifier {
+                                                        name: 5,
+                                                        slot: Some(
+                                                            0,
+                                                        ),
+                                                    },
+                                                    line: 30,
+                                                },
+                                            },
+                                            line: 30,
+                                        },
+                                        slot: Some(
+                                            4,
+                                        ),
+                                    },
+                                    line: 30,
+                                },
+                                Expr {
+                                    kind: Assignment {
+                                        name: 11,
+                                        value: Expr {
+                                            kind: ArrayGenerator {
+                                                generator: Expr {
+                                                    kind: Float {
+                                                        value: 0.0,
+                                                        kind: F64,
+                                                    },
+                                                    line: 31,
+                                                },
+                                                size: Expr {
+                                                    kind: Identifier {
+                                                        name: 5,
+                                                        slot: Some(
+                                                            0,
+                                                        ),
+                                                    },
+                                                    line: 31,
+                                                },
+                                            },
+                                            line: 31,
+                                        },
+                                        slot: Some(
+                                            5,
+                                        ),
+                                    },
+                                    line: 31,
+                                },
+                                Expr {
+                                    kind: Loop {
+                                        count: Expr {
+                                            kind: Integer {
+                                                value: 10,
+                                                kind: I64,
+                                            },
+                                            line: 32,
+                                        },
+                                        var: Some(
+                                            2,
+                                        ),
+                                        var_slot: Some(
+                                            6,
+                                        ),
+                                        body: Expr {
+                                            kind: Block(
+                                                [
+                                                    Expr {
+                                                        kind: Call {
+                                                            function: Expr {
+                                                                kind: Identifier {
+                                                                    name: 9,
+                                                                    slot: None,
+                                                                },
+                                                                line: 33,
+                                                            },
+                                                            args: [
+                                                                Expr {
+                                                                    kind: Identifier {
+                                                                        name: 5,
+                                                                        slot: Some(
+                                                                            0,
+                                                                        ),
+                                                                    },
+                                                                    line: 33,
+                                                                },
+                                                                Expr {
+                                                                    kind: Identifier {
+                                                                        name: 6,
+                                                                        slot: Some(
+                                                                            4,
+                                                                        ),
+                                                                    },
+                                                                    line: 33,
+                                                                },
+                                                                Expr {
+                                                                    kind: Identifier {
+                                                                        name: 11,
+                                                                        slot: Some(
+                                                                            5,
+                                                                        ),
+                                                                    },
+                                                                    line: 33,
+                                                                },
+                                                            ],
+                                                            block: None,
+                                                            inlined_body: RefCell {
+                                                                value: None,
+                                                            },
+                                                        },
+                                                        line: 33,
+                                                    },
+                                                    Expr {
+                                                        kind: Call {
+                                                            function: Expr {
+                                                                kind: Identifier {
+                                                                    name: 9,
+                                                                    slot: None,
+                                                                },
+                                                                line: 34,
+                                                            },
+                                                            args: [
+                                                                Expr {
+                                                                    kind: Identifier {
+                                                                        name: 5,
+                                                                        slot: Some(
+                                                                            0,
+                                                                        ),
+                                                                    },
+                                                                    line: 34,
+                                                                },
+                                                                Expr {
+                                                                    kind: Identifier {
+                                                                        name: 11,
+                                                                        slot: Some(
+                                                                            5,
+                                                                        ),
+                                                                    },
+                                                                    line: 34,
+                                                                },
+                                                                Expr {
+                                                                    kind: Identifier {
+                                                                        name: 6,
+                                                                        slot: Some(
+                                                                            4,
+                                                                        ),
+                                                                    },
+                                                                    line: 34,
+                                                                },
+                                                            ],
+                                                            block: None,
+                                                            inlined_body: RefCell {
+                                                                value: None,
+                                                            },
+                                                        },
+                                                        line: 34,
+                                                    },
+                                                ],
+                                            ),
+                                            line: 33,
+                                        },
+                                    },
+                                    line: 32,
+                                },
+                                Expr {
+                                    kind: Assignment {
+                                        name: 13,
+                                        value: Expr {
+                                            kind: Float {
+                                                value: 0.0,
+                                                kind: F64,
+                                            },
+                                            line: 36,
+                                        },
+                                        slot: Some(
+                                            7,
+                                        ),
+                                    },
+                                    line: 36,
+                                },
+                                Expr {
+                                    kind: Assignment {
+                                        name: 14,
+                                        value: Expr {
+                                            kind: Float {
+                                                value: 0.0,
+                                                kind: F64,
+                                            },
+                                            line: 37,
+                                        },
+                                        slot: Some(
+                                            1,
+                                        ),
+                                    },
+                                    line: 37,
+                                },
+                                Expr {
+                                    kind: Loop {
+                                        count: Expr {
+                                            kind: Identifier {
+                                                name: 5,
+                                                slot: Some(
+                                                    0,
+                                                ),
+                                            },
+                                            line: 38,
+                                        },
+                                        var: Some(
+                                            2,
+                                        ),
+                                        var_slot: Some(
+                                            6,
+                                        ),
+                                        body: Expr {
+                                            kind: Block(
+                                                [
+                                                    Expr {
+                                                        kind: Assignment {
+                                                            name: 13,
+                                                            value: Expr {
+                                                                kind: BinaryOp {
+                                                                    left: Expr {
+                                                                        kind: BinaryOp {
+                                                                            left: Expr {
+                                                                                kind: Index {
+                                                                                    target: Expr {
+                                                                                        kind: Identifier {
+                                                                                            name: 6,
+                                                                                            slot: Some(
+                                                                                                4,
+                                                                                            ),
+                                                                                        },
+                                                                                        line: 39,
+                                                                                    },
+                                                                                    index: Expr {
+                                                                                        kind: Identifier {
+                                                                                            name: 2,
+                                                                                            slot: Some(
+                                                                                                6,
+                                                                                            ),
+                                                                                        },
+                                                                                        line: 39,
+                                                                                    },
+                                                                                },
+                                                                                line: 39,
+                                                                            },
+                                                                            op: Multiply,
+                                                                            right: Expr {
+                                                                                kind: Index {
+                                                                                    target: Expr {
+                                                                                        kind: Identifier {
+                                                                                            name: 11,
+                                                                                            slot: Some(
+                                                                                                5,
+                                                                                            ),
+                                                                                        },
+                                                                                        line: 39,
+                                                                                    },
+                                                                                    index: Expr {
+                                                                                        kind: Identifier {
+                                                                                            name: 2,
+                                                                                            slot: Some(
+                                                                                                6,
+                                                                                            ),
+                                                                                        },
+                                                                                        line: 39,
+                                                                                    },
+                                                                                },
+                                                                                line: 39,
+                                                                            },
+                                                                        },
+                                                                        line: 39,
+                                                                    },
+                                                                    op: Add,
+                                                                    right: Expr {
+                                                                        kind: Identifier {
+                                                                            name: 13,
+                                                                            slot: Some(
+                                                                                7,
+                                                                            ),
+                                                                        },
+                                                                        line: 39,
+                                                                    },
+                                                                },
+                                                                line: 39,
+                                                            },
+                                                            slot: Some(
+                                                                7,
+                                                            ),
+                                                        },
+                                                        line: 39,
+                                                    },
+                                                    Expr {
+                                                        kind: Assignment {
+                                                            name: 14,
+                                                            value: Expr {
+                                                                kind: BinaryOp {
+                                                                    left: Expr {
+                                                                        kind: BinaryOp {
+                                                                            left: Expr {
+                                                                                kind: Index {
+                                                                                    target: Expr {
+                                                                                        kind: Identifier {
+                                                                                            name: 11,
+                                                                                            slot: Some(
+                                                                                                5,
+                                                                                            ),
+                                                                                        },
+                                                                                        line: 40,
+                                                                                    },
+                                                                                    index: Expr {
+                                                                                        kind: Identifier {
+                                                                                            name: 2,
+                                                                                            slot: Some(
+                                                                                                6,
+                                                                                            ),
+                                                                                        },
+                                                                                        line: 40,
+                                                                                    },
+                                                                                },
+                                                                                line: 40,
+                                                                            },
+                                                                            op: Multiply,
+                                                                            right: Expr {
+                                                                                kind: Index {
+                                                                                    target: Expr {
+                                                                                        kind: Identifier {
+                                                                                            name: 11,
+                                                                                            slot: Some(
+                                                                                                5,
+                                                                                            ),
+                                                                                        },
+                                                                                        line: 40,
+                                                                                    },
+                                                                                    index: Expr {
+                                                                                        kind: Identifier {
+                                                                                            name: 2,
+                                                                                            slot: Some(
+                                                                                                6,
+                                                                                            ),
+                                                                                        },
+                                                                                        line: 40,
+                                                                                    },
+                                                                                },
+                                                                                line: 40,
+                                                                            },
+                                                                        },
+                                                                        line: 40,
+                                                                    },
+                                                                    op: Add,
+                                                                    right: Expr {
+                                                                        kind: Identifier {
+                                                                            name: 14,
+                                                                            slot: Some(
+                                                                                1,
+                                                                            ),
+                                                                        },
+                                                                        line: 40,
+                                                                    },
+                                                                },
+                                                                line: 40,
+                                                            },
+                                                            slot: Some(
+                                                                1,
+                                                            ),
+                                                        },
+                                                        line: 40,
+                                                    },
+                                                ],
+                                            ),
+                                            line: 39,
+                                        },
+                                    },
+                                    line: 38,
+                                },
+                                Expr {
+                                    kind: Use(
+                                        [
+                                            15,
+                                            16,
+                                        ],
+                                    ),
+                                    line: 43,
+                                },
+                                Expr {
+                                    kind: Assignment {
+                                        name: 16,
+                                        value: Expr {
+                                            kind: Index {
+                                                target: Expr {
+                                                    kind: Identifier {
+                                                        name: 15,
+                                                        slot: None,
+                                                    },
+                                                    line: 44,
+                                                },
+                                                index: Expr {
+                                                    kind: String(
+                                                        "Float64",
+                                                    ),
+                                                    line: 44,
+                                                },
+                                            },
+                                            line: 44,
+                                        },
+                                        slot: Some(
+                                            2,
+                                        ),
+                                    },
+                                    line: 44,
+                                },
+                                Expr {
+                                    kind: Assignment {
+                                        name: 17,
+                                        value: Expr {
+                                            kind: Call {
+                                                function: Expr {
+                                                    kind: Index {
+                                                        target: Expr {
+                                                            kind: Identifier {
+                                                                name: 16,
+                                                                slot: Some(
+                                                                    2,
+                                                                ),
+                                                            },
+                                                            line: 45,
+                                                        },
+                                                        index: Expr {
+                                                            kind: String(
+                                                                "sqrt",
+                                                            ),
+                                                            line: 45,
+                                                        },
+                                                    },
+                                                    line: 45,
+                                                },
+                                                args: [
+                                                    Expr {
+                                                        kind: BinaryOp {
+                                                            left: Expr {
+                                                                kind: Identifier {
+                                                                    name: 13,
+                                                                    slot: Some(
+                                                                        7,
+                                                                    ),
+                                                                },
+                                                                line: 45,
+                                                            },
+                                                            op: Divide,
+                                                            right: Expr {
+                                                                kind: Identifier {
+                                                                    name: 14,
+                                                                    slot: Some(
+                                                                        1,
+                                                                    ),
+                                                                },
+                                                                line: 45,
+                                                            },
+                                                        },
+                                                        line: 45,
+                                                    },
+                                                ],
+                                                block: None,
+                                                inlined_body: RefCell {
+                                                    value: None,
+                                                },
+                                            },
+                                            line: 45,
+                                        },
+                                        slot: Some(
+                                            3,
+                                        ),
+                                    },
+                                    line: 45,
+                                },
+                                Expr {
+                                    kind: Call {
+                                        function: Expr {
+                                            kind: Identifier {
+                                                name: 18,
+                                                slot: None,
+                                            },
+                                            line: 46,
+                                        },
+                                        args: [
+                                            Expr {
+                                                kind: FormatString(
+                                                    [
+                                                        Expr {
+                                                            expr: Expr {
+                                                                kind: Identifier {
+                                                                    name: 17,
+                                                                    slot: Some(
+                                                                        3,
+                                                                    ),
+                                                                },
+                                                                line: 1,
+                                                            },
+                                                            spec: Some(
+                                                                FormatSpec {
+                                                                    precision: Some(
+                                                                        9,
+                                                                    ),
+                                                                },
+                                                            ),
+                                                        },
+                                                    ],
+                                                ),
+                                                line: 46,
+                                            },
+                                        ],
+                                        block: None,
+                                        inlined_body: RefCell {
+                                            value: None,
+                                        },
+                                    },
+                                    line: 46,
+                                },
+                            ],
+                        ),
+                        line: 30,
+                    },
+                    slots: Some(
+                        [
+                            "n",
+                            "vv",
+                            "Float64",
+                            "res",
+                            "u",
+                            "v",
+                            "i",
+                            "vBv",
+                        ],
+                    ),
+                },
+                line: 29,
+            },
+            Expr {
+                kind: Assignment {
+                    name: 5,
+                    value: Expr {
+                        kind: Index {
+                            target: Expr {
+                                kind: Index {
+                                    target: Expr {
+                                        kind: Identifier {
+                                            name: 0,
+                                            slot: None,
+                                        },
+                                        line: 49,
+                                    },
+                                    index: Expr {
+                                        kind: String(
+                                            "args",
+                                        ),
+                                        line: 49,
+                                    },
+                                },
+                                line: 49,
+                            },
+                            index: Expr {
+                                kind: Integer {
+                                    value: 0,
+                                    kind: I64,
+                                },
+                                line: 49,
+                            },
+                        },
+                        line: 49,
+                    },
+                    slot: None,
+                },
+                line: 49,
+            },
+            Expr {
+                kind: Use(
+                    [
+                        15,
+                        19,
+                    ],
+                ),
+                line: 50,
+            },
+            Expr {
+                kind: Assignment {
+                    name: 19,
+                    value: Expr {
+                        kind: Index {
+                            target: Expr {
+                                kind: Identifier {
+                                    name: 15,
+                                    slot: None,
+                                },
+                                line: 51,
+                            },
+                            index: Expr {
+                                kind: String(
+                                    "Int64",
+                                ),
+                                line: 51,
+                            },
+                        },
+                        line: 51,
+                    },
+                    slot: None,
+                },
+                line: 51,
+            },
+            Expr {
+                kind: Assignment {
+                    name: 5,
+                    value: Expr {
+                        kind: Call {
+                            function: Expr {
+                                kind: Index {
+                                    target: Expr {
+                                        kind: Identifier {
+                                            name: 19,
+                                            slot: None,
+                                        },
+                                        line: 52,
+                                    },
+                                    index: Expr {
+                                        kind: String(
+                                            "parse",
+                                        ),
+                                        line: 52,
+                                    },
+                                },
+                                line: 52,
+                            },
+                            args: [
+                                Expr {
+                                    kind: Identifier {
+                                        name: 5,
+                                        slot: None,
+                                    },
+                                    line: 52,
+                                },
+                            ],
+                            block: None,
+                            inlined_body: RefCell {
+                                value: None,
+                            },
+                        },
+                        line: 52,
+                    },
+                    slot: None,
+                },
+                line: 52,
+            },
+            Expr {
+                kind: Call {
+                    function: Expr {
+                        kind: Identifier {
+                            name: 12,
+                            slot: None,
+                        },
+                        line: 53,
+                    },
+                    args: [
+                        Expr {
+                            kind: Identifier {
+                                name: 5,
+                                slot: None,
+                            },
+                            line: 53,
+                        },
+                    ],
+                    block: None,
+                    inlined_body: RefCell {
+                        value: None,
+                    },
+                },
+                line: 53,
+            },
+        ],
+    ),
+    line: 1,
+}
+Top-level bytecode:
+  <compile failed: function definition not supported in bytecode dump; functions are dumped separately>
+Functions:
+- eval_A (line 1)
+  simple: true, uses_env: false
+  Constants:
+  [0] 1
+  [1] 1
+  [2] 2
+  Bytecode:
+  0000 LoadConstIdx(0)
+  0001 LoadSlot(0)
+  0002 LoadSlot(1)
+  0003 Add
+  0004 Dup
+  0005 LoadConstIdx(1)
+  0006 Add
+  0007 Mul
+  0008 LoadConstIdx(2)
+  0009 Div
+  0010 LoadSlot(0)
+  0011 Add
+  0012 LoadConstIdx(1)
+  0013 Add
+  0014 Div
+- eval_A_times_u (line 5)
+  simple: true, uses_env: true
+  <compile failed: identifier without slot (global lookup) not supported in bytecode>
+- eval_At_times_u (line 14)
+  simple: true, uses_env: true
+  <compile failed: identifier without slot (global lookup) not supported in bytecode>
+- eval_AtA_times_u (line 23)
+  simple: true, uses_env: true
+  <compile failed: identifier without slot (global lookup) not supported in bytecode>
+- main (line 29)
+  simple: false, uses_env: true
+  <not compiled>
+

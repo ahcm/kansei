@@ -27,6 +27,7 @@ serde_yaml = "0.9.34"
 flate2 = { version = "1.0.30", default-features = false, features = ["rust_backend"] }
 image = { version = "0.25.2", default-features = false, features = ["png"] }
 rusqlite = { version = "0.31.0", features = ["bundled"] }
+memmap2 = "0.9.4"
 
 [features]
 default = []

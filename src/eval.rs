@@ -414,6 +414,12 @@ fn clone_value(value: &Value) -> Value
             let vals = arr.borrow().clone();
             Value::F64Array(Rc::new(RefCell::new(vals)))
         }
+        Value::Bytes(bytes) => Value::Bytes(bytes.clone()),
+        Value::ByteBuf(buf) =>
+        {
+            let vals = buf.borrow().clone();
+            Value::ByteBuf(Rc::new(RefCell::new(vals)))
+        }
         Value::Map(map) =>
         {
             let map_ref = map.borrow();
@@ -421,6 +427,8 @@ fn clone_value(value: &Value) -> Value
         }
         Value::DataFrame(df) => Value::DataFrame(df.clone()),
         Value::Sqlite(conn) => Value::Sqlite(conn.clone()),
+        Value::Mmap(mmap) => Value::Mmap(mmap.clone()),
+        Value::MmapMut(mmap) => Value::MmapMut(mmap.clone()),
         Value::String(s) => Value::String(s.clone()),
         Value::Reference(r) => clone_value(&r.borrow()),
         v => v.clone(),
@@ -4124,6 +4132,128 @@ fn eval_index_cached_value(
                 return Err(err_index_requires_int());
             }
         }
+        Value::Bytes(bytes) =>
+        {
+            if let Some(i) = int_value_as_usize(&index_val)
+            {
+                let arr_ptr = Rc::as_ptr(&bytes) as usize;
+                let mut cache_mut = cache.borrow_mut();
+                if cache_mut.array_ptr == Some(arr_ptr) && cache_mut.index_usize == Some(i)
+                {
+                    cache_mut.hits += 1;
+                }
+                else
+                {
+                    cache_mut.array_ptr = Some(arr_ptr);
+                    cache_mut.index_usize = Some(i);
+                    cache_mut.misses += 1;
+                }
+                if i < bytes.len()
+                {
+                    default_int(bytes[i] as i128)
+                }
+                else
+                {
+                    Value::Nil
+                }
+            }
+            else
+            {
+                return Err(err_index_requires_int());
+            }
+        }
+        Value::ByteBuf(buf) =>
+        {
+            if let Some(i) = int_value_as_usize(&index_val)
+            {
+                let buf_ptr = Rc::as_ptr(&buf) as usize;
+                let mut cache_mut = cache.borrow_mut();
+                if cache_mut.array_ptr == Some(buf_ptr) && cache_mut.index_usize == Some(i)
+                {
+                    cache_mut.hits += 1;
+                }
+                else
+                {
+                    cache_mut.array_ptr = Some(buf_ptr);
+                    cache_mut.index_usize = Some(i);
+                    cache_mut.misses += 1;
+                }
+                let bytes = buf.borrow();
+                if i < bytes.len()
+                {
+                    default_int(bytes[i] as i128)
+                }
+                else
+                {
+                    Value::Nil
+                }
+            }
+            else
+            {
+                return Err(err_index_requires_int());
+            }
+        }
+        Value::Mmap(mmap) =>
+        {
+            if let Some(i) = int_value_as_usize(&index_val)
+            {
+                let map_ptr = Rc::as_ptr(&mmap) as usize;
+                let mut cache_mut = cache.borrow_mut();
+                if cache_mut.array_ptr == Some(map_ptr) && cache_mut.index_usize == Some(i)
+                {
+                    cache_mut.hits += 1;
+                }
+                else
+                {
+                    cache_mut.array_ptr = Some(map_ptr);
+                    cache_mut.index_usize = Some(i);
+                    cache_mut.misses += 1;
+                }
+                if i < mmap.len()
+                {
+                    default_int(mmap[i] as i128)
+                }
+                else
+                {
+                    Value::Nil
+                }
+            }
+            else
+            {
+                return Err(err_index_requires_int());
+            }
+        }
+        Value::MmapMut(mmap) =>
+        {
+            if let Some(i) = int_value_as_usize(&index_val)
+            {
+                let map_ptr = Rc::as_ptr(&mmap) as usize;
+                let mut cache_mut = cache.borrow_mut();
+                if cache_mut.array_ptr == Some(map_ptr) && cache_mut.index_usize == Some(i)
+                {
+                    cache_mut.hits += 1;
+                }
+                else
+                {
+                    cache_mut.array_ptr = Some(map_ptr);
+                    cache_mut.index_usize = Some(i);
+                    cache_mut.misses += 1;
+                }
+                let bytes = mmap.borrow();
+                if i < bytes.len()
+                {
+                    default_int(bytes[i] as i128)
+                }
+                else
+                {
+                    Value::Nil
+                }
+            }
+            else
+            {
+                return Err(err_index_requires_int());
+            }
+        }
         Value::Map(map) =>
         {
             if let Value::String(s) = index_val
@@ -4231,6 +4361,88 @@ fn eval_index_assign_value(
                 {
                     return Err(RuntimeError {
                         message: "Array index out of bounds".to_string(),
+                        line: 0,
+                    });
+                }
+            }
+            else
+            {
+                return Err(err_index_requires_int());
+            }
+        }
+        Value::ByteBuf(buf) =>
+        {
+            if let Some(i) = int_value_as_usize(&index_val)
+            {
+                let byte = match &value
+                {
+                    Value::Integer { value, .. } => *value,
+                    Value::Unsigned { value, .. } => *value as i128,
+                    _ =>
+                    {
+                        return Err(RuntimeError {
+                            message: "ByteBuf assignment requires an integer".to_string(),
+                            line: 0,
+                        });
+                    }
+                };
+                if byte < 0 || byte > 255
+                {
+                    return Err(RuntimeError {
+                        message: "ByteBuf assignment requires byte (0-255)".to_string(),
+                        line: 0,
+                    });
+                }
+                let mut vec = buf.borrow_mut();
+                if i < vec.len()
+                {
+                    vec[i] = byte as u8;
+                }
+                else
+                {
+                    return Err(RuntimeError {
+                        message: "ByteBuf index out of bounds".to_string(),
+                        line: 0,
+                    });
+                }
+            }
+            else
+            {
+                return Err(err_index_requires_int());
+            }
+        }
+        Value::MmapMut(mmap) =>
+        {
+            if let Some(i) = int_value_as_usize(&index_val)
+            {
+                let byte = match &value
+                {
+                    Value::Integer { value, .. } => *value,
+                    Value::Unsigned { value, .. } => *value as i128,
+                    _ =>
+                    {
+                        return Err(RuntimeError {
+                            message: "MmapMut assignment requires an integer".to_string(),
+                            line: 0,
+                        });
+                    }
+                };
+                if byte < 0 || byte > 255
+                {
+                    return Err(RuntimeError {
+                        message: "MmapMut assignment requires byte (0-255)".to_string(),
+                        line: 0,
+                    });
+                }
+                let mut vec = mmap.borrow_mut();
+                if i < vec.len()
+                {
+                    vec[i] = byte as u8;
+                }
+                else
+                {
+                    return Err(RuntimeError {
+                        message: "MmapMut index out of bounds".to_string(),
                         line: 0,
                     });
                 }
@@ -4836,7 +5048,11 @@ fn execute_reg_instructions(
                         Value::String(s) => default_int(s.len() as i128),
                         Value::Array(arr) => default_int(arr.borrow().len() as i128),
                         Value::F64Array(arr) => default_int(arr.borrow().len() as i128),
+                        Value::Bytes(bytes) => default_int(bytes.len() as i128),
+                        Value::ByteBuf(buf) => default_int(buf.borrow().len() as i128),
                         Value::Map(map) => default_int(map.borrow().data.len() as i128),
+                        Value::Mmap(mmap) => default_int(mmap.len() as i128),
+                        Value::MmapMut(mmap) => default_int(mmap.borrow().len() as i128),
                         _ => default_int(0),
                     };
                 }
@@ -5153,7 +5369,11 @@ fn execute_instructions(
                     Value::String(s) => default_int(s.len() as i128),
                     Value::Array(arr) => default_int(arr.borrow().len() as i128),
                     Value::F64Array(arr) => default_int(arr.borrow().len() as i128),
+                    Value::Bytes(bytes) => default_int(bytes.len() as i128),
+                    Value::ByteBuf(buf) => default_int(buf.borrow().len() as i128),
                     Value::Map(map) => default_int(map.borrow().data.len() as i128),
+                    Value::Mmap(mmap) => default_int(mmap.len() as i128),
+                    Value::MmapMut(mmap) => default_int(mmap.borrow().len() as i128),
                     _ => default_int(0),
                 };
                 stack.push(result);
@@ -5889,6 +6109,80 @@ fn execute_instructions(
                             if i < vec.len()
                             {
                                 make_float(vec[i], FloatKind::F64)
+                            }
+                            else
+                            {
+                                Value::Nil
+                            }
+                        }
+                        else
+                        {
+                            return Err(err_index_requires_int());
+                        }
+                    }
+                    Value::Bytes(bytes) =>
+                    {
+                        if let Some(i) = int_value_as_usize(&index_val)
+                        {
+                            if i < bytes.len()
+                            {
+                                default_int(bytes[i] as i128)
+                            }
+                            else
+                            {
+                                Value::Nil
+                            }
+                        }
+                        else
+                        {
+                            return Err(err_index_requires_int());
+                        }
+                    }
+                    Value::ByteBuf(buf) =>
+                    {
+                        if let Some(i) = int_value_as_usize(&index_val)
+                        {
+                            let bytes = buf.borrow();
+                            if i < bytes.len()
+                            {
+                                default_int(bytes[i] as i128)
+                            }
+                            else
+                            {
+                                Value::Nil
+                            }
+                        }
+                        else
+                        {
+                            return Err(err_index_requires_int());
+                        }
+                    }
+                    Value::Mmap(mmap) =>
+                    {
+                        if let Some(i) = int_value_as_usize(&index_val)
+                        {
+                            if i < mmap.len()
+                            {
+                                default_int(mmap[i] as i128)
+                            }
+                            else
+                            {
+                                Value::Nil
+                            }
+                        }
+                        else
+                        {
+                            return Err(err_index_requires_int());
+                        }
+                    }
+                    Value::MmapMut(mmap) =>
+                    {
+                        if let Some(i) = int_value_as_usize(&index_val)
+                        {
+                            let bytes = mmap.borrow();
+                            if i < bytes.len()
+                            {
+                                default_int(bytes[i] as i128)
                             }
                             else
                             {
@@ -7742,7 +8036,11 @@ impl Interpreter
                     Value::String(s) => Ok(default_int(s.len() as i128)),
                     Value::Array(arr) => Ok(default_int(arr.borrow().len() as i128)),
                     Value::F64Array(arr) => Ok(default_int(arr.borrow().len() as i128)),
+                    Value::Bytes(bytes) => Ok(default_int(bytes.len() as i128)),
+                    Value::ByteBuf(buf) => Ok(default_int(buf.borrow().len() as i128)),
                     Value::Map(map) => Ok(default_int(map.borrow().data.len() as i128)),
+                    Value::Mmap(mmap) => Ok(default_int(mmap.len() as i128)),
+                    Value::MmapMut(mmap) => Ok(default_int(mmap.borrow().len() as i128)),
                     _ => Ok(default_int(0)),
                 }
             }
@@ -9608,7 +9906,11 @@ impl Interpreter
                                 Value::String(s) => Ok(default_int(s.len() as i128)),
                                 Value::Array(arr) => Ok(default_int(arr.borrow().len() as i128)),
                                 Value::F64Array(arr) => Ok(default_int(arr.borrow().len() as i128)),
+                                Value::Bytes(bytes) => Ok(default_int(bytes.len() as i128)),
+                                Value::ByteBuf(buf) => Ok(default_int(buf.borrow().len() as i128)),
                                 Value::Map(map) => Ok(default_int(map.borrow().data.len() as i128)),
+                                Value::Mmap(mmap) => Ok(default_int(mmap.len() as i128)),
+                                Value::MmapMut(mmap) => Ok(default_int(mmap.borrow().len() as i128)),
                                 _ => Ok(default_int(0)),
                             };
                         }

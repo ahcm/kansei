@@ -224,6 +224,31 @@ puts Math.sin(1.0)
 puts Math.pow(2, 8)
 ```
 
+### std::lib::Bytes
+```ruby
+use std::lib::Bytes
+Bytes = std::lib::Bytes
+
+buf = Bytes.buf(4, 0)
+Bytes.set(buf, 0, 255)
+Bytes.push(buf, 1)
+bytes = Bytes.freeze(buf)
+puts Bytes.len(bytes)
+puts Bytes.to_string(Bytes.from_string("hello"))
+```
+
+### std::lib::Mmap
+```ruby
+use std::lib::Mmap
+use std::lib::Bytes
+Mmap = std::lib::Mmap
+Bytes = std::lib::Bytes
+
+map = Mmap.open("data.bin", "r")
+chunk = Mmap.read(map, 0, 16)
+puts Bytes.len(chunk)
+```
+
 ### std::lib::Polars
 ```ruby
 use std::lib::Polars

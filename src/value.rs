@@ -1,6 +1,7 @@
 use crate::ast::{Closure, Expr, FloatKind, IntKind};
 use crate::intern::SymbolId;
 use crate::wasm::WasmFunction;
+use memmap2::{Mmap, MmapMut};
 use rusqlite::Connection;
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
@@ -669,9 +670,13 @@ pub enum Value
     Boolean(bool),
     Array(Rc<RefCell<Vec<Value>>>),
     F64Array(Rc<RefCell<Vec<f64>>>),
+    Bytes(Rc<Vec<u8>>),
+    ByteBuf(Rc<RefCell<Vec<u8>>>),
     Map(Rc<RefCell<MapValue>>),
     DataFrame(Rc<RefCell<polars::prelude::DataFrame>>),
     Sqlite(Rc<RefCell<Connection>>),
+    Mmap(Rc<Mmap>),
+    MmapMut(Rc<RefCell<MmapMut>>),
     Nil,
     Function(Rc<FunctionData>),
     NativeFunction(NativeFunction),
@@ -728,6 +733,13 @@ impl PartialEq for Value
             (Value::Boolean(a), Value::Boolean(b)) => a == b,
             (Value::Array(a), Value::Array(b)) => a == b, // RefCell PartialEq compares inner values
             (Value::F64Array(a), Value::F64Array(b)) => a == b,
+            (Value::Bytes(a), Value::Bytes(b)) => a == b,
+            (Value::ByteBuf(a), Value::ByteBuf(b)) => a.borrow().as_slice() == b.borrow().as_slice(),
+            (Value::Bytes(a), Value::ByteBuf(b))
+            | (Value::ByteBuf(b), Value::Bytes(a)) =>
+            {
+                a.as_slice() == b.borrow().as_slice()
+            }
             (Value::Map(a), Value::Map(b)) =>
             {
                 let map_a = a.borrow();
@@ -754,6 +766,8 @@ impl PartialEq for Value
             }
             (Value::DataFrame(a), Value::DataFrame(b)) => Rc::ptr_eq(a, b),
             (Value::Sqlite(a), Value::Sqlite(b)) => Rc::ptr_eq(a, b),
+            (Value::Mmap(a), Value::Mmap(b)) => Rc::ptr_eq(a, b),
+            (Value::MmapMut(a), Value::MmapMut(b)) => Rc::ptr_eq(a, b),
             (Value::Nil, Value::Nil) => true,
             (Value::Function(a), Value::Function(b)) => Rc::ptr_eq(a, b),
             (Value::NativeFunction(a), Value::NativeFunction(b)) => std::ptr::fn_addr_eq(*a, *b),
@@ -777,9 +791,13 @@ impl fmt::Debug for Value
             Value::Boolean(b) => write!(f, "Boolean({})", b),
             Value::Array(a) => write!(f, "Array({:?})", a.borrow()),
             Value::F64Array(a) => write!(f, "F64Array({:?})", a.borrow()),
+            Value::Bytes(b) => write!(f, "Bytes({} bytes)", b.len()),
+            Value::ByteBuf(b) => write!(f, "ByteBuf({} bytes)", b.borrow().len()),
             Value::Map(m) => write!(f, "Map({:?})", m.borrow().data),
             Value::DataFrame(df) => write!(f, "DataFrame({}x{})", df.borrow().height(), df.borrow().width()),
             Value::Sqlite(_) => write!(f, "Sqlite(<connection>)"),
+            Value::Mmap(m) => write!(f, "Mmap({} bytes)", m.len()),
+            Value::MmapMut(m) => write!(f, "MmapMut({} bytes)", m.borrow().len()),
             Value::Nil => write!(f, "Nil"),
             Value::Function(_) => write!(f, "Function(...)"),
             Value::NativeFunction(_) => write!(f, "NativeFunction(...)"),
@@ -811,6 +829,8 @@ impl Value
                 let elems: Vec<String> = arr.borrow().iter().map(|v| v.to_string()).collect();
                 format!("[{}]", elems.join(", "))
             }
+            Value::Bytes(b) => format!("<Bytes {}>", b.len()),
+            Value::ByteBuf(b) => format!("<ByteBuf {}>", b.borrow().len()),
             Value::Map(map) =>
             {
                 let entries: Vec<String> = map
@@ -827,6 +847,8 @@ impl Value
                 format!("<DataFrame {}x{}>", df_ref.height(), df_ref.width())
             }
             Value::Sqlite(_) => "<Sqlite>".to_string(),
+            Value::Mmap(m) => format!("<Mmap {}>", m.len()),
+            Value::MmapMut(m) => format!("<MmapMut {}>", m.borrow().len()),
             Value::Nil => "nil".to_string(),
             Value::Function(data) =>
             {
@@ -876,6 +898,8 @@ impl fmt::Display for Value
                 let elems: Vec<String> = arr.borrow().iter().map(|v| v.to_string()).collect();
                 write!(f, "[{}]", elems.join(", "))
             }
+            Value::Bytes(b) => write!(f, "<Bytes {}>", b.len()),
+            Value::ByteBuf(b) => write!(f, "<ByteBuf {}>", b.borrow().len()),
             Value::Map(map) =>
             {
                 let entries: Vec<String> = map
@@ -892,6 +916,8 @@ impl fmt::Display for Value
                 write!(f, "<DataFrame {}x{}>", df_ref.height(), df_ref.width())
             }
             Value::Sqlite(_) => write!(f, "<Sqlite>"),
+            Value::Mmap(m) => write!(f, "<Mmap {}>", m.len()),
+            Value::MmapMut(m) => write!(f, "<MmapMut {}>", m.borrow().len()),
             Value::Nil => write!(f, "nil"),
             Value::Function(data) =>
             {

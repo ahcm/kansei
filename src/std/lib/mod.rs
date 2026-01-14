@@ -15,6 +15,8 @@ pub mod yaml;
 pub mod flate2;
 pub mod image;
 pub mod sqlite;
+pub mod bytes;
+pub mod mmap;
 
 use crate::intern;
 use crate::value::{MapValue, Value};
@@ -39,6 +41,8 @@ pub use yaml::build_yaml_module;
 pub use flate2::build_flate2_module;
 pub use image::build_image_module;
 pub use sqlite::build_sqlite_module;
+pub use bytes::build_bytes_module;
+pub use mmap::build_mmap_module;
 
 pub fn build_lib_module() -> Value
 {
@@ -60,5 +64,7 @@ pub fn build_lib_module() -> Value
     lib_map.insert(intern::intern("Flate2"), build_flate2_module());
     lib_map.insert(intern::intern("Image"), build_image_module());
     lib_map.insert(intern::intern("Sqlite"), build_sqlite_module());
+    lib_map.insert(intern::intern("Bytes"), build_bytes_module());
+    lib_map.insert(intern::intern("Mmap"), build_mmap_module());
     Value::Map(Rc::new(RefCell::new(MapValue::new(lib_map))))
 }

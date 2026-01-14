@@ -669,6 +669,7 @@ pub enum Value
     Array(Rc<RefCell<Vec<Value>>>),
     F64Array(Rc<RefCell<Vec<f64>>>),
     Map(Rc<RefCell<MapValue>>),
+    DataFrame(Rc<RefCell<polars::prelude::DataFrame>>),
     Nil,
     Function(Rc<FunctionData>),
     NativeFunction(NativeFunction),
@@ -749,6 +750,7 @@ impl PartialEq for Value
                 }
                 true
             }
+            (Value::DataFrame(a), Value::DataFrame(b)) => Rc::ptr_eq(a, b),
             (Value::Nil, Value::Nil) => true,
             (Value::Function(a), Value::Function(b)) => Rc::ptr_eq(a, b),
             (Value::NativeFunction(a), Value::NativeFunction(b)) => std::ptr::fn_addr_eq(*a, *b),
@@ -773,6 +775,7 @@ impl fmt::Debug for Value
             Value::Array(a) => write!(f, "Array({:?})", a.borrow()),
             Value::F64Array(a) => write!(f, "F64Array({:?})", a.borrow()),
             Value::Map(m) => write!(f, "Map({:?})", m.borrow().data),
+            Value::DataFrame(df) => write!(f, "DataFrame({}x{})", df.borrow().height(), df.borrow().width()),
             Value::Nil => write!(f, "Nil"),
             Value::Function(_) => write!(f, "Function(...)"),
             Value::NativeFunction(_) => write!(f, "NativeFunction(...)"),
@@ -813,6 +816,11 @@ impl Value
                     .map(|(k, v)| format!("\"{}\": {}\"", k, v.inspect()))
                     .collect();
                 format!("{{{}}}", entries.join(", "))
+            }
+            Value::DataFrame(df) =>
+            {
+                let df_ref = df.borrow();
+                format!("<DataFrame {}x{}>", df_ref.height(), df_ref.width())
             }
             Value::Nil => "nil".to_string(),
             Value::Function(data) =>
@@ -872,6 +880,11 @@ impl fmt::Display for Value
                     .map(|(k, v)| format!("\"{}\": {}\"", k, v.inspect()))
                     .collect();
                 write!(f, "{{{}}}", entries.join(", "))
+            }
+            Value::DataFrame(df) =>
+            {
+                let df_ref = df.borrow();
+                write!(f, "<DataFrame {}x{}>", df_ref.height(), df_ref.width())
             }
             Value::Nil => write!(f, "nil"),
             Value::Function(data) =>

@@ -19,7 +19,7 @@ use std::rc::Rc;
 use std::simd::Simd;
 use std::simd::num::SimdFloat;
 use std::time::SystemTime;
-use crate::kansei_std::build_io_module;
+use crate::kansei_std::{build_io_module, build_lib_module};
 use wasmi::Value as WasmValue;
 use wasmi::core::ValueType;
 
@@ -387,6 +387,7 @@ fn build_std_module() -> Value
     std_map.insert(intern::intern("Float64"), build_float64_module());
     std_map.insert(intern::intern("Float128"), build_float128_module());
     std_map.insert(intern::intern("IO"), build_io_module());
+    std_map.insert(intern::intern("lib"), build_lib_module());
     Value::Map(Rc::new(RefCell::new(MapValue::new(std_map))))
 }
 
@@ -418,6 +419,7 @@ fn clone_value(value: &Value) -> Value
             let map_ref = map.borrow();
             Value::Map(Rc::new(RefCell::new(MapValue::new(map_ref.data.clone()))))
         }
+        Value::DataFrame(df) => Value::DataFrame(df.clone()),
         Value::String(s) => Value::String(s.clone()),
         Value::Reference(r) => clone_value(&r.borrow()),
         v => v.clone(),
@@ -7204,6 +7206,11 @@ impl Interpreter
                 if !map_mut.data.contains_key(&intern::intern("IO"))
                 {
                     map_mut.data.insert(intern::intern("IO"), build_io_module());
+                    changed = true;
+                }
+                if !map_mut.data.contains_key(&intern::intern("lib"))
+                {
+                    map_mut.data.insert(intern::intern("lib"), build_lib_module());
                     changed = true;
                 }
                 if changed

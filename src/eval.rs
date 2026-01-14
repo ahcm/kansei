@@ -19,6 +19,7 @@ use std::rc::Rc;
 use std::simd::Simd;
 use std::simd::num::SimdFloat;
 use std::time::SystemTime;
+use crate::kansei_std::build_io_module;
 use wasmi::Value as WasmValue;
 use wasmi::core::ValueType;
 
@@ -385,6 +386,7 @@ fn build_std_module() -> Value
     std_map.insert(intern::intern("Float32"), build_float32_module());
     std_map.insert(intern::intern("Float64"), build_float64_module());
     std_map.insert(intern::intern("Float128"), build_float128_module());
+    std_map.insert(intern::intern("IO"), build_io_module());
     Value::Map(Rc::new(RefCell::new(MapValue::new(std_map))))
 }
 
@@ -7161,6 +7163,11 @@ impl Interpreter
                     map_mut
                         .data
                         .insert(intern::intern("Float128"), build_float128_module());
+                    changed = true;
+                }
+                if !map_mut.data.contains_key(&intern::intern("IO"))
+                {
+                    map_mut.data.insert(intern::intern("IO"), build_io_module());
                     changed = true;
                 }
                 if changed

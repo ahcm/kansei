@@ -120,6 +120,22 @@ root128 = Float128.sqrt(9)
 
 The `::` operator accesses module members, similar to map dot access.
 
+### std::IO
+The `std::IO` module provides basic file and path utilities:
+```ruby
+use std::IO
+IO = std::IO
+
+IO.write("out.txt", "hello")
+IO.append("out.txt", "\nworld")
+puts IO.read("out.txt")
+
+puts IO.exists("out.txt")
+puts IO.cwd()
+IO.mkdirs("tmp/nested")
+IO.remove("out.txt")
+```
+
 ### File modules with `import`
 Modules are file-based and loaded with `import` using a `.ks` path string:
 ```ruby

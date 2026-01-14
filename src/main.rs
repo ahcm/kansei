@@ -5,6 +5,8 @@ mod eval;
 mod intern;
 mod lexer;
 mod parser;
+#[path = "std/mod.rs"]
+mod kansei_std;
 mod value;
 mod wasm;
 

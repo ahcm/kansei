@@ -144,6 +144,47 @@ fn compute_range(series: &[Vec<(f64, f64)>]) -> Option<(f64, f64, f64, f64)>
     }
 }
 
+fn parse_tsv_points(tsv: &str, x_col: usize, y_col: usize) -> Vec<(f64, f64)>
+{
+    let mut points = Vec::new();
+    for line in tsv.lines()
+    {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#')
+        {
+            continue;
+        }
+        let mut x_val = None;
+        let mut y_val = None;
+        for (idx, part) in trimmed.split('\t').enumerate()
+        {
+            if idx == x_col
+            {
+                if let Ok(v) = part.trim().parse::<f64>()
+                {
+                    x_val = Some(v);
+                }
+            }
+            if idx == y_col
+            {
+                if let Ok(v) = part.trim().parse::<f64>()
+                {
+                    y_val = Some(v);
+                }
+            }
+            if x_val.is_some() && y_val.is_some()
+            {
+                break;
+            }
+        }
+        if let (Some(x), Some(y)) = (x_val, y_val)
+        {
+            points.push((x, y));
+        }
+    }
+    points
+}
+
 fn normalize_range(min_x: f64, max_x: f64, min_y: f64, max_y: f64) -> (f64, f64, f64, f64)
 {
     let mut min_x = min_x;
@@ -683,6 +724,99 @@ pub extern "C" fn scatter_chart_png_str_multi(
     )
 }
 
+#[no_mangle]
+pub extern "C" fn scatter_tsv_svg_str(
+    tsv_ptr: *const u8,
+    tsv_len: usize,
+    x_col: i32,
+    y_col: i32,
+    width: u32,
+    height: u32,
+) -> i64
+{
+    if x_col < 0 || y_col < 0
+    {
+        return 0;
+    }
+    let tsv = match str_from_ptr(tsv_ptr, tsv_len)
+    {
+        Some(v) => v,
+        None => return 0,
+    };
+    let points = parse_tsv_points(&tsv, x_col as usize, y_col as usize);
+    if points.is_empty()
+    {
+        return 0;
+    }
+    let series = vec![points];
+    let (min_x, max_x, min_y, max_y) = match compute_range(&series)
+    {
+        Some(range) => range,
+        None => return 0,
+    };
+    let (min_x, max_x, min_y, max_y) = normalize_range(min_x, max_x, min_y, max_y);
+    build_chart_svg(
+        series,
+        colors_from_ptr(std::ptr::null(), 0),
+        width,
+        height,
+        min_x,
+        max_x,
+        min_y,
+        max_y,
+        None,
+        None,
+        None,
+        draw_scatter_chart,
+    )
+}
+
+#[no_mangle]
+pub extern "C" fn scatter_tsv_png_str(
+    tsv_ptr: *const u8,
+    tsv_len: usize,
+    x_col: i32,
+    y_col: i32,
+    width: u32,
+    height: u32,
+) -> i64
+{
+    if x_col < 0 || y_col < 0
+    {
+        return 0;
+    }
+    let tsv = match str_from_ptr(tsv_ptr, tsv_len)
+    {
+        Some(v) => v,
+        None => return 0,
+    };
+    let points = parse_tsv_points(&tsv, x_col as usize, y_col as usize);
+    if points.is_empty()
+    {
+        return 0;
+    }
+    let series = vec![points];
+    let (min_x, max_x, min_y, max_y) = match compute_range(&series)
+    {
+        Some(range) => range,
+        None => return 0,
+    };
+    let (min_x, max_x, min_y, max_y) = normalize_range(min_x, max_x, min_y, max_y);
+    build_chart_png(
+        series,
+        colors_from_ptr(std::ptr::null(), 0),
+        width,
+        height,
+        min_x,
+        max_x,
+        min_y,
+        max_y,
+        None,
+        None,
+        None,
+        draw_scatter_chart,
+    )
+}
 #[no_mangle]
 pub extern "C" fn bar_chart_svg_str_multi(
     data_ptr: *const f64,

@@ -12,6 +12,8 @@ WASM wrapper for Plotters that renders line charts to SVG.
 - `scatter_chart_png_str_multi(...) -> i64` (base64 PNG)
 - `bar_chart_svg_str_multi(...) -> i64`
 - `bar_chart_png_str_multi(...) -> i64` (base64 PNG)
+- `scatter_tsv_svg_str(tsv_ptr, tsv_len, x_col, y_col, width, height) -> i64`
+- `scatter_tsv_png_str(tsv_ptr, tsv_len, x_col, y_col, width, height) -> i64` (base64 PNG)
 
 The simple `line_chart_svg_str` expects `data_len` to be an even count of `f64` values representing `(x, y)` pairs.
 All `*_str` functions return an `i64` where the low 32 bits are the pointer and the high 32 bits are the length.
@@ -23,6 +25,9 @@ PNG variants return a base64-encoded PNG string.
 `colors_ptr` points to `u32` colors in `0xRRGGBB` format. If `colors_len` is 0, defaults are used.
 Axis range is auto when `min_x >= max_x` or `min_y >= max_y`.
 Labels are UTF-8 strings passed as `(ptr, len)` pairs; use `len = 0` for none.
+
+### TSV helpers
+`scatter_tsv_*` parses a TSV string, ignores empty lines and lines starting with `#`, and uses `x_col`/`y_col` (0-based).
 
 ## Build
 ```

@@ -136,6 +136,22 @@ IO.mkdirs("tmp/nested")
 IO.remove("out.txt")
 ```
 
+### std::lib::clap
+`std::lib::clap` provides a small CLI parsing helper:
+```ruby
+use std::lib::clap
+clap = std::lib::clap
+
+args = ["--verbose", "--count", "3", "file.txt"]
+flags = ["--verbose"]
+options = ["--count"]
+
+parsed = clap.parse(args, flags, options)
+puts parsed.verbose
+puts parsed.count
+puts parsed.args # remaining positional args
+```
+
 ### File modules with `import`
 Modules are file-based and loaded with `import` using a `.ks` path string:
 ```ruby

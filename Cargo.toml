@@ -10,3 +10,4 @@ rustyline = "17.0.2"
 smallvec = "1.15.1"
 wasmi = "0.31.2"
 polars = { version = "0.39.2", default-features = false, features = ["csv"] }
+clap = { version = "4.5.4", default-features = false, features = ["std"] }

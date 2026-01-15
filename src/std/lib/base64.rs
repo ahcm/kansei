@@ -1,7 +1,7 @@
 use crate::intern;
 use crate::value::{MapValue, Value};
-use base64::engine::general_purpose::STANDARD as BASE64_STD;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STD;
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -45,10 +45,7 @@ fn bytes_from_array(value: &Value, name: &str) -> Result<Vec<u8>, String>
             let end = view.offset.saturating_add(view.len);
             match &view.source
             {
-                crate::value::BytesViewSource::Mmap(mmap) =>
-                {
-                    Ok(mmap[view.offset..end].to_vec())
-                }
+                crate::value::BytesViewSource::Mmap(mmap) => Ok(mmap[view.offset..end].to_vec()),
                 crate::value::BytesViewSource::MmapMut(mmap) =>
                 {
                     let data = mmap.borrow();
@@ -79,7 +76,11 @@ fn native_base64_encode(args: &[Value]) -> Result<Value, String>
 
 fn native_base64_encode_bytes(args: &[Value]) -> Result<Value, String>
 {
-    let bytes = bytes_from_array(args.get(0).ok_or_else(|| "Base64.encode_bytes expects bytes".to_string())?, "Base64.encode_bytes")?;
+    let bytes = bytes_from_array(
+        args.get(0)
+            .ok_or_else(|| "Base64.encode_bytes expects bytes".to_string())?,
+        "Base64.encode_bytes",
+    )?;
     Ok(Value::String(intern::intern_owned(BASE64_STD.encode(bytes))))
 }
 
@@ -113,7 +114,10 @@ fn native_base64_decode_array(args: &[Value]) -> Result<Value, String>
         .map_err(|e| format!("Base64.decode_array failed: {e}"))?;
     let vals = bytes
         .into_iter()
-        .map(|b| Value::Integer { value: b as i128, kind: crate::ast::IntKind::I64 })
+        .map(|b| Value::Integer {
+            value: b as i128,
+            kind: crate::ast::IntKind::I64,
+        })
         .collect::<Vec<_>>();
     Ok(Value::Array(Rc::new(RefCell::new(vals))))
 }

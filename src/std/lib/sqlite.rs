@@ -1,9 +1,9 @@
 use crate::intern;
 use crate::value::{MapValue, Value};
-use base64::engine::general_purpose::STANDARD as BASE64_STD;
 use base64::Engine;
-use rusqlite::types::ValueRef;
+use base64::engine::general_purpose::STANDARD as BASE64_STD;
 use rusqlite::Connection;
+use rusqlite::types::ValueRef;
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -38,14 +38,14 @@ fn row_to_value(row: &rusqlite::Row<'_>, blob_as_bytes: bool) -> rusqlite::Resul
         let value = match cell
         {
             ValueRef::Null => Value::Nil,
-            ValueRef::Integer(v) =>
-            {
-                Value::Integer { value: v as i128, kind: crate::ast::IntKind::I64 }
-            }
-            ValueRef::Real(v) =>
-            {
-                Value::Float { value: v, kind: crate::ast::FloatKind::F64 }
-            }
+            ValueRef::Integer(v) => Value::Integer {
+                value: v as i128,
+                kind: crate::ast::IntKind::I64,
+            },
+            ValueRef::Real(v) => Value::Float {
+                value: v,
+                kind: crate::ast::FloatKind::F64,
+            },
             ValueRef::Text(v) =>
             {
                 Value::String(intern::intern_owned(String::from_utf8_lossy(v).to_string()))

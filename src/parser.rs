@@ -1179,7 +1179,10 @@ impl Parser
             {
                 if seen_export || !statements.is_empty()
                 {
-                    panic!("export must appear at the top of the file at line {}", self.current_token.line);
+                    panic!(
+                        "export must appear at the top of the file at line {}",
+                        self.current_token.line
+                    );
                 }
                 seen_export = true;
                 statements.push(self.parse_export());

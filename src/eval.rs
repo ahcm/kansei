@@ -1,6 +1,7 @@
 use crate::ast::{Closure, Expr, ExprKind, FloatKind, IntKind, Op, Param, ParamType, TypeRef};
 use crate::intern;
 use crate::intern::{SymbolId, symbol_name};
+use crate::kansei_std::{build_io_module, build_lib_module};
 use crate::value::{
     BinaryOpCache, BinaryOpCacheKind, BoundMethod, Builtin, CallSiteCache, Environment,
     FastRegFunction, FastRegInstruction, GlobalCache, IndexCache, Instruction, MapAccessCache,
@@ -20,7 +21,6 @@ use std::rc::Rc;
 use std::simd::Simd;
 use std::simd::num::SimdFloat;
 use std::time::SystemTime;
-use crate::kansei_std::{build_io_module, build_lib_module};
 use wasmi::Value as WasmValue;
 use wasmi::core::ValueType;
 
@@ -292,10 +292,7 @@ fn resolve_type_ref(
         }
     }
     Err(RuntimeError {
-        message: format!(
-            "Unknown type '{}'",
-            symbol_name(*type_ref.path.last().unwrap()).as_str()
-        ),
+        message: format!("Unknown type '{}'", symbol_name(*type_ref.path.last().unwrap()).as_str()),
         line,
     })
 }
@@ -357,10 +354,7 @@ fn value_to_bytes(value: &Value, line: usize, label: &str) -> Result<Vec<u8>, Ru
             let end = view.offset.saturating_add(view.len);
             match &view.source
             {
-                crate::value::BytesViewSource::Mmap(mmap) =>
-                {
-                    Ok(mmap[view.offset..end].to_vec())
-                }
+                crate::value::BytesViewSource::Mmap(mmap) => Ok(mmap[view.offset..end].to_vec()),
                 crate::value::BytesViewSource::MmapMut(mmap) =>
                 {
                     let data = mmap.borrow();
@@ -2355,7 +2349,9 @@ fn compile_expr(
             {
                 if let ExprKind::String(name) = &index.kind
                 {
-                    if let ExprKind::Identifier { name: target_name, .. } = &target.kind
+                    if let ExprKind::Identifier {
+                        name: target_name, ..
+                    } = &target.kind
                     {
                         if symbol_name(*target_name).as_str() == "Bytes"
                         {
@@ -2391,7 +2387,8 @@ fn compile_expr(
                                     }
                                     return true;
                                 }
-                                _ => {}
+                                _ =>
+                                {}
                             }
                         }
                     }
@@ -3386,13 +3383,7 @@ fn find_compile_failure(expr: &Expr) -> Option<String>
 
 fn collect_function_exprs(
     expr: &Expr,
-    out: &mut Vec<(
-        Option<SymbolId>,
-        Vec<Param>,
-        Expr,
-        Option<Rc<Vec<Rc<String>>>>,
-        usize,
-    )>,
+    out: &mut Vec<(Option<SymbolId>, Vec<Param>, Expr, Option<Rc<Vec<Rc<String>>>>, usize)>,
 )
 {
     match &expr.kind
@@ -3687,7 +3678,10 @@ fn format_bytecode_instruction(inst: &Instruction) -> String
         }
         Instruction::CallMethodWithBlockCached(name, _, _, _, argc) =>
         {
-            format!("CallMethodWithBlockCached({:?}, <map_cache>, <call_cache>, <block>, {argc})", name)
+            format!(
+                "CallMethodWithBlockCached({:?}, <map_cache>, <call_cache>, <block>, {argc})",
+                name
+            )
         }
         _ => format!("{:?}", inst),
     }
@@ -4370,7 +4364,9 @@ fn compile_reg_expr(
             {
                 if let ExprKind::String(name) = &index.kind
                 {
-                    if let ExprKind::Identifier { name: target_name, .. } = &target.kind
+                    if let ExprKind::Identifier {
+                        name: target_name, ..
+                    } = &target.kind
                     {
                         if symbol_name(*target_name).as_str() == "Bytes"
                         {
@@ -4385,8 +4381,10 @@ fn compile_reg_expr(
                                 }
                                 "get" if args.len() == 2 =>
                                 {
-                                    let target_reg = compile_reg_expr(&args[0], code, consts, alloc)?;
-                                    let index_reg = compile_reg_expr(&args[1], code, consts, alloc)?;
+                                    let target_reg =
+                                        compile_reg_expr(&args[0], code, consts, alloc)?;
+                                    let index_reg =
+                                        compile_reg_expr(&args[1], code, consts, alloc)?;
                                     let dst = alloc.alloc();
                                     code.push(RegInstruction::F64IndexCached {
                                         dst,
@@ -4396,7 +4394,8 @@ fn compile_reg_expr(
                                     });
                                     return Some(dst);
                                 }
-                                _ => {}
+                                _ =>
+                                {}
                             }
                         }
                     }
@@ -4678,10 +4677,7 @@ fn resolve_method_value(
                 return Err(err_index_unsupported());
             }
         }
-        Value::StructType(ty) =>
-        {
-            ty.methods.borrow().get(name).cloned().unwrap_or(Value::Nil)
-        }
+        Value::StructType(ty) => ty.methods.borrow().get(name).cloned().unwrap_or(Value::Nil),
         Value::Map(map) =>
         {
             if name.as_str() == "keys"
@@ -5584,7 +5580,8 @@ fn execute_reg_instructions(
                                     let fields = inst.fields.borrow();
                                     fields.get(*idx).cloned().unwrap_or(Value::Nil)
                                 }
-                                else if let Some(method) = inst.ty.methods.borrow().get(&s).cloned()
+                                else if let Some(method) =
+                                    inst.ty.methods.borrow().get(&s).cloned()
                                 {
                                     Value::BoundMethod(Rc::new(BoundMethod {
                                         receiver: Value::StructInstance(inst.clone()),
@@ -5767,12 +5764,7 @@ fn execute_reg_instructions(
                                 });
                             }
                         }
-                        other => eval_index_assign_value(
-                            interpreter,
-                            other,
-                            index_val,
-                            value_val,
-                        )?,
+                        other => eval_index_assign_value(interpreter, other, index_val, value_val)?,
                     };
                     regs[*dst] = result;
                 }
@@ -6032,389 +6024,701 @@ fn range_end_num(
 
 fn execute_instructions(
     interpreter: &mut Interpreter,
-    code: &[Instruction],
+    code: &Rc<Vec<Instruction>>,
     const_pool: &[Value],
     slots: &mut [Value],
 ) -> EvalResult
 {
-    const HOT_LOOP_THRESHOLD: usize = 16;
-    let mut stack = Vec::with_capacity(8);
-    let mut ip = 0;
-    while ip < code.len()
+    #[derive(Clone)]
+    enum ForEachIter
     {
-        match &code[ip]
+        Array
         {
-            Instruction::LoadConstIdx(idx) =>
+            arr: Rc<RefCell<Vec<Value>>>,
+            idx: usize,
+            len: usize,
+        },
+        F64Array
+        {
+            arr: Rc<RefCell<Vec<f64>>>,
+            idx: usize,
+            len: usize,
+        },
+        Map
+        {
+            keys: Vec<Rc<String>>, idx: usize
+        },
+    }
+
+    struct ForEachState
+    {
+        var_slot: usize,
+        body: Rc<Vec<Instruction>>,
+        iter: ForEachIter,
+        last: Value,
+    }
+
+    struct ForRangeState
+    {
+        index_slot: usize,
+        end: RangeEnd,
+        body: Rc<Vec<Instruction>>,
+        current: i64,
+        last: Value,
+    }
+
+    struct ForRangeIntState
+    {
+        index_slot: usize,
+        end: RangeEnd,
+        step: i64,
+        body: Rc<Vec<Instruction>>,
+        current: i64,
+        last: Value,
+    }
+
+    struct ForRangeFloatState
+    {
+        index_slot: usize,
+        end: RangeEnd,
+        step: f64,
+        kind: FloatKind,
+        body: Rc<Vec<Instruction>>,
+        current: f64,
+        last: Value,
+    }
+
+    enum Pending
+    {
+        ForEach(ForEachState),
+        ForRange(ForRangeState),
+        ForRangeInt(ForRangeIntState),
+        ForRangeFloat(ForRangeFloatState),
+    }
+
+    struct Frame
+    {
+        code: Rc<Vec<Instruction>>,
+        ip: usize,
+        stack: Vec<Value>,
+        pending: Option<Pending>,
+    }
+
+    fn next_foreach_value(iter: &mut ForEachIter) -> Option<Value>
+    {
+        match iter
+        {
+            ForEachIter::Array { arr, idx, len } =>
             {
-                let val = const_pool.get(*idx).cloned().unwrap_or(Value::Nil);
-                stack.push(val);
-            }
-            Instruction::LoadSlot(s) => stack.push(slots[*s].clone()),
-            Instruction::StoreSlot(s) =>
-            {
-                let val = stack.pop().unwrap();
-                if let Some(slot) = slots.get_mut(*s)
+                if *idx >= *len
                 {
-                    *slot = val.clone();
+                    return None;
                 }
-                stack.push(val);
+                let val = arr.borrow().get(*idx).cloned();
+                *idx += 1;
+                val
             }
-            Instruction::LoadGlobalCached(name, cache) =>
+            ForEachIter::F64Array { arr, idx, len } =>
             {
-                let val = load_global_cached(interpreter, *name, cache)?;
-                stack.push(val);
-            }
-            Instruction::LoadGlobal(name) =>
-            {
-                let val = interpreter
-                    .env
+                if *idx >= *len
+                {
+                    return None;
+                }
+                let val = arr
                     .borrow()
-                    .get(*name)
-                    .ok_or_else(|| RuntimeError {
-                        message: format!("Undefined variable: {}", symbol_name(*name).as_str()),
+                    .get(*idx)
+                    .cloned()
+                    .map(|v| make_float(v, FloatKind::F64));
+                *idx += 1;
+                val
+            }
+            ForEachIter::Map { keys, idx } =>
+            {
+                if *idx >= keys.len()
+                {
+                    return None;
+                }
+                let val = keys.get(*idx).cloned().map(Value::String);
+                *idx += 1;
+                val
+            }
+        }
+    }
+
+    let mut frames = Vec::new();
+    frames.push(Frame {
+        code: code.clone(),
+        ip: 0,
+        stack: Vec::with_capacity(8),
+        pending: None,
+    });
+    let mut last_result = Value::Nil;
+
+    loop
+    {
+        if frames.is_empty()
+        {
+            return Ok(last_result);
+        }
+
+        let done = {
+            let frame = frames.last().unwrap();
+            frame.ip >= frame.code.len()
+        };
+        if done
+        {
+            let mut frame = frames.pop().unwrap();
+            let result = frame.stack.pop().unwrap_or(Value::Nil);
+            last_result = result.clone();
+            if frames.is_empty()
+            {
+                return Ok(result);
+            }
+
+            let mut pending_next: Option<Pending> = None;
+            let mut next_frame: Option<Frame> = None;
+            {
+                let parent = frames.last_mut().unwrap();
+                if let Some(pending) = parent.pending.take()
+                {
+                    match pending
+                    {
+                        Pending::ForEach(mut state) =>
+                        {
+                            state.last = result;
+                            if let Some(item) = next_foreach_value(&mut state.iter)
+                            {
+                                if let Some(slot) = slots.get_mut(state.var_slot)
+                                {
+                                    *slot = item;
+                                }
+                                let body = state.body.clone();
+                                pending_next = Some(Pending::ForEach(state));
+                                next_frame = Some(Frame {
+                                    code: body,
+                                    ip: 0,
+                                    stack: Vec::with_capacity(8),
+                                    pending: None,
+                                });
+                            }
+                            else
+                            {
+                                parent.stack.push(state.last.clone());
+                            }
+                        }
+                        Pending::ForRange(mut state) =>
+                        {
+                            state.last = result;
+                            state.current += 1;
+                            let end_f = range_end_f64(&state.end, slots, const_pool)?;
+                            if (state.current as f64) >= end_f
+                            {
+                                if let Some(slot) = slots.get_mut(state.index_slot)
+                                {
+                                    *slot = default_int(state.current as i128);
+                                }
+                                parent.stack.push(state.last.clone());
+                            }
+                            else
+                            {
+                                if let Some(slot) = slots.get_mut(state.index_slot)
+                                {
+                                    *slot = default_int(state.current as i128);
+                                }
+                                let body = state.body.clone();
+                                pending_next = Some(Pending::ForRange(state));
+                                next_frame = Some(Frame {
+                                    code: body,
+                                    ip: 0,
+                                    stack: Vec::with_capacity(8),
+                                    pending: None,
+                                });
+                            }
+                        }
+                        Pending::ForRangeInt(mut state) =>
+                        {
+                            state.last = result;
+                            state.current = state.current + state.step;
+                            let should_stop = match range_end_num(&state.end, slots, const_pool)?
+                            {
+                                RangeEndNum::Float(end_f) => (state.current as f64) >= end_f,
+                                RangeEndNum::Int(end_i) => state.current >= end_i,
+                            };
+                            if should_stop
+                            {
+                                if let Some(slot) = slots.get_mut(state.index_slot)
+                                {
+                                    *slot = default_int(state.current as i128);
+                                }
+                                parent.stack.push(state.last.clone());
+                            }
+                            else
+                            {
+                                if let Some(slot) = slots.get_mut(state.index_slot)
+                                {
+                                    *slot = default_int(state.current as i128);
+                                }
+                                let body = state.body.clone();
+                                pending_next = Some(Pending::ForRangeInt(state));
+                                next_frame = Some(Frame {
+                                    code: body,
+                                    ip: 0,
+                                    stack: Vec::with_capacity(8),
+                                    pending: None,
+                                });
+                            }
+                        }
+                        Pending::ForRangeFloat(mut state) =>
+                        {
+                            state.last = result;
+                            state.current += state.step;
+                            let end_f = range_end_f64(&state.end, slots, const_pool)?;
+                            if state.current >= end_f
+                            {
+                                if let Some(slot) = slots.get_mut(state.index_slot)
+                                {
+                                    *slot = make_float(state.current, state.kind);
+                                }
+                                parent.stack.push(state.last.clone());
+                            }
+                            else
+                            {
+                                if let Some(slot) = slots.get_mut(state.index_slot)
+                                {
+                                    *slot = make_float(state.current, state.kind);
+                                }
+                                let body = state.body.clone();
+                                pending_next = Some(Pending::ForRangeFloat(state));
+                                next_frame = Some(Frame {
+                                    code: body,
+                                    ip: 0,
+                                    stack: Vec::with_capacity(8),
+                                    pending: None,
+                                });
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    parent.stack.push(result);
+                }
+
+                if let Some(pending) = pending_next
+                {
+                    parent.pending = Some(pending);
+                }
+            }
+            if let Some(frame) = next_frame
+            {
+                frames.push(frame);
+            }
+            continue;
+        }
+
+        let mut next_frame: Option<Frame> = None;
+
+        {
+            let frame = frames.last_mut().unwrap();
+            let inst = frame.code[frame.ip].clone();
+            let mut advance_ip = true;
+
+            match inst
+            {
+                Instruction::LoadConstIdx(idx) =>
+                {
+                    let val = const_pool.get(idx).cloned().unwrap_or(Value::Nil);
+                    frame.stack.push(val);
+                }
+                Instruction::LoadSlot(s) => frame.stack.push(slots[s].clone()),
+                Instruction::StoreSlot(s) =>
+                {
+                    let val = frame.stack.pop().unwrap();
+                    if let Some(slot) = slots.get_mut(s)
+                    {
+                        *slot = val.clone();
+                    }
+                    frame.stack.push(val);
+                }
+                Instruction::LoadGlobalCached(name, cache) =>
+                {
+                    let val = load_global_cached(interpreter, name, &cache)?;
+                    frame.stack.push(val);
+                }
+                Instruction::LoadGlobal(name) =>
+                {
+                    let val = interpreter
+                        .env
+                        .borrow()
+                        .get(name)
+                        .ok_or_else(|| RuntimeError {
+                            message: format!("Undefined variable: {}", symbol_name(name).as_str()),
+                            line: 0,
+                        })?;
+                    if let Value::Uninitialized = val
+                    {
+                        return Err(RuntimeError {
+                            message: format!(
+                                "Variable '{}' used before assignment",
+                                symbol_name(name).as_str()
+                            ),
+                            line: 0,
+                        });
+                    }
+                    frame.stack.push(val);
+                }
+                Instruction::StoreGlobal(name) =>
+                {
+                    let val = frame.stack.pop().unwrap();
+                    interpreter.env.borrow_mut().set(name, val.clone());
+                    frame.stack.push(val);
+                }
+                Instruction::Pop =>
+                {
+                    frame.stack.pop();
+                }
+                Instruction::Dup =>
+                {
+                    let val = frame.stack.last().cloned().ok_or_else(|| RuntimeError {
+                        message: "Stack underflow on dup".to_string(),
                         line: 0,
                     })?;
-                if let Value::Uninitialized = val
+                    frame.stack.push(val);
+                }
+                Instruction::CloneValue =>
                 {
-                    return Err(RuntimeError {
-                        message: format!(
-                            "Variable '{}' used before assignment",
-                            symbol_name(*name).as_str()
-                        ),
+                    let val = frame.stack.pop().unwrap_or(Value::Nil);
+                    frame.stack.push(clone_value(&val));
+                }
+                Instruction::AddCached(cache) =>
+                {
+                    let r = frame.stack.pop().unwrap();
+                    let l = frame.stack.pop().unwrap();
+                    let res = eval_cached_binop(BinOpKind::Add, &cache, l, r)?;
+                    frame.stack.push(res);
+                }
+                Instruction::SubCached(cache) =>
+                {
+                    let r = frame.stack.pop().unwrap();
+                    let l = frame.stack.pop().unwrap();
+                    let res = eval_cached_binop(BinOpKind::Sub, &cache, l, r)?;
+                    frame.stack.push(res);
+                }
+                Instruction::MulCached(cache) =>
+                {
+                    let r = frame.stack.pop().unwrap();
+                    let l = frame.stack.pop().unwrap();
+                    let res = eval_cached_binop(BinOpKind::Mul, &cache, l, r)?;
+                    frame.stack.push(res);
+                }
+                Instruction::DivCached(cache) =>
+                {
+                    let r = frame.stack.pop().unwrap();
+                    let l = frame.stack.pop().unwrap();
+                    let res = eval_cached_binop(BinOpKind::Div, &cache, l, r)?;
+                    frame.stack.push(res);
+                }
+                Instruction::JumpIfFalse(target) =>
+                {
+                    let cond = frame.stack.pop().unwrap_or(Value::Nil);
+                    let is_false = matches!(cond, Value::Boolean(false) | Value::Nil);
+                    if is_false
+                    {
+                        frame.ip = target;
+                        advance_ip = false;
+                    }
+                }
+                Instruction::Jump(target) =>
+                {
+                    frame.ip = target;
+                    advance_ip = false;
+                }
+                Instruction::CallBuiltin(builtin, argc) =>
+                {
+                    let args = pop_args_from_stack(&mut frame.stack, argc)?;
+                    let result = interpreter.call_builtin(&builtin, &args)?;
+                    frame.stack.push(result);
+                }
+                Instruction::Len =>
+                {
+                    let val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing argument for len".to_string(),
                         line: 0,
-                    });
+                    })?;
+                    let result = match val
+                    {
+                        Value::String(s) => default_int(s.len() as i128),
+                        Value::Array(arr) => default_int(arr.borrow().len() as i128),
+                        Value::F64Array(arr) => default_int(arr.borrow().len() as i128),
+                        Value::Bytes(bytes) => default_int(bytes.len() as i128),
+                        Value::ByteBuf(buf) => default_int(buf.borrow().len() as i128),
+                        Value::BytesView(view) => default_int(view.len as i128),
+                        Value::Map(map) => default_int(map.borrow().data.len() as i128),
+                        Value::Mmap(mmap) => default_int(mmap.len() as i128),
+                        Value::MmapMut(mmap) => default_int(mmap.borrow().len() as i128),
+                        _ => default_int(0),
+                    };
+                    frame.stack.push(result);
                 }
-                stack.push(val);
-            }
-            Instruction::StoreGlobal(name) =>
-            {
-                let val = stack.pop().unwrap();
-                interpreter.env.borrow_mut().set(*name, val.clone());
-                stack.push(val);
-            }
-            Instruction::Pop =>
-            {
-                stack.pop();
-            }
-            Instruction::Dup =>
-            {
-                let val = stack.last().cloned().ok_or_else(|| RuntimeError {
-                    message: "Stack underflow on dup".to_string(),
-                    line: 0,
-                })?;
-                stack.push(val);
-            }
-            Instruction::CloneValue =>
-            {
-                let val = stack.pop().unwrap_or(Value::Nil);
-                stack.push(clone_value(&val));
-            }
-            Instruction::AddCached(cache) =>
-            {
-                let r = stack.pop().unwrap();
-                let l = stack.pop().unwrap();
-                let res = eval_cached_binop(BinOpKind::Add, cache, l, r)?;
-                stack.push(res);
-            }
-            Instruction::SubCached(cache) =>
-            {
-                let r = stack.pop().unwrap();
-                let l = stack.pop().unwrap();
-                let res = eval_cached_binop(BinOpKind::Sub, cache, l, r)?;
-                stack.push(res);
-            }
-            Instruction::MulCached(cache) =>
-            {
-                let r = stack.pop().unwrap();
-                let l = stack.pop().unwrap();
-                let res = eval_cached_binop(BinOpKind::Mul, cache, l, r)?;
-                stack.push(res);
-            }
-            Instruction::DivCached(cache) =>
-            {
-                let r = stack.pop().unwrap();
-                let l = stack.pop().unwrap();
-                let res = eval_cached_binop(BinOpKind::Div, cache, l, r)?;
-                stack.push(res);
-            }
-            Instruction::JumpIfFalse(target) =>
-            {
-                let cond = stack.pop().unwrap_or(Value::Nil);
-                let is_false = matches!(cond, Value::Boolean(false) | Value::Nil);
-                if is_false
+                Instruction::CallValue(argc) =>
                 {
-                    ip = *target;
-                    continue;
+                    let args = pop_args_from_stack(&mut frame.stack, argc)?;
+                    let func_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing function value for call".to_string(),
+                        line: 0,
+                    })?;
+                    let result = interpreter.call_value(func_val, args, 0, None)?;
+                    frame.stack.push(result);
                 }
-            }
-            Instruction::Jump(target) =>
-            {
-                ip = *target;
-                continue;
-            }
-            Instruction::CallBuiltin(builtin, argc) =>
-            {
-                let args = pop_args_from_stack(&mut stack, *argc)?;
-                let result = interpreter.call_builtin(builtin, &args)?;
-                stack.push(result);
-            }
-            Instruction::Len =>
-            {
-                let val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing argument for len".to_string(),
-                    line: 0,
-                })?;
-                let result = match val
+                Instruction::MapKeys =>
                 {
-                    Value::String(s) => default_int(s.len() as i128),
-                    Value::Array(arr) => default_int(arr.borrow().len() as i128),
-                    Value::F64Array(arr) => default_int(arr.borrow().len() as i128),
-                    Value::Bytes(bytes) => default_int(bytes.len() as i128),
-                    Value::ByteBuf(buf) => default_int(buf.borrow().len() as i128),
-                    Value::BytesView(view) => default_int(view.len as i128),
-                    Value::Map(map) => default_int(map.borrow().data.len() as i128),
-                    Value::Mmap(mmap) => default_int(mmap.len() as i128),
-                    Value::MmapMut(mmap) => default_int(mmap.borrow().len() as i128),
-                    _ => default_int(0),
-                };
-                stack.push(result);
-            }
-            Instruction::CallValue(argc) =>
-            {
-                let args = pop_args_from_stack(&mut stack, *argc)?;
-                let func_val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing function value for call".to_string(),
-                    line: 0,
-                })?;
-                let result = interpreter.call_value(func_val, args, 0, None)?;
-                stack.push(result);
-            }
-            Instruction::MapKeys =>
-            {
-                let target_val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing target for map keys".to_string(),
-                    line: 0,
-                })?;
-                let result = match target_val
+                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing target for map keys".to_string(),
+                        line: 0,
+                    })?;
+                    let result = match target_val
+                    {
+                        Value::Map(map) => map_keys_array(&map.borrow()),
+                        _ => Value::Nil,
+                    };
+                    frame.stack.push(result);
+                }
+                Instruction::MapValues =>
                 {
-                    Value::Map(map) => map_keys_array(&map.borrow()),
-                    _ => Value::Nil,
-                };
-                stack.push(result);
-            }
-            Instruction::MapValues =>
-            {
-                let target_val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing target for map values".to_string(),
-                    line: 0,
-                })?;
-                let result = match target_val
+                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing target for map values".to_string(),
+                        line: 0,
+                    })?;
+                    let result = match target_val
+                    {
+                        Value::Map(map) => map_values_array(&map.borrow()),
+                        _ => Value::Nil,
+                    };
+                    frame.stack.push(result);
+                }
+                Instruction::CallValueCached(cache, argc) =>
                 {
-                    Value::Map(map) => map_values_array(&map.borrow()),
-                    _ => Value::Nil,
-                };
-                stack.push(result);
-            }
-            Instruction::CallValueCached(cache, argc) =>
-            {
-                let args = pop_args_from_stack(&mut stack, *argc)?;
-                let func_val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing function value for call".to_string(),
-                    line: 0,
-                })?;
-                let result = eval_call_value_cached(interpreter, func_val, args, cache)?;
-                stack.push(result);
-            }
-            Instruction::CallValueWithBlock(block, argc) =>
-            {
-                let args = pop_args_from_stack(&mut stack, *argc)?;
-                let func_val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing function value for call".to_string(),
-                    line: 0,
-                })?;
-                let result = interpreter.call_value(func_val, args, 0, Some((**block).clone()))?;
-                stack.push(result);
-            }
-            Instruction::CallValueWithBlockCached(cache, block, argc) =>
-            {
-                let args = pop_args_from_stack(&mut stack, *argc)?;
-                let func_val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing function value for call".to_string(),
-                    line: 0,
-                })?;
-                let result =
-                    eval_call_value_cached_with_block(interpreter, func_val, args, cache, block)?;
-                stack.push(result);
-            }
-            Instruction::CallGlobalCached(name, global_cache, call_cache, argc) =>
-            {
-                let args = pop_args_from_stack(&mut stack, *argc)?;
-                let func_val = load_global_cached(interpreter, *name, global_cache)?;
-                let result = eval_call_value_cached(interpreter, func_val, args, call_cache)?;
-                stack.push(result);
-            }
-            Instruction::CallMethodCached(name, map_cache, call_cache, argc) =>
-            {
-                let args = pop_args_from_stack(&mut stack, *argc)?;
-                let func_val = pop_method_target_and_resolve(&mut stack, name, map_cache)?;
-                let result = eval_call_value_cached(interpreter, func_val, args, call_cache)?;
-                stack.push(result);
-            }
-            Instruction::CallMethodWithBlockCached(name, map_cache, call_cache, block, argc) =>
-            {
-                let args = pop_args_from_stack(&mut stack, *argc)?;
-                let func_val = pop_method_target_and_resolve(&mut stack, name, map_cache)?;
-                let result = eval_call_value_cached_with_block(
-                    interpreter,
-                    func_val,
-                    args,
+                    let args = pop_args_from_stack(&mut frame.stack, argc)?;
+                    let func_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing function value for call".to_string(),
+                        line: 0,
+                    })?;
+                    let result = eval_call_value_cached(interpreter, func_val, args, &cache)?;
+                    frame.stack.push(result);
+                }
+                Instruction::CallValueWithBlock(block, argc) =>
+                {
+                    let args = pop_args_from_stack(&mut frame.stack, argc)?;
+                    let func_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing function value for call".to_string(),
+                        line: 0,
+                    })?;
+                    let result =
+                        interpreter.call_value(func_val, args, 0, Some((*block).clone()))?;
+                    frame.stack.push(result);
+                }
+                Instruction::CallValueWithBlockCached(cache, block, argc) =>
+                {
+                    let args = pop_args_from_stack(&mut frame.stack, argc)?;
+                    let func_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing function value for call".to_string(),
+                        line: 0,
+                    })?;
+                    let result = eval_call_value_cached_with_block(
+                        interpreter,
+                        func_val,
+                        args,
+                        &cache,
+                        &block,
+                    )?;
+                    frame.stack.push(result);
+                }
+                Instruction::CallGlobalCached(name, global_cache, call_cache, argc) =>
+                {
+                    let args = pop_args_from_stack(&mut frame.stack, argc)?;
+                    let func_val = load_global_cached(interpreter, name, &global_cache)?;
+                    let result = eval_call_value_cached(interpreter, func_val, args, &call_cache)?;
+                    frame.stack.push(result);
+                }
+                Instruction::CallMethodCached(name, map_cache, call_cache, argc) =>
+                {
+                    let args = pop_args_from_stack(&mut frame.stack, argc)?;
+                    let func_val =
+                        pop_method_target_and_resolve(&mut frame.stack, &name, &map_cache)?;
+                    let result = eval_call_value_cached(interpreter, func_val, args, &call_cache)?;
+                    frame.stack.push(result);
+                }
+                Instruction::CallMethodWithBlockCached(
+                    name,
+                    map_cache,
                     call_cache,
                     block,
-                )?;
-                stack.push(result);
-            }
-            Instruction::ForEach { var_slot, body } =>
-            {
-                let iter_val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing iterable for for-loop".to_string(),
-                    line: 0,
-                })?;
-                let mut last = Value::Nil;
-                match iter_val
+                    argc,
+                ) =>
                 {
-                    Value::Array(arr) =>
-                    {
-                        let len = arr.borrow().len();
-                        for idx in 0..len
-                        {
-                            let item = {
-                                let vec = arr.borrow();
-                                vec[idx].clone()
-                            };
-                            if let Some(slot) = slots.get_mut(*var_slot)
-                            {
-                                *slot = item;
-                            }
-                            last = execute_instructions(interpreter, body, const_pool, slots)?;
-                        }
-                    }
-                    Value::F64Array(arr) =>
-                    {
-                        let len = arr.borrow().len();
-                        for idx in 0..len
-                        {
-                            let item = {
-                                let vec = arr.borrow();
-                                make_float(vec[idx], FloatKind::F64)
-                            };
-                            if let Some(slot) = slots.get_mut(*var_slot)
-                            {
-                                *slot = item;
-                            }
-                            last = execute_instructions(interpreter, body, const_pool, slots)?;
-                        }
-                    }
-                    Value::Map(map) =>
-                    {
-                        let map_ref = map.borrow();
-                        let mut keys = Vec::with_capacity(map_ref.data.len());
-                        keys.extend(map_ref.data.keys().cloned());
-                        for key in keys
-                        {
-                            if let Some(slot) = slots.get_mut(*var_slot)
-                            {
-                                *slot = Value::String(key);
-                            }
-                            last = execute_instructions(interpreter, body, const_pool, slots)?;
-                        }
-                    }
-                    _ =>
-                    {
-                        return Err(RuntimeError {
-                            message: "Type is not iterable".to_string(),
-                            line: 0,
-                        });
-                    }
+                    let args = pop_args_from_stack(&mut frame.stack, argc)?;
+                    let func_val =
+                        pop_method_target_and_resolve(&mut frame.stack, &name, &map_cache)?;
+                    let result = eval_call_value_cached_with_block(
+                        interpreter,
+                        func_val,
+                        args,
+                        &call_cache,
+                        &block,
+                    )?;
+                    frame.stack.push(result);
                 }
-                stack.push(last);
-            }
-            Instruction::ForEachArray { var_slot, body } =>
-            {
-                let iter_val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing iterable for for-loop".to_string(),
-                    line: 0,
-                })?;
-                let arr = match iter_val
+                Instruction::ForEach { var_slot, body } =>
                 {
-                    Value::Array(arr) => arr,
-                    _ =>
+                    let iter_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing iterable for for-loop".to_string(),
+                        line: 0,
+                    })?;
+                    let iter = match iter_val
                     {
-                        return Err(RuntimeError {
-                            message: "Type is not iterable".to_string(),
-                            line: 0,
-                        });
-                    }
-                };
-                let len = arr.borrow().len();
-                let mut last = Value::Nil;
-                for idx in 0..len
-                {
-                    let item = {
-                        let vec = arr.borrow();
-                        vec[idx].clone()
+                        Value::Array(arr) =>
+                        {
+                            let len = arr.borrow().len();
+                            ForEachIter::Array { arr, idx: 0, len }
+                        }
+                        Value::F64Array(arr) =>
+                        {
+                            let len = arr.borrow().len();
+                            ForEachIter::F64Array { arr, idx: 0, len }
+                        }
+                        Value::Map(map) =>
+                        {
+                            let map_ref = map.borrow();
+                            let mut keys = Vec::with_capacity(map_ref.data.len());
+                            keys.extend(map_ref.data.keys().cloned());
+                            ForEachIter::Map { keys, idx: 0 }
+                        }
+                        _ =>
+                        {
+                            return Err(RuntimeError {
+                                message: "Type is not iterable".to_string(),
+                                line: 0,
+                            });
+                        }
                     };
-                    if let Some(slot) = slots.get_mut(*var_slot)
+                    let mut state = ForEachState {
+                        var_slot,
+                        body: body.clone(),
+                        iter,
+                        last: Value::Nil,
+                    };
+                    if let Some(item) = next_foreach_value(&mut state.iter)
                     {
-                        *slot = item;
-                    }
-                    last = execute_instructions(interpreter, body, const_pool, slots)?;
-                }
-                stack.push(last);
-            }
-            Instruction::ForEachF64Array { var_slot, body } =>
-            {
-                let iter_val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing iterable for for-loop".to_string(),
-                    line: 0,
-                })?;
-                let arr = match iter_val
-                {
-                    Value::F64Array(arr) => arr,
-                    _ =>
-                    {
-                        return Err(RuntimeError {
-                            message: "Type is not iterable".to_string(),
-                            line: 0,
+                        if let Some(slot) = slots.get_mut(state.var_slot)
+                        {
+                            *slot = item;
+                        }
+                        frame.pending = Some(Pending::ForEach(state));
+                        next_frame = Some(Frame {
+                            code: body.clone(),
+                            ip: 0,
+                            stack: Vec::with_capacity(8),
+                            pending: None,
                         });
                     }
-                };
-                let len = arr.borrow().len();
-                let mut last = Value::Nil;
-                for idx in 0..len
-                {
-                    let item = {
-                        let vec = arr.borrow();
-                        make_float(vec[idx], FloatKind::F64)
-                    };
-                    if let Some(slot) = slots.get_mut(*var_slot)
+                    else
                     {
-                        *slot = item;
+                        frame.stack.push(state.last);
                     }
-                    last = execute_instructions(interpreter, body, const_pool, slots)?;
                 }
-                stack.push(last);
-            }
-            Instruction::ForRange {
-                index_slot,
-                end,
-                body,
-            } =>
-            {
-                let mut last = Value::Nil;
-                loop
+                Instruction::ForEachArray { var_slot, body } =>
                 {
-                    let end_f = range_end_f64(end, slots, const_pool)?;
-                    let current = match slots.get(*index_slot)
+                    let iter_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing iterable for for-loop".to_string(),
+                        line: 0,
+                    })?;
+                    let arr = match iter_val
+                    {
+                        Value::Array(arr) => arr,
+                        _ =>
+                        {
+                            return Err(RuntimeError {
+                                message: "Type is not iterable".to_string(),
+                                line: 0,
+                            });
+                        }
+                    };
+                    let len = arr.borrow().len();
+                    let mut state = ForEachState {
+                        var_slot,
+                        body: body.clone(),
+                        iter: ForEachIter::Array { arr, idx: 0, len },
+                        last: Value::Nil,
+                    };
+                    if let Some(item) = next_foreach_value(&mut state.iter)
+                    {
+                        if let Some(slot) = slots.get_mut(state.var_slot)
+                        {
+                            *slot = item;
+                        }
+                        frame.pending = Some(Pending::ForEach(state));
+                        next_frame = Some(Frame {
+                            code: body.clone(),
+                            ip: 0,
+                            stack: Vec::with_capacity(8),
+                            pending: None,
+                        });
+                    }
+                    else
+                    {
+                        frame.stack.push(state.last);
+                    }
+                }
+                Instruction::ForEachF64Array { var_slot, body } =>
+                {
+                    let iter_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing iterable for for-loop".to_string(),
+                        line: 0,
+                    })?;
+                    let arr = match iter_val
+                    {
+                        Value::F64Array(arr) => arr,
+                        _ =>
+                        {
+                            return Err(RuntimeError {
+                                message: "Type is not iterable".to_string(),
+                                line: 0,
+                            });
+                        }
+                    };
+                    let len = arr.borrow().len();
+                    let mut state = ForEachState {
+                        var_slot,
+                        body: body.clone(),
+                        iter: ForEachIter::F64Array { arr, idx: 0, len },
+                        last: Value::Nil,
+                    };
+                    if let Some(item) = next_foreach_value(&mut state.iter)
+                    {
+                        if let Some(slot) = slots.get_mut(state.var_slot)
+                        {
+                            *slot = item;
+                        }
+                        frame.pending = Some(Pending::ForEach(state));
+                        next_frame = Some(Frame {
+                            code: body.clone(),
+                            ip: 0,
+                            stack: Vec::with_capacity(8),
+                            pending: None,
+                        });
+                    }
+                    else
+                    {
+                        frame.stack.push(state.last);
+                    }
+                }
+                Instruction::ForRange {
+                    index_slot,
+                    end,
+                    body,
+                } =>
+                {
+                    let current = match slots.get(index_slot)
                     {
                         Some(v) => int_value_as_i64(v).ok_or_else(|| RuntimeError {
                             message: "Range index must be a number".to_string(),
@@ -6428,945 +6732,801 @@ fn execute_instructions(
                             });
                         }
                     };
+                    let end_f = range_end_f64(&end, slots, const_pool)?;
                     if (current as f64) >= end_f
                     {
-                        if let Some(slot) = slots.get_mut(*index_slot)
+                        if let Some(slot) = slots.get_mut(index_slot)
                         {
                             *slot = default_int(current as i128);
                         }
-                        break;
+                        frame.stack.push(Value::Nil);
                     }
-                    if let Some(slot) = slots.get_mut(*index_slot)
+                    else
                     {
-                        *slot = default_int(current as i128);
-                    }
-                    last = execute_instructions(interpreter, body, const_pool, slots)?;
-                    if let Some(slot) = slots.get_mut(*index_slot)
-                    {
-                        *slot = default_int(current as i128 + 1);
+                        if let Some(slot) = slots.get_mut(index_slot)
+                        {
+                            *slot = default_int(current as i128);
+                        }
+                        frame.pending = Some(Pending::ForRange(ForRangeState {
+                            index_slot,
+                            end,
+                            body: body.clone(),
+                            current,
+                            last: Value::Nil,
+                        }));
+                        next_frame = Some(Frame {
+                            code: body.clone(),
+                            ip: 0,
+                            stack: Vec::with_capacity(8),
+                            pending: None,
+                        });
                     }
                 }
-                stack.push(last);
-            }
-            Instruction::ForRangeInt {
-                index_slot,
-                end,
-                step,
-                body,
-            } =>
-            {
-                let mut last = Value::Nil;
-                let current_val = slots
-                    .get(*index_slot)
-                    .cloned()
-                    .ok_or_else(|| RuntimeError {
-                        message: "Range index must be a number".to_string(),
-                        line: 0,
-                    })?;
-                match current_val
+                Instruction::ForRangeInt {
+                    index_slot,
+                    end,
+                    step,
+                    body,
+                } =>
                 {
-                    Value::Float {
-                        value: mut current,
+                    let current_val =
+                        slots.get(index_slot).cloned().ok_or_else(|| RuntimeError {
+                            message: "Range index must be a number".to_string(),
+                            line: 0,
+                        })?;
+                    if let Value::Float {
+                        value: current,
                         kind,
-                    } =>
+                    } = current_val
                     {
-                        let step_f = *step as f64;
-                        loop
+                        let step_f = step as f64;
+                        let end_f = range_end_f64(&end, slots, const_pool)?;
+                        if current >= end_f
                         {
-                            let end_f = range_end_f64(end, slots, const_pool)?;
-                            if current >= end_f
-                            {
-                                if let Some(slot) = slots.get_mut(*index_slot)
-                                {
-                                    *slot = make_float(current, kind);
-                                }
-                                break;
-                            }
-                            if let Some(slot) = slots.get_mut(*index_slot)
+                            if let Some(slot) = slots.get_mut(index_slot)
                             {
                                 *slot = make_float(current, kind);
                             }
-                            last = execute_instructions(interpreter, body, const_pool, slots)?;
-                            current += step_f;
+                            frame.stack.push(Value::Nil);
                         }
-                    }
-                    _ =>
-                    {
-                        let mut current =
-                            int_value_as_i64(&current_val).ok_or_else(|| RuntimeError {
-                                message: "Range index must be a number".to_string(),
-                                line: 0,
-                            })?;
-                        let mut hot_counter = 0usize;
-                        let mut used_unroll = false;
-                        if *step == 1
+                        else
                         {
-                            if let RangeEnd::Const(_) = end
-                            {
-                                if let RangeEndNum::Int(end_i) =
-                                    range_end_num(end, slots, const_pool)?
-                                {
-                                    used_unroll = true;
-                                    if let Some(limit) = end_i.checked_sub(3)
-                                    {
-                                        while current < limit
-                                        {
-                                            if let Some(slot) = slots.get_mut(*index_slot)
-                                            {
-                                                *slot = default_int(current as i128);
-                                            }
-                                            let _ = execute_instructions(
-                                                interpreter,
-                                                body,
-                                                const_pool,
-                                                slots,
-                                            )?;
-                                            current += 1;
-                                            if let Some(slot) = slots.get_mut(*index_slot)
-                                            {
-                                                *slot = default_int(current as i128);
-                                            }
-                                            let _ = execute_instructions(
-                                                interpreter,
-                                                body,
-                                                const_pool,
-                                                slots,
-                                            )?;
-                                            current += 1;
-                                            if let Some(slot) = slots.get_mut(*index_slot)
-                                            {
-                                                *slot = default_int(current as i128);
-                                            }
-                                            let _ = execute_instructions(
-                                                interpreter,
-                                                body,
-                                                const_pool,
-                                                slots,
-                                            )?;
-                                            current += 1;
-                                            if let Some(slot) = slots.get_mut(*index_slot)
-                                            {
-                                                *slot = default_int(current as i128);
-                                            }
-                                            last = execute_instructions(
-                                                interpreter,
-                                                body,
-                                                const_pool,
-                                                slots,
-                                            )?;
-                                            current += 1;
-                                        }
-                                    }
-                                    while current < end_i
-                                    {
-                                        if let Some(slot) = slots.get_mut(*index_slot)
-                                        {
-                                            *slot = default_int(current as i128);
-                                        }
-                                        last = execute_instructions(
-                                            interpreter,
-                                            body,
-                                            const_pool,
-                                            slots,
-                                        )?;
-                                        current += 1;
-                                    }
-                                    if let Some(slot) = slots.get_mut(*index_slot)
-                                    {
-                                        *slot = default_int(current as i128);
-                                    }
-                                }
-                            }
-                        }
-                        if !used_unroll
-                        {
-                            loop
-                            {
-                                let should_stop = match range_end_num(end, slots, const_pool)?
-                                {
-                                    RangeEndNum::Float(end_f) => (current as f64) >= end_f,
-                                    RangeEndNum::Int(end_i) => current >= end_i,
-                                };
-                                if should_stop
-                                {
-                                    if let Some(slot) = slots.get_mut(*index_slot)
-                                    {
-                                        *slot = default_int(current as i128);
-                                    }
-                                    break;
-                                }
-                                if let Some(slot) = slots.get_mut(*index_slot)
-                                {
-                                    *slot = default_int(current as i128);
-                                }
-                                last = execute_instructions(interpreter, body, const_pool, slots)?;
-                                current = current + *step;
-                                hot_counter += 1;
-                                if hot_counter == HOT_LOOP_THRESHOLD
-                                {
-                                    if let RangeEnd::Const(_) = end
-                                    {
-                                        match range_end_num(end, slots, const_pool)?
-                                        {
-                                            RangeEndNum::Int(end_i) =>
-                                            {
-                                                while current < end_i
-                                                {
-                                                    if let Some(slot) = slots.get_mut(*index_slot)
-                                                    {
-                                                        *slot = default_int(current as i128);
-                                                    }
-                                                    last = execute_instructions(
-                                                        interpreter,
-                                                        body,
-                                                        const_pool,
-                                                        slots,
-                                                    )?;
-                                                    current += *step;
-                                                }
-                                                if let Some(slot) = slots.get_mut(*index_slot)
-                                                {
-                                                    *slot = default_int(current as i128);
-                                                }
-                                                break;
-                                            }
-                                            RangeEndNum::Float(end_f) =>
-                                            {
-                                                while (current as f64) < end_f
-                                                {
-                                                    if let Some(slot) = slots.get_mut(*index_slot)
-                                                    {
-                                                        *slot = default_int(current as i128);
-                                                    }
-                                                    last = execute_instructions(
-                                                        interpreter,
-                                                        body,
-                                                        const_pool,
-                                                        slots,
-                                                    )?;
-                                                    current += *step;
-                                                }
-                                                if let Some(slot) = slots.get_mut(*index_slot)
-                                                {
-                                                    *slot = default_int(current as i128);
-                                                }
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                stack.push(last);
-            }
-            Instruction::ForRangeFloat {
-                index_slot,
-                end,
-                step,
-                kind,
-                body,
-            } =>
-            {
-                let mut last = Value::Nil;
-                let current_val = slots
-                    .get(*index_slot)
-                    .cloned()
-                    .ok_or_else(|| RuntimeError {
-                        message: "Range index must be a number".to_string(),
-                        line: 0,
-                    })?;
-                let (mut current, kind) = match current_val
-                {
-                    Value::Float {
-                        value,
-                        kind: current_kind,
-                    } => (value, promote_float_kind(current_kind, *kind)),
-                    _ =>
-                    {
-                        let current =
-                            int_value_as_f64(&current_val).ok_or_else(|| RuntimeError {
-                                message: "Range index must be a number".to_string(),
-                                line: 0,
-                            })?;
-                        (current, *kind)
-                    }
-                };
-                let step_f = normalize_float_value(*step, kind);
-                let mut hot_counter = 0usize;
-                if step_f > 0.0
-                {
-                    if let RangeEnd::Const(_) = end
-                    {
-                        let end_f = range_end_f64(end, slots, const_pool)?;
-                        while current + (step_f * 3.0) < end_f
-                        {
-                            if let Some(slot) = slots.get_mut(*index_slot)
+                            if let Some(slot) = slots.get_mut(index_slot)
                             {
                                 *slot = make_float(current, kind);
                             }
-                            let _ = execute_instructions(interpreter, body, const_pool, slots)?;
-                            current += step_f;
-                            if let Some(slot) = slots.get_mut(*index_slot)
-                            {
-                                *slot = make_float(current, kind);
-                            }
-                            let _ = execute_instructions(interpreter, body, const_pool, slots)?;
-                            current += step_f;
-                            if let Some(slot) = slots.get_mut(*index_slot)
-                            {
-                                *slot = make_float(current, kind);
-                            }
-                            let _ = execute_instructions(interpreter, body, const_pool, slots)?;
-                            current += step_f;
-                            if let Some(slot) = slots.get_mut(*index_slot)
-                            {
-                                *slot = make_float(current, kind);
-                            }
-                            last = execute_instructions(interpreter, body, const_pool, slots)?;
-                            current += step_f;
-                        }
-                        while current < end_f
-                        {
-                            if let Some(slot) = slots.get_mut(*index_slot)
-                            {
-                                *slot = make_float(current, kind);
-                            }
-                            last = execute_instructions(interpreter, body, const_pool, slots)?;
-                            current += step_f;
-                        }
-                        if let Some(slot) = slots.get_mut(*index_slot)
-                        {
-                            *slot = make_float(current, kind);
-                        }
-                        stack.push(last);
-                        continue;
-                    }
-                }
-                loop
-                {
-                    let end_f = range_end_f64(end, slots, const_pool)?;
-                    if current >= end_f
-                    {
-                        if let Some(slot) = slots.get_mut(*index_slot)
-                        {
-                            *slot = make_float(current, kind);
-                        }
-                        break;
-                    }
-                    if let Some(slot) = slots.get_mut(*index_slot)
-                    {
-                        *slot = make_float(current, kind);
-                    }
-                    last = execute_instructions(interpreter, body, const_pool, slots)?;
-                    current += step_f;
-                    hot_counter += 1;
-                    if hot_counter == HOT_LOOP_THRESHOLD
-                    {
-                        if let RangeEnd::Const(_) = end
-                        {
-                            let end_f = range_end_f64(end, slots, const_pool)?;
-                            while current < end_f
-                            {
-                                if let Some(slot) = slots.get_mut(*index_slot)
-                                {
-                                    *slot = make_float(current, kind);
-                                }
-                                last = execute_instructions(interpreter, body, const_pool, slots)?;
-                                current += step_f;
-                            }
-                            if let Some(slot) = slots.get_mut(*index_slot)
-                            {
-                                *slot = make_float(current, kind);
-                            }
-                            break;
-                        }
-                    }
-                }
-                stack.push(last);
-            }
-            Instruction::MakeArray(count) =>
-            {
-                if *count > stack.len()
-                {
-                    return Err(RuntimeError {
-                        message: "Invalid array length".to_string(),
-                        line: 0,
-                    });
-                }
-                let mut elems = Vec::with_capacity(*count);
-                let mut f64_vals: Vec<f64> = Vec::new();
-                let mut all_f64 = true;
-                for _ in 0..*count
-                {
-                    let v = stack.pop().unwrap();
-                    if all_f64
-                    {
-                        match v
-                        {
-                            Value::Float { value, .. } => f64_vals.push(value),
-                            v =>
-                            {
-                                if let Some(num) = int_value_as_f64(&v)
-                                {
-                                    f64_vals.push(num);
-                                }
-                                else
-                                {
-                                    all_f64 = false;
-                                    elems.extend(
-                                        f64_vals
-                                            .drain(..)
-                                            .map(|value| make_float(value, FloatKind::F64)),
-                                    );
-                                    elems.push(v);
-                                }
-                            }
+                            frame.pending = Some(Pending::ForRangeFloat(ForRangeFloatState {
+                                index_slot,
+                                end,
+                                step: step_f,
+                                kind,
+                                body: body.clone(),
+                                current,
+                                last: Value::Nil,
+                            }));
+                            next_frame = Some(Frame {
+                                code: body.clone(),
+                                ip: 0,
+                                stack: Vec::with_capacity(8),
+                                pending: None,
+                            });
                         }
                     }
                     else
                     {
-                        elems.push(v);
-                    }
-                }
-                if all_f64
-                {
-                    f64_vals.reverse();
-                    stack.push(Value::F64Array(Rc::new(RefCell::new(f64_vals))));
-                }
-                else
-                {
-                    elems.reverse();
-                    stack.push(Value::Array(Rc::new(RefCell::new(elems))));
-                }
-            }
-            Instruction::MakeMap(count) =>
-            {
-                let pair_count = count.saturating_mul(2);
-                if pair_count > stack.len()
-                {
-                    return Err(RuntimeError {
-                        message: "Invalid map length".to_string(),
-                        line: 0,
-                    });
-                }
-                let mut entries = Vec::with_capacity(*count);
-                for _ in 0..*count
-                {
-                    let val = stack.pop().unwrap();
-                    let key_val = stack.pop().unwrap();
-                    entries.push((key_val, val));
-                }
-                entries.reverse();
-                let mut map = FxHashMap::default();
-                for (k_val, v_val) in entries
-                {
-                    let key = match k_val
-                    {
-                        Value::String(s) => s,
-                        _ => intern::intern_owned(k_val.inspect()),
-                    };
-                    map.insert(key, v_val);
-                }
-                stack.push(Value::Map(Rc::new(RefCell::new(MapValue::new(map)))));
-            }
-            Instruction::Index =>
-            {
-                let index_val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing index for index expression".to_string(),
-                    line: 0,
-                })?;
-                let target_val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing target for index expression".to_string(),
-                    line: 0,
-                })?;
-                let result = match target_val
-                {
-                    Value::Array(arr) =>
-                    {
-                        if let Some(i) = int_value_as_usize(&index_val)
-                        {
-                            let vec = arr.borrow();
-                            if i < vec.len()
-                            {
-                                vec[i].clone()
-                            }
-                            else
-                            {
-                                Value::Nil
-                            }
-                        }
-                        else
-                        {
-                            return Err(err_index_requires_int());
-                        }
-                    }
-                    Value::F64Array(arr) =>
-                    {
-                        if let Some(i) = int_value_as_usize(&index_val)
-                        {
-                            let vec = arr.borrow();
-                            if i < vec.len()
-                            {
-                                make_float(vec[i], FloatKind::F64)
-                            }
-                            else
-                            {
-                                Value::Nil
-                            }
-                        }
-                        else
-                        {
-                            return Err(err_index_requires_int());
-                        }
-                    }
-                    Value::Bytes(bytes) =>
-                    {
-                        if let Some(i) = int_value_as_usize(&index_val)
-                        {
-                            if i < bytes.len()
-                            {
-                                default_int(bytes[i] as i128)
-                            }
-                            else
-                            {
-                                Value::Nil
-                            }
-                        }
-                        else
-                        {
-                            return Err(err_index_requires_int());
-                        }
-                    }
-                    Value::ByteBuf(buf) =>
-                    {
-                        if let Some(i) = int_value_as_usize(&index_val)
-                        {
-                            let bytes = buf.borrow();
-                            if i < bytes.len()
-                            {
-                                default_int(bytes[i] as i128)
-                            }
-                            else
-                            {
-                                Value::Nil
-                            }
-                        }
-                        else
-                        {
-                            return Err(err_index_requires_int());
-                        }
-                    }
-                    Value::BytesView(view) =>
-                    {
-                        if let Some(i) = int_value_as_usize(&index_val)
-                        {
-                            if i < view.len
-                            {
-                                let idx = view.offset + i;
-                                let byte = match &view.source
-                                {
-                                    crate::value::BytesViewSource::Mmap(mmap) => mmap[idx],
-                                    crate::value::BytesViewSource::MmapMut(mmap) =>
-                                    {
-                                        let data = mmap.borrow();
-                                        data[idx]
-                                    }
-                                };
-                                default_int(byte as i128)
-                            }
-                            else
-                            {
-                                Value::Nil
-                            }
-                        }
-                        else
-                        {
-                            return Err(err_index_requires_int());
-                        }
-                    }
-                    Value::Mmap(mmap) =>
-                    {
-                        if let Some(i) = int_value_as_usize(&index_val)
-                        {
-                            if i < mmap.len()
-                            {
-                                default_int(mmap[i] as i128)
-                            }
-                            else
-                            {
-                                Value::Nil
-                            }
-                        }
-                        else
-                        {
-                            return Err(err_index_requires_int());
-                        }
-                    }
-                    Value::MmapMut(mmap) =>
-                    {
-                        if let Some(i) = int_value_as_usize(&index_val)
-                        {
-                            let bytes = mmap.borrow();
-                            if i < bytes.len()
-                            {
-                                default_int(bytes[i] as i128)
-                            }
-                            else
-                            {
-                                Value::Nil
-                            }
-                        }
-                        else
-                        {
-                            return Err(err_index_requires_int());
-                        }
-                    }
-                    Value::StructInstance(inst) =>
-                    {
-                        if let Value::String(s) = index_val
-                        {
-                            if let Some(idx) = inst.ty.field_map.get(&s)
-                            {
-                                let fields = inst.fields.borrow();
-                                fields.get(*idx).cloned().unwrap_or(Value::Nil)
-                            }
-                            else if let Some(method) = inst.ty.methods.borrow().get(&s).cloned()
-                            {
-                                Value::BoundMethod(Rc::new(BoundMethod {
-                                    receiver: Value::StructInstance(inst.clone()),
-                                    func: method,
-                                }))
-                            }
-                            else
-                            {
-                                Value::Nil
-                            }
-                        }
-                        else
-                        {
-                            return Err(err_index_unsupported());
-                        }
-                    }
-                    Value::StructType(ty) =>
-                    {
-                        if let Value::String(s) = index_val
-                        {
-                            ty.methods.borrow().get(&s).cloned().unwrap_or(Value::Nil)
-                        }
-                        else
-                        {
-                            return Err(err_index_unsupported());
-                        }
-                    }
-                    Value::Map(map) =>
-                    {
-                        let map_ref = map.borrow();
-                        if let Value::String(s) = index_val
-                        {
-                            if s.as_str() == "keys"
-                            {
-                                map_keys_array(&map_ref)
-                            }
-                            else if s.as_str() == "values"
-                            {
-                                map_values_array(&map_ref)
-                            }
-                            else
-                            {
-                                map_ref.data.get(&s).cloned().unwrap_or(Value::Nil)
-                            }
-                        }
-                        else
-                        {
-                            let key = intern::intern_owned(index_val.inspect());
-                            map_ref.data.get(&key).cloned().unwrap_or(Value::Nil)
-                        }
-                    }
-                    _ => return Err(err_index_unsupported()),
-                };
-                stack.push(result);
-            }
-            Instruction::IndexCached(cache) =>
-            {
-                let index_val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing index for index expression".to_string(),
-                    line: 0,
-                })?;
-                let target_val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing target for index expression".to_string(),
-                    line: 0,
-                })?;
-                let result = eval_index_cached_value(index_val, target_val, cache)?;
-                stack.push(result);
-            }
-            Instruction::MapIndexCached(cache) =>
-            {
-                let index_val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing index for index expression".to_string(),
-                    line: 0,
-                })?;
-                let target_val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing target for index expression".to_string(),
-                    line: 0,
-                })?;
-                let result = match target_val
-                {
-                    Value::StructInstance(inst) =>
-                    {
-                        if let Value::String(s) = index_val
-                        {
-                            if let Some(idx) = inst.ty.field_map.get(&s)
-                            {
-                                let fields = inst.fields.borrow();
-                                fields.get(*idx).cloned().unwrap_or(Value::Nil)
-                            }
-                            else if let Some(method) = inst.ty.methods.borrow().get(&s).cloned()
-                            {
-                                Value::BoundMethod(Rc::new(BoundMethod {
-                                    receiver: Value::StructInstance(inst.clone()),
-                                    func: method,
-                                }))
-                            }
-                            else
-                            {
-                                Value::Nil
-                            }
-                        }
-                        else
-                        {
-                            return Err(err_index_unsupported());
-                        }
-                    }
-                    Value::StructType(ty) =>
-                    {
-                        if let Value::String(s) = index_val
-                        {
-                            ty.methods.borrow().get(&s).cloned().unwrap_or(Value::Nil)
-                        }
-                        else
-                        {
-                            return Err(err_index_unsupported());
-                        }
-                    }
-                    Value::Map(map) =>
-                    {
-                        if let Value::String(s) = index_val
-                        {
-                            if s.as_str() == "keys"
-                            {
-                                map_keys_array(&map.borrow())
-                            }
-                            else if s.as_str() == "values"
-                            {
-                                map_values_array(&map.borrow())
-                            }
-                            else
-                            {
-                                let map_ptr = Rc::as_ptr(&map) as usize;
-                                let map_ref = map.borrow();
-                                eval_map_index_cached(&map_ref, map_ptr, &s, cache)
-                            }
-                        }
-                        else
-                        {
-                            let key = intern::intern_owned(index_val.inspect());
-                            map.borrow().data.get(&key).cloned().unwrap_or(Value::Nil)
-                        }
-                    }
-                    Value::Array(_) | Value::F64Array(_) =>
-                    {
-                        return Err(err_index_requires_int());
-                    }
-                    _ => return Err(err_index_unsupported()),
-                };
-                stack.push(result);
-            }
-            Instruction::F64IndexCached(cache) =>
-            {
-                let index_val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing index for index expression".to_string(),
-                    line: 0,
-                })?;
-                let target_val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing target for index expression".to_string(),
-                    line: 0,
-                })?;
-                let result = match target_val
-                {
-                    Value::F64Array(arr) =>
-                    {
-                        let idx = match index_val
-                        {
-                            Value::Integer { value, .. } if value >= 0 => value as usize,
-                            Value::Unsigned { value, .. } => value as usize,
-                            _ =>
-                            {
-                                return Err(err_index_requires_int());
-                            }
-                        };
-                        let arr_ptr = Rc::as_ptr(&arr) as usize;
-                        let mut cache_mut = cache.borrow_mut();
-                        if cache_mut.array_ptr == Some(arr_ptr)
-                            && cache_mut.index_usize == Some(idx)
-                        {
-                            cache_mut.hits += 1;
-                        }
-                        else
-                        {
-                            cache_mut.array_ptr = Some(arr_ptr);
-                            cache_mut.index_usize = Some(idx);
-                            cache_mut.misses += 1;
-                        }
-                        let vec = arr.borrow();
-                        if idx < vec.len()
-                        {
-                            make_float(vec[idx], FloatKind::F64)
-                        }
-                        else
-                        {
-                            Value::Nil
-                        }
-                    }
-                    other => eval_index_cached_value(index_val, other, cache)?,
-                };
-                stack.push(result);
-            }
-            Instruction::IndexAssign =>
-            {
-                let value = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing value for index assignment".to_string(),
-                    line: 0,
-                })?;
-                let index_val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing index for index assignment".to_string(),
-                    line: 0,
-                })?;
-                let target_val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing target for index assignment".to_string(),
-                    line: 0,
-                })?;
-                let result = eval_index_assign_value(interpreter, target_val, index_val, value)?;
-                stack.push(result);
-            }
-            Instruction::F64IndexAssignCached(cache) =>
-            {
-                let value = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing value for index assignment".to_string(),
-                    line: 0,
-                })?;
-                let index_val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing index for index assignment".to_string(),
-                    line: 0,
-                })?;
-                let target_val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing target for index assignment".to_string(),
-                    line: 0,
-                })?;
-                let result = match target_val
-                {
-                    Value::F64Array(arr) =>
-                    {
-                        let out_value = value;
-                        let idx = match index_val
-                        {
-                            Value::Integer { value, .. } if value >= 0 => value as usize,
-                            Value::Unsigned { value, .. } => value as usize,
-                            _ =>
-                            {
-                                let fallback = Value::F64Array(arr.clone());
-                                return eval_index_assign_value(
-                                    interpreter,
-                                    fallback,
-                                    index_val,
-                                    out_value,
-                                );
-                            }
-                        };
-                        let num = match &out_value
-                        {
-                            Value::Float { value, .. } => *value,
-                            Value::Integer { value, .. } => *value as f64,
-                            Value::Unsigned { value, .. } => *value as f64,
-                            other =>
-                            {
-                                let fallback = Value::F64Array(arr.clone());
-                                return eval_index_assign_value(
-                                    interpreter,
-                                    fallback,
-                                    index_val,
-                                    other.clone(),
-                                );
-                            }
-                        };
-                        let arr_ptr = Rc::as_ptr(&arr) as usize;
-                        let mut cache_mut = cache.borrow_mut();
-                        if cache_mut.array_ptr == Some(arr_ptr)
-                            && cache_mut.index_usize == Some(idx)
-                        {
-                            cache_mut.hits += 1;
-                        }
-                        else
-                        {
-                            cache_mut.array_ptr = Some(arr_ptr);
-                            cache_mut.index_usize = Some(idx);
-                            cache_mut.misses += 1;
-                        }
-                        let mut vec = arr.borrow_mut();
-                        if idx < vec.len()
-                        {
-                            vec[idx] = num;
-                            out_value
-                        }
-                        else
-                        {
-                            return Err(RuntimeError {
-                                message: "Array index out of bounds".to_string(),
+                        let current =
+                            int_value_as_i64(&current_val).ok_or_else(|| RuntimeError {
+                                message: "Range index must be a number".to_string(),
                                 line: 0,
+                            })?;
+                        let should_stop = match range_end_num(&end, slots, const_pool)?
+                        {
+                            RangeEndNum::Float(end_f) => (current as f64) >= end_f,
+                            RangeEndNum::Int(end_i) => current >= end_i,
+                        };
+                        if should_stop
+                        {
+                            if let Some(slot) = slots.get_mut(index_slot)
+                            {
+                                *slot = default_int(current as i128);
+                            }
+                            frame.stack.push(Value::Nil);
+                        }
+                        else
+                        {
+                            if let Some(slot) = slots.get_mut(index_slot)
+                            {
+                                *slot = default_int(current as i128);
+                            }
+                            frame.pending = Some(Pending::ForRangeInt(ForRangeIntState {
+                                index_slot,
+                                end,
+                                step,
+                                body: body.clone(),
+                                current,
+                                last: Value::Nil,
+                            }));
+                            next_frame = Some(Frame {
+                                code: body.clone(),
+                                ip: 0,
+                                stack: Vec::with_capacity(8),
+                                pending: None,
                             });
                         }
                     }
-                    other => eval_index_assign_value(
-                        interpreter,
-                        other,
-                        index_val,
-                        value,
-                    )?,
-                };
-                stack.push(result);
-            }
-            Instruction::F64ArrayGen { count } =>
-            {
-                let n = if let Some(count) = count
-                {
-                    *count
                 }
-                else
+                Instruction::ForRangeFloat {
+                    index_slot,
+                    end,
+                    step,
+                    kind,
+                    body,
+                } =>
                 {
-                    let size_val = stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing size for array generator".to_string(),
-                        line: 0,
-                    })?;
-                    int_value_as_usize(&size_val).ok_or_else(|| RuntimeError {
-                        message: "Array size must be a non-negative integer".to_string(),
-                        line: 0,
-                    })?
-                };
-                if let Some(count) = count
+                    let current_val =
+                        slots.get(index_slot).cloned().ok_or_else(|| RuntimeError {
+                            message: "Range index must be a number".to_string(),
+                            line: 0,
+                        })?;
+                    let (current, kind) = match current_val
+                    {
+                        Value::Float {
+                            value,
+                            kind: current_kind,
+                        } => (value, promote_float_kind(current_kind, kind)),
+                        _ =>
+                        {
+                            let current =
+                                int_value_as_f64(&current_val).ok_or_else(|| RuntimeError {
+                                    message: "Range index must be a number".to_string(),
+                                    line: 0,
+                                })?;
+                            (current, kind)
+                        }
+                    };
+                    let step_f = normalize_float_value(step, kind);
+                    let end_f = range_end_f64(&end, slots, const_pool)?;
+                    if current >= end_f
+                    {
+                        if let Some(slot) = slots.get_mut(index_slot)
+                        {
+                            *slot = make_float(current, kind);
+                        }
+                        frame.stack.push(Value::Nil);
+                    }
+                    else
+                    {
+                        if let Some(slot) = slots.get_mut(index_slot)
+                        {
+                            *slot = make_float(current, kind);
+                        }
+                        frame.pending = Some(Pending::ForRangeFloat(ForRangeFloatState {
+                            index_slot,
+                            end,
+                            step: step_f,
+                            kind,
+                            body: body.clone(),
+                            current,
+                            last: Value::Nil,
+                        }));
+                        next_frame = Some(Frame {
+                            code: body.clone(),
+                            ip: 0,
+                            stack: Vec::with_capacity(8),
+                            pending: None,
+                        });
+                    }
+                }
+                Instruction::MakeArray(count) =>
                 {
-                    if *count > stack.len()
+                    if count > frame.stack.len()
                     {
                         return Err(RuntimeError {
                             message: "Invalid array length".to_string(),
                             line: 0,
                         });
                     }
-                    let mut vals: Vec<f64> = Vec::with_capacity(*count);
-                    for _ in 0..*count
+                    let mut elems = Vec::with_capacity(count);
+                    let mut f64_vals: Vec<f64> = Vec::new();
+                    let mut all_f64 = true;
+                    for _ in 0..count
                     {
-                        let val = stack.pop().unwrap();
-                        let num = match val
+                        let v = frame.stack.pop().unwrap();
+                        if all_f64
+                        {
+                            match v
+                            {
+                                Value::Float { value, .. } => f64_vals.push(value),
+                                v =>
+                                {
+                                    if let Some(num) = int_value_as_f64(&v)
+                                    {
+                                        f64_vals.push(num);
+                                    }
+                                    else
+                                    {
+                                        all_f64 = false;
+                                        elems.extend(
+                                            f64_vals
+                                                .drain(..)
+                                                .map(|value| make_float(value, FloatKind::F64)),
+                                        );
+                                        elems.push(v);
+                                    }
+                                }
+                            }
+                        }
+                        else
+                        {
+                            elems.push(v);
+                        }
+                    }
+                    if all_f64
+                    {
+                        f64_vals.reverse();
+                        frame
+                            .stack
+                            .push(Value::F64Array(Rc::new(RefCell::new(f64_vals))));
+                    }
+                    else
+                    {
+                        elems.reverse();
+                        frame.stack.push(Value::Array(Rc::new(RefCell::new(elems))));
+                    }
+                }
+                Instruction::MakeMap(count) =>
+                {
+                    let pair_count = count.saturating_mul(2);
+                    if pair_count > frame.stack.len()
+                    {
+                        return Err(RuntimeError {
+                            message: "Invalid map length".to_string(),
+                            line: 0,
+                        });
+                    }
+                    let mut entries = Vec::with_capacity(count);
+                    for _ in 0..count
+                    {
+                        let val = frame.stack.pop().unwrap();
+                        let key_val = frame.stack.pop().unwrap();
+                        entries.push((key_val, val));
+                    }
+                    entries.reverse();
+                    let mut map = FxHashMap::default();
+                    for (k_val, v_val) in entries
+                    {
+                        let key = match k_val
+                        {
+                            Value::String(s) => s,
+                            _ => intern::intern_owned(k_val.inspect()),
+                        };
+                        map.insert(key, v_val);
+                    }
+                    frame
+                        .stack
+                        .push(Value::Map(Rc::new(RefCell::new(MapValue::new(map)))));
+                }
+                Instruction::Index =>
+                {
+                    let index_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing index for index expression".to_string(),
+                        line: 0,
+                    })?;
+                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing target for index expression".to_string(),
+                        line: 0,
+                    })?;
+                    let result = match target_val
+                    {
+                        Value::Array(arr) =>
+                        {
+                            if let Some(i) = int_value_as_usize(&index_val)
+                            {
+                                let vec = arr.borrow();
+                                if i < vec.len()
+                                {
+                                    vec[i].clone()
+                                }
+                                else
+                                {
+                                    Value::Nil
+                                }
+                            }
+                            else
+                            {
+                                return Err(err_index_requires_int());
+                            }
+                        }
+                        Value::F64Array(arr) =>
+                        {
+                            if let Some(i) = int_value_as_usize(&index_val)
+                            {
+                                let vec = arr.borrow();
+                                if i < vec.len()
+                                {
+                                    make_float(vec[i], FloatKind::F64)
+                                }
+                                else
+                                {
+                                    Value::Nil
+                                }
+                            }
+                            else
+                            {
+                                return Err(err_index_requires_int());
+                            }
+                        }
+                        Value::Bytes(bytes) =>
+                        {
+                            if let Some(i) = int_value_as_usize(&index_val)
+                            {
+                                if i < bytes.len()
+                                {
+                                    default_int(bytes[i] as i128)
+                                }
+                                else
+                                {
+                                    Value::Nil
+                                }
+                            }
+                            else
+                            {
+                                return Err(err_index_requires_int());
+                            }
+                        }
+                        Value::ByteBuf(buf) =>
+                        {
+                            if let Some(i) = int_value_as_usize(&index_val)
+                            {
+                                let bytes = buf.borrow();
+                                if i < bytes.len()
+                                {
+                                    default_int(bytes[i] as i128)
+                                }
+                                else
+                                {
+                                    Value::Nil
+                                }
+                            }
+                            else
+                            {
+                                return Err(err_index_requires_int());
+                            }
+                        }
+                        Value::BytesView(view) =>
+                        {
+                            if let Some(i) = int_value_as_usize(&index_val)
+                            {
+                                if i < view.len
+                                {
+                                    let idx = view.offset + i;
+                                    let byte = match &view.source
+                                    {
+                                        crate::value::BytesViewSource::Mmap(mmap) => mmap[idx],
+                                        crate::value::BytesViewSource::MmapMut(mmap) =>
+                                        {
+                                            let data = mmap.borrow();
+                                            data[idx]
+                                        }
+                                    };
+                                    default_int(byte as i128)
+                                }
+                                else
+                                {
+                                    Value::Nil
+                                }
+                            }
+                            else
+                            {
+                                return Err(err_index_requires_int());
+                            }
+                        }
+                        Value::Mmap(mmap) =>
+                        {
+                            if let Some(i) = int_value_as_usize(&index_val)
+                            {
+                                if i < mmap.len()
+                                {
+                                    default_int(mmap[i] as i128)
+                                }
+                                else
+                                {
+                                    Value::Nil
+                                }
+                            }
+                            else
+                            {
+                                return Err(err_index_requires_int());
+                            }
+                        }
+                        Value::MmapMut(mmap) =>
+                        {
+                            if let Some(i) = int_value_as_usize(&index_val)
+                            {
+                                let bytes = mmap.borrow();
+                                if i < bytes.len()
+                                {
+                                    default_int(bytes[i] as i128)
+                                }
+                                else
+                                {
+                                    Value::Nil
+                                }
+                            }
+                            else
+                            {
+                                return Err(err_index_requires_int());
+                            }
+                        }
+                        Value::StructInstance(inst) =>
+                        {
+                            if let Value::String(s) = index_val
+                            {
+                                if let Some(idx) = inst.ty.field_map.get(&s)
+                                {
+                                    let fields = inst.fields.borrow();
+                                    fields.get(*idx).cloned().unwrap_or(Value::Nil)
+                                }
+                                else if let Some(method) =
+                                    inst.ty.methods.borrow().get(&s).cloned()
+                                {
+                                    Value::BoundMethod(Rc::new(BoundMethod {
+                                        receiver: Value::StructInstance(inst.clone()),
+                                        func: method,
+                                    }))
+                                }
+                                else
+                                {
+                                    Value::Nil
+                                }
+                            }
+                            else
+                            {
+                                return Err(err_index_unsupported());
+                            }
+                        }
+                        Value::StructType(ty) =>
+                        {
+                            if let Value::String(s) = index_val
+                            {
+                                ty.methods.borrow().get(&s).cloned().unwrap_or(Value::Nil)
+                            }
+                            else
+                            {
+                                return Err(err_index_unsupported());
+                            }
+                        }
+                        Value::Map(map) =>
+                        {
+                            let map_ref = map.borrow();
+                            if let Value::String(s) = index_val
+                            {
+                                if s.as_str() == "keys"
+                                {
+                                    map_keys_array(&map_ref)
+                                }
+                                else if s.as_str() == "values"
+                                {
+                                    map_values_array(&map_ref)
+                                }
+                                else
+                                {
+                                    map_ref.data.get(&s).cloned().unwrap_or(Value::Nil)
+                                }
+                            }
+                            else
+                            {
+                                let key = intern::intern_owned(index_val.inspect());
+                                map_ref.data.get(&key).cloned().unwrap_or(Value::Nil)
+                            }
+                        }
+                        _ => return Err(err_index_unsupported()),
+                    };
+                    frame.stack.push(result);
+                }
+                Instruction::IndexCached(cache) =>
+                {
+                    let index_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing index for index expression".to_string(),
+                        line: 0,
+                    })?;
+                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing target for index expression".to_string(),
+                        line: 0,
+                    })?;
+                    let result = eval_index_cached_value(index_val, target_val, &cache)?;
+                    frame.stack.push(result);
+                }
+                Instruction::MapIndexCached(cache) =>
+                {
+                    let index_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing index for index expression".to_string(),
+                        line: 0,
+                    })?;
+                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing target for index expression".to_string(),
+                        line: 0,
+                    })?;
+                    let result = match target_val
+                    {
+                        Value::StructInstance(inst) =>
+                        {
+                            if let Value::String(s) = index_val
+                            {
+                                if let Some(idx) = inst.ty.field_map.get(&s)
+                                {
+                                    let fields = inst.fields.borrow();
+                                    fields.get(*idx).cloned().unwrap_or(Value::Nil)
+                                }
+                                else if let Some(method) =
+                                    inst.ty.methods.borrow().get(&s).cloned()
+                                {
+                                    Value::BoundMethod(Rc::new(BoundMethod {
+                                        receiver: Value::StructInstance(inst.clone()),
+                                        func: method,
+                                    }))
+                                }
+                                else
+                                {
+                                    Value::Nil
+                                }
+                            }
+                            else
+                            {
+                                return Err(err_index_unsupported());
+                            }
+                        }
+                        Value::StructType(ty) =>
+                        {
+                            if let Value::String(s) = index_val
+                            {
+                                ty.methods.borrow().get(&s).cloned().unwrap_or(Value::Nil)
+                            }
+                            else
+                            {
+                                return Err(err_index_unsupported());
+                            }
+                        }
+                        Value::Map(map) =>
+                        {
+                            if let Value::String(s) = index_val
+                            {
+                                if s.as_str() == "keys"
+                                {
+                                    map_keys_array(&map.borrow())
+                                }
+                                else if s.as_str() == "values"
+                                {
+                                    map_values_array(&map.borrow())
+                                }
+                                else
+                                {
+                                    let map_ptr = Rc::as_ptr(&map) as usize;
+                                    let map_ref = map.borrow();
+                                    eval_map_index_cached(&map_ref, map_ptr, &s, &cache)
+                                }
+                            }
+                            else
+                            {
+                                let key = intern::intern_owned(index_val.inspect());
+                                map.borrow().data.get(&key).cloned().unwrap_or(Value::Nil)
+                            }
+                        }
+                        Value::Array(_) | Value::F64Array(_) =>
+                        {
+                            return Err(err_index_requires_int());
+                        }
+                        _ => return Err(err_index_unsupported()),
+                    };
+                    frame.stack.push(result);
+                }
+                Instruction::F64IndexCached(cache) =>
+                {
+                    let index_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing index for index expression".to_string(),
+                        line: 0,
+                    })?;
+                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing target for index expression".to_string(),
+                        line: 0,
+                    })?;
+                    let result = match target_val
+                    {
+                        Value::F64Array(arr) =>
+                        {
+                            let idx = match index_val
+                            {
+                                Value::Integer { value, .. } if value >= 0 => value as usize,
+                                Value::Unsigned { value, .. } => value as usize,
+                                _ =>
+                                {
+                                    return Err(err_index_requires_int());
+                                }
+                            };
+                            let arr_ptr = Rc::as_ptr(&arr) as usize;
+                            let mut cache_mut = cache.borrow_mut();
+                            if cache_mut.array_ptr == Some(arr_ptr)
+                                && cache_mut.index_usize == Some(idx)
+                            {
+                                cache_mut.hits += 1;
+                            }
+                            else
+                            {
+                                cache_mut.array_ptr = Some(arr_ptr);
+                                cache_mut.index_usize = Some(idx);
+                                cache_mut.misses += 1;
+                            }
+                            let vec = arr.borrow();
+                            if idx < vec.len()
+                            {
+                                make_float(vec[idx], FloatKind::F64)
+                            }
+                            else
+                            {
+                                Value::Nil
+                            }
+                        }
+                        other => eval_index_cached_value(index_val, other, &cache)?,
+                    };
+                    frame.stack.push(result);
+                }
+                Instruction::IndexAssign =>
+                {
+                    let value = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing value for index assignment".to_string(),
+                        line: 0,
+                    })?;
+                    let index_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing index for index assignment".to_string(),
+                        line: 0,
+                    })?;
+                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing target for index assignment".to_string(),
+                        line: 0,
+                    })?;
+                    let result =
+                        eval_index_assign_value(interpreter, target_val, index_val, value)?;
+                    frame.stack.push(result);
+                }
+                Instruction::F64IndexAssignCached(cache) =>
+                {
+                    let value = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing value for index assignment".to_string(),
+                        line: 0,
+                    })?;
+                    let index_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing index for index assignment".to_string(),
+                        line: 0,
+                    })?;
+                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing target for index assignment".to_string(),
+                        line: 0,
+                    })?;
+                    let result = match target_val
+                    {
+                        Value::F64Array(arr) =>
+                        {
+                            let out_value = value;
+                            let idx = match index_val
+                            {
+                                Value::Integer { value, .. } if value >= 0 => value as usize,
+                                Value::Unsigned { value, .. } => value as usize,
+                                _ =>
+                                {
+                                    let fallback = Value::F64Array(arr.clone());
+                                    return eval_index_assign_value(
+                                        interpreter,
+                                        fallback,
+                                        index_val,
+                                        out_value,
+                                    );
+                                }
+                            };
+                            let num = match &out_value
+                            {
+                                Value::Float { value, .. } => *value,
+                                Value::Integer { value, .. } => *value as f64,
+                                Value::Unsigned { value, .. } => *value as f64,
+                                other =>
+                                {
+                                    let fallback = Value::F64Array(arr.clone());
+                                    return eval_index_assign_value(
+                                        interpreter,
+                                        fallback,
+                                        index_val,
+                                        other.clone(),
+                                    );
+                                }
+                            };
+                            let arr_ptr = Rc::as_ptr(&arr) as usize;
+                            let mut cache_mut = cache.borrow_mut();
+                            if cache_mut.array_ptr == Some(arr_ptr)
+                                && cache_mut.index_usize == Some(idx)
+                            {
+                                cache_mut.hits += 1;
+                            }
+                            else
+                            {
+                                cache_mut.array_ptr = Some(arr_ptr);
+                                cache_mut.index_usize = Some(idx);
+                                cache_mut.misses += 1;
+                            }
+                            let mut vec = arr.borrow_mut();
+                            if idx < vec.len()
+                            {
+                                vec[idx] = num;
+                                out_value
+                            }
+                            else
+                            {
+                                return Err(RuntimeError {
+                                    message: "Array index out of bounds".to_string(),
+                                    line: 0,
+                                });
+                            }
+                        }
+                        other => eval_index_assign_value(interpreter, other, index_val, value)?,
+                    };
+                    frame.stack.push(result);
+                }
+                Instruction::F64ArrayGen { count } =>
+                {
+                    let n = if let Some(count) = count
+                    {
+                        count
+                    }
+                    else
+                    {
+                        let size_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                            message: "Missing size for array generator".to_string(),
+                            line: 0,
+                        })?;
+                        int_value_as_usize(&size_val).ok_or_else(|| RuntimeError {
+                            message: "Array size must be a non-negative integer".to_string(),
+                            line: 0,
+                        })?
+                    };
+                    if let Some(count) = count
+                    {
+                        if count > frame.stack.len()
+                        {
+                            return Err(RuntimeError {
+                                message: "Invalid array length".to_string(),
+                                line: 0,
+                            });
+                        }
+                        let mut vals: Vec<f64> = Vec::with_capacity(count);
+                        for _ in 0..count
+                        {
+                            let val = frame.stack.pop().unwrap();
+                            let num = match val
+                            {
+                                Value::Float { value, .. } => value,
+                                Value::Integer { value, .. } => value as f64,
+                                Value::Unsigned { value, .. } => value as f64,
+                                _ =>
+                                {
+                                    return Err(RuntimeError {
+                                        message: "F64Array literal requires numeric elements"
+                                            .to_string(),
+                                        line: 0,
+                                    });
+                                }
+                            };
+                            vals.push(num);
+                        }
+                        vals.reverse();
+                        frame
+                            .stack
+                            .push(Value::F64Array(Rc::new(RefCell::new(vals))));
+                    }
+                    else
+                    {
+                        let gen_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                            message: "Missing generator for array".to_string(),
+                            line: 0,
+                        })?;
+                        let num = match gen_val
                         {
                             Value::Float { value, .. } => value,
                             Value::Integer { value, .. } => value as f64,
@@ -7374,488 +7534,491 @@ fn execute_instructions(
                             _ =>
                             {
                                 return Err(RuntimeError {
-                                    message: "F64Array literal requires numeric elements"
+                                    message: "F64Array generator requires numeric value"
                                         .to_string(),
                                     line: 0,
                                 });
                             }
                         };
-                        vals.push(num);
+                        let vals = vec![num; n];
+                        frame
+                            .stack
+                            .push(Value::F64Array(Rc::new(RefCell::new(vals))));
                     }
-                    vals.reverse();
-                    stack.push(Value::F64Array(Rc::new(RefCell::new(vals))));
                 }
-                else
+                Instruction::ArrayGen =>
                 {
-                    let gen_val = stack.pop().ok_or_else(|| RuntimeError {
+                    let size_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing size for array generator".to_string(),
+                        line: 0,
+                    })?;
+                    let gen_val = frame.stack.pop().ok_or_else(|| RuntimeError {
                         message: "Missing generator for array".to_string(),
                         line: 0,
                     })?;
-                    let num = match gen_val
+                    let n = int_value_as_usize(&size_val).ok_or_else(|| RuntimeError {
+                        message: "Array size must be a non-negative integer".to_string(),
+                        line: 0,
+                    })?;
+                    let mut vals: Vec<Value> = Vec::new();
+                    let mut f64_vals: Vec<f64> = Vec::new();
+                    let mut all_f64 = true;
+                    let mut fast_path = false;
+                    if let Value::Function(data) = gen_val
                     {
-                        Value::Float { value, .. } => value,
-                        Value::Integer { value, .. } => value as f64,
-                        Value::Unsigned { value, .. } => value as f64,
-                        _ =>
+                        for i in 0..n
                         {
-                            return Err(RuntimeError {
-                                message: "F64Array generator requires numeric value".to_string(),
-                                line: 0,
-                            });
-                        }
-                    };
-                    let vals = vec![num; n];
-                    stack.push(Value::F64Array(Rc::new(RefCell::new(vals))));
-                }
-            }
-            Instruction::ArrayGen =>
-            {
-                let size_val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing size for array generator".to_string(),
-                    line: 0,
-                })?;
-                let gen_val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing generator for array".to_string(),
-                    line: 0,
-                })?;
-                let n = int_value_as_usize(&size_val).ok_or_else(|| RuntimeError {
-                    message: "Array size must be a non-negative integer".to_string(),
-                    line: 0,
-                })?;
-                let mut vals: Vec<Value> = Vec::new();
-                let mut f64_vals: Vec<f64> = Vec::new();
-                let mut all_f64 = true;
-                if let Value::Function(data) = gen_val
-                {
-                    for i in 0..n
-                    {
-                        let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(
-                            Value::Uninitialized,
-                            data.declarations.len(),
-                        );
-                        if !data.params.is_empty()
-                        {
-                            new_slots[data.param_offset] = default_int(i as i128);
-                        }
-                        let result = if let Some(code) = &data.code
-                        {
-                            execute_instructions(interpreter, code, const_pool, &mut new_slots)?
-                        }
-                        else if data.uses_env
-                        {
-                            let new_env = interpreter.get_env(Some(data.env.clone()), false);
-                            let original_env = interpreter.env.clone();
-                            interpreter.env = new_env.clone();
-                            let result = interpreter.eval(&data.body, &mut new_slots)?;
-                            interpreter.env = original_env;
-                            interpreter.recycle_env(new_env);
-                            result
-                        }
-                        else
-                        {
-                            interpreter.eval(&data.body, &mut new_slots)?
-                        };
-                        if all_f64
-                        {
-                            match result
+                            let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(
+                                Value::Uninitialized,
+                                data.declarations.len(),
+                            );
+                            if !data.params.is_empty()
                             {
-                                Value::Float { value, .. } => f64_vals.push(value),
-                                Value::Integer { value, .. } => f64_vals.push(value as f64),
-                                Value::Unsigned { value, .. } => f64_vals.push(value as f64),
-                                _ =>
+                                new_slots[data.param_offset] = default_int(i as i128);
+                            }
+                            let result = if let Some(code) = &data.code
+                            {
+                                execute_instructions(interpreter, code, const_pool, &mut new_slots)?
+                            }
+                            else if data.uses_env
+                            {
+                                let new_env = interpreter.get_env(Some(data.env.clone()), false);
+                                let original_env = interpreter.env.clone();
+                                interpreter.env = new_env.clone();
+                                let result = interpreter.eval(&data.body, &mut new_slots)?;
+                                interpreter.env = original_env;
+                                interpreter.recycle_env(new_env);
+                                result
+                            }
+                            else
+                            {
+                                interpreter.eval(&data.body, &mut new_slots)?
+                            };
+                            if all_f64
+                            {
+                                match result
                                 {
-                                    all_f64 = false;
-                                    vals.extend(
-                                        f64_vals
-                                            .drain(..)
-                                            .map(|value| make_float(value, FloatKind::F64)),
-                                    );
-                                    vals.push(result);
+                                    Value::Float { value, .. } => f64_vals.push(value),
+                                    Value::Integer { value, .. } => f64_vals.push(value as f64),
+                                    Value::Unsigned { value, .. } => f64_vals.push(value as f64),
+                                    _ =>
+                                    {
+                                        all_f64 = false;
+                                        vals.extend(
+                                            f64_vals
+                                                .drain(..)
+                                                .map(|value| make_float(value, FloatKind::F64)),
+                                        );
+                                        vals.push(result);
+                                    }
                                 }
                             }
+                            else
+                            {
+                                vals.push(result);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        let num = match &gen_val
+                        {
+                            Value::Float { value, .. } => Some(*value),
+                            Value::Integer { value, .. } => Some(*value as f64),
+                            Value::Unsigned { value, .. } => Some(*value as f64),
+                            _ => None,
+                        };
+                        if let Some(num) = num
+                        {
+                            let vals = vec![num; n];
+                            frame
+                                .stack
+                                .push(Value::F64Array(Rc::new(RefCell::new(vals))));
+                            fast_path = true;
                         }
                         else
                         {
-                            vals.push(result);
-                        }
-                    }
-                }
-                else
-                {
-                    let num = match &gen_val
-                    {
-                        Value::Float { value, .. } => Some(*value),
-                        Value::Integer { value, .. } => Some(*value as f64),
-                        Value::Unsigned { value, .. } => Some(*value as f64),
-                        _ => None,
-                    };
-                    if let Some(num) = num
-                    {
-                        let vals = vec![num; n];
-                        stack.push(Value::F64Array(Rc::new(RefCell::new(vals))));
-                        ip += 1;
-                        continue;
-                    }
-                    for _ in 0..n
-                    {
-                        if all_f64
-                        {
-                            match &gen_val
+                            for _ in 0..n
                             {
-                                Value::Float { value, .. } => f64_vals.push(*value),
-                                Value::Integer { value, .. } => f64_vals.push(*value as f64),
-                                Value::Unsigned { value, .. } => f64_vals.push(*value as f64),
-                                _ =>
+                                if all_f64
                                 {
-                                    all_f64 = false;
-                                    vals.extend(
-                                        f64_vals
-                                            .drain(..)
-                                            .map(|value| make_float(value, FloatKind::F64)),
-                                    );
+                                    match &gen_val
+                                    {
+                                        Value::Float { value, .. } => f64_vals.push(*value),
+                                        Value::Integer { value, .. } =>
+                                        {
+                                            f64_vals.push(*value as f64)
+                                        }
+                                        Value::Unsigned { value, .. } =>
+                                        {
+                                            f64_vals.push(*value as f64)
+                                        }
+                                        _ =>
+                                        {
+                                            all_f64 = false;
+                                            vals.extend(
+                                                f64_vals
+                                                    .drain(..)
+                                                    .map(|value| make_float(value, FloatKind::F64)),
+                                            );
+                                            vals.push(gen_val.clone());
+                                        }
+                                    }
+                                }
+                                else
+                                {
                                     vals.push(gen_val.clone());
                                 }
                             }
                         }
+                    }
+                    if !fast_path
+                    {
+                        if all_f64
+                        {
+                            frame
+                                .stack
+                                .push(Value::F64Array(Rc::new(RefCell::new(f64_vals))));
+                        }
                         else
                         {
-                            vals.push(gen_val.clone());
+                            frame.stack.push(Value::Array(Rc::new(RefCell::new(vals))));
                         }
                     }
                 }
-                if all_f64
+                Instruction::F64Axpy {
+                    dst_slot,
+                    dst_index_slot,
+                    src_slot,
+                    src_index_slot,
+                } =>
                 {
-                    stack.push(Value::F64Array(Rc::new(RefCell::new(f64_vals))));
-                }
-                else
-                {
-                    stack.push(Value::Array(Rc::new(RefCell::new(vals))));
-                }
-            }
-            Instruction::F64Axpy {
-                dst_slot,
-                dst_index_slot,
-                src_slot,
-                src_index_slot,
-            } =>
-            {
-                let scalar_val = stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing scalar for F64Axpy".to_string(),
-                    line: 0,
-                })?;
-                let scalar = match scalar_val
-                {
-                    Value::Float { value, .. } => value,
-                    v => int_value_as_f64(&v).ok_or_else(|| RuntimeError {
-                        message: "F64Axpy requires numeric scalar".to_string(),
+                    let scalar_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing scalar for F64Axpy".to_string(),
                         line: 0,
-                    })?,
-                };
-                let dst_idx = match slots.get(*dst_index_slot)
-                {
-                    Some(v) => number_to_usize(v).ok_or_else(|| RuntimeError {
-                        message: "F64Axpy dst index must be numeric".to_string(),
-                        line: 0,
-                    })?,
-                    None =>
+                    })?;
+                    let scalar = match scalar_val
                     {
-                        return Err(RuntimeError {
+                        Value::Float { value, .. } => value,
+                        v => int_value_as_f64(&v).ok_or_else(|| RuntimeError {
+                            message: "F64Axpy requires numeric scalar".to_string(),
+                            line: 0,
+                        })?,
+                    };
+                    let dst_idx = match slots.get(dst_index_slot)
+                    {
+                        Some(v) => number_to_usize(v).ok_or_else(|| RuntimeError {
                             message: "F64Axpy dst index must be numeric".to_string(),
                             line: 0,
-                        });
-                    }
-                };
-                let src_idx = match slots.get(*src_index_slot)
-                {
-                    Some(v) => number_to_usize(v).ok_or_else(|| RuntimeError {
-                        message: "F64Axpy src index must be numeric".to_string(),
-                        line: 0,
-                    })?,
-                    None =>
+                        })?,
+                        None =>
+                        {
+                            return Err(RuntimeError {
+                                message: "F64Axpy dst index must be numeric".to_string(),
+                                line: 0,
+                            });
+                        }
+                    };
+                    let src_idx = match slots.get(src_index_slot)
                     {
-                        return Err(RuntimeError {
+                        Some(v) => number_to_usize(v).ok_or_else(|| RuntimeError {
                             message: "F64Axpy src index must be numeric".to_string(),
                             line: 0,
-                        });
-                    }
-                };
-                let dst = match slots.get_mut(*dst_slot)
-                {
-                    Some(Value::F64Array(arr)) => arr.clone(),
-                    _ =>
+                        })?,
+                        None =>
+                        {
+                            return Err(RuntimeError {
+                                message: "F64Axpy src index must be numeric".to_string(),
+                                line: 0,
+                            });
+                        }
+                    };
+                    let dst = match slots.get_mut(dst_slot)
+                    {
+                        Some(Value::F64Array(arr)) => arr.clone(),
+                        _ =>
+                        {
+                            return Err(RuntimeError {
+                                message: "F64Axpy requires F64Array dst".to_string(),
+                                line: 0,
+                            });
+                        }
+                    };
+                    let src = match slots.get(src_slot)
+                    {
+                        Some(Value::F64Array(arr)) => arr.clone(),
+                        _ =>
+                        {
+                            return Err(RuntimeError {
+                                message: "F64Axpy requires F64Array src".to_string(),
+                                line: 0,
+                            });
+                        }
+                    };
+                    let mut dst_vec = dst.borrow_mut();
+                    let src_vec = src.borrow();
+                    if dst_idx >= dst_vec.len() || src_idx >= src_vec.len()
                     {
                         return Err(RuntimeError {
-                            message: "F64Axpy requires F64Array dst".to_string(),
+                            message: "F64Axpy index out of bounds".to_string(),
                             line: 0,
                         });
                     }
-                };
-                let src = match slots.get(*src_slot)
+                    let result = dst_vec[dst_idx] + scalar * src_vec[src_idx];
+                    dst_vec[dst_idx] = result;
+                    frame.stack.push(make_float(result, FloatKind::F64));
+                }
+                Instruction::F64DotRange {
+                    acc_slot,
+                    a_slot,
+                    b_slot,
+                    index_slot,
+                    end,
+                } =>
                 {
-                    Some(Value::F64Array(arr)) => arr.clone(),
-                    _ =>
+                    let start = match slots.get(index_slot)
                     {
-                        return Err(RuntimeError {
-                            message: "F64Axpy requires F64Array src".to_string(),
-                            line: 0,
-                        });
-                    }
-                };
-                let mut dst_vec = dst.borrow_mut();
-                let src_vec = src.borrow();
-                if dst_idx >= dst_vec.len() || src_idx >= src_vec.len()
-                {
-                    return Err(RuntimeError {
-                        message: "F64Axpy index out of bounds".to_string(),
+                        Some(v) => number_to_usize(v).unwrap_or(0),
+                        None => 0,
+                    };
+                    let end_val = match end
+                    {
+                        RangeEnd::Slot(s) => slots.get(s).cloned().unwrap_or(Value::Nil),
+                        RangeEnd::Const(idx) => const_pool.get(idx).cloned().unwrap_or(Value::Nil),
+                    };
+                    let end_idx = number_to_usize(&end_val).ok_or_else(|| RuntimeError {
+                        message: "Range end must be a non-negative number".to_string(),
                         line: 0,
-                    });
+                    })?;
+                    let acc = match slots.get(acc_slot)
+                    {
+                        Some(Value::Float { value, .. }) => *value,
+                        Some(v) => int_value_as_f64(v).unwrap_or(0.0),
+                        _ => 0.0,
+                    };
+                    let a = match slots.get(a_slot)
+                    {
+                        Some(Value::F64Array(arr)) => arr.clone(),
+                        _ =>
+                        {
+                            return Err(RuntimeError {
+                                message: "F64DotRange requires F64Array a".to_string(),
+                                line: 0,
+                            });
+                        }
+                    };
+                    let b = match slots.get(b_slot)
+                    {
+                        Some(Value::F64Array(arr)) => arr.clone(),
+                        _ =>
+                        {
+                            return Err(RuntimeError {
+                                message: "F64DotRange requires F64Array b".to_string(),
+                                line: 0,
+                            });
+                        }
+                    };
+                    let a_vec = a.borrow();
+                    let b_vec = b.borrow();
+                    if end_idx > a_vec.len() || end_idx > b_vec.len()
+                    {
+                        return Err(RuntimeError {
+                            message: "F64DotRange index out of bounds".to_string(),
+                            line: 0,
+                        });
+                    }
+                    let mut i = start;
+                    let mut sum = Simd::<f64, 4>::splat(0.0);
+                    while i + 4 <= end_idx
+                    {
+                        let av = Simd::from_slice(&a_vec[i..i + 4]);
+                        let bv = Simd::from_slice(&b_vec[i..i + 4]);
+                        sum += av * bv;
+                        i += 4;
+                    }
+                    let mut total = acc + sum.reduce_sum();
+                    while i < end_idx
+                    {
+                        total += a_vec[i] * b_vec[i];
+                        i += 1;
+                    }
+                    if let Some(slot) = slots.get_mut(acc_slot)
+                    {
+                        *slot = make_float(total, FloatKind::F64);
+                    }
+                    if let Some(slot) = slots.get_mut(index_slot)
+                    {
+                        *slot = default_int(end_idx as i128);
+                    }
+                    frame.stack.push(make_float(total, FloatKind::F64));
                 }
-                let result = dst_vec[dst_idx] + scalar * src_vec[src_idx];
-                dst_vec[dst_idx] = result;
-                stack.push(make_float(result, FloatKind::F64));
-            }
-            Instruction::F64DotRange {
-                acc_slot,
-                a_slot,
-                b_slot,
-                index_slot,
-                end,
-            } =>
-            {
-                let start = match slots.get(*index_slot)
+                Instruction::F64Dot2Range {
+                    acc1_slot,
+                    a1_slot,
+                    b1_slot,
+                    acc2_slot,
+                    a2_slot,
+                    b2_slot,
+                    index_slot,
+                    end,
+                } =>
                 {
-                    Some(v) => number_to_usize(v).unwrap_or(0),
-                    None => 0,
-                };
-                let end_val = match end
-                {
-                    RangeEnd::Slot(s) => slots.get(*s).cloned().unwrap_or(Value::Nil),
-                    RangeEnd::Const(idx) => const_pool.get(*idx).cloned().unwrap_or(Value::Nil),
-                };
-                let end_idx = number_to_usize(&end_val).ok_or_else(|| RuntimeError {
-                    message: "Range end must be a non-negative number".to_string(),
-                    line: 0,
-                })?;
-                let acc = match slots.get(*acc_slot)
-                {
-                    Some(Value::Float { value, .. }) => *value,
-                    Some(v) => int_value_as_f64(v).unwrap_or(0.0),
-                    _ => 0.0,
-                };
-                let a = match slots.get(*a_slot)
-                {
-                    Some(Value::F64Array(arr)) => arr.clone(),
-                    _ =>
+                    let start = match slots.get(index_slot)
                     {
-                        return Err(RuntimeError {
-                            message: "F64DotRange requires F64Array a".to_string(),
-                            line: 0,
-                        });
-                    }
-                };
-                let b = match slots.get(*b_slot)
-                {
-                    Some(Value::F64Array(arr)) => arr.clone(),
-                    _ =>
+                        Some(v) => number_to_usize(v).unwrap_or(0),
+                        None => 0,
+                    };
+                    let end_val = match end
                     {
-                        return Err(RuntimeError {
-                            message: "F64DotRange requires F64Array b".to_string(),
-                            line: 0,
-                        });
-                    }
-                };
-                let a_vec = a.borrow();
-                let b_vec = b.borrow();
-                if end_idx > a_vec.len() || end_idx > b_vec.len()
-                {
-                    return Err(RuntimeError {
-                        message: "F64DotRange index out of bounds".to_string(),
+                        RangeEnd::Slot(s) => slots.get(s).cloned().unwrap_or(Value::Nil),
+                        RangeEnd::Const(idx) => const_pool.get(idx).cloned().unwrap_or(Value::Nil),
+                    };
+                    let end_idx = number_to_usize(&end_val).ok_or_else(|| RuntimeError {
+                        message: "Range end must be a non-negative number".to_string(),
                         line: 0,
-                    });
+                    })?;
+                    let acc1 = match slots.get(acc1_slot)
+                    {
+                        Some(Value::Float { value, .. }) => *value,
+                        Some(v) => int_value_as_f64(v).unwrap_or(0.0),
+                        _ => 0.0,
+                    };
+                    let acc2 = match slots.get(acc2_slot)
+                    {
+                        Some(Value::Float { value, .. }) => *value,
+                        Some(v) => int_value_as_f64(v).unwrap_or(0.0),
+                        _ => 0.0,
+                    };
+                    let a1 = match slots.get(a1_slot)
+                    {
+                        Some(Value::F64Array(arr)) => arr.clone(),
+                        _ =>
+                        {
+                            return Err(RuntimeError {
+                                message: "F64Dot2Range requires F64Array a1".to_string(),
+                                line: 0,
+                            });
+                        }
+                    };
+                    let b1 = match slots.get(b1_slot)
+                    {
+                        Some(Value::F64Array(arr)) => arr.clone(),
+                        _ =>
+                        {
+                            return Err(RuntimeError {
+                                message: "F64Dot2Range requires F64Array b1".to_string(),
+                                line: 0,
+                            });
+                        }
+                    };
+                    let a2 = match slots.get(a2_slot)
+                    {
+                        Some(Value::F64Array(arr)) => arr.clone(),
+                        _ =>
+                        {
+                            return Err(RuntimeError {
+                                message: "F64Dot2Range requires F64Array a2".to_string(),
+                                line: 0,
+                            });
+                        }
+                    };
+                    let b2 = match slots.get(b2_slot)
+                    {
+                        Some(Value::F64Array(arr)) => arr.clone(),
+                        _ =>
+                        {
+                            return Err(RuntimeError {
+                                message: "F64Dot2Range requires F64Array b2".to_string(),
+                                line: 0,
+                            });
+                        }
+                    };
+                    let a1_vec = a1.borrow();
+                    let b1_vec = b1.borrow();
+                    let a2_vec = a2.borrow();
+                    let b2_vec = b2.borrow();
+                    if end_idx > a1_vec.len()
+                        || end_idx > b1_vec.len()
+                        || end_idx > a2_vec.len()
+                        || end_idx > b2_vec.len()
+                    {
+                        return Err(RuntimeError {
+                            message: "F64Dot2Range index out of bounds".to_string(),
+                            line: 0,
+                        });
+                    }
+                    let mut i = start;
+                    let mut sum1 = Simd::<f64, 4>::splat(0.0);
+                    let mut sum2 = Simd::<f64, 4>::splat(0.0);
+                    while i + 4 <= end_idx
+                    {
+                        let a1v = Simd::from_slice(&a1_vec[i..i + 4]);
+                        let b1v = Simd::from_slice(&b1_vec[i..i + 4]);
+                        let a2v = Simd::from_slice(&a2_vec[i..i + 4]);
+                        let b2v = Simd::from_slice(&b2_vec[i..i + 4]);
+                        sum1 += a1v * b1v;
+                        sum2 += a2v * b2v;
+                        i += 4;
+                    }
+                    let mut total1 = acc1 + sum1.reduce_sum();
+                    let mut total2 = acc2 + sum2.reduce_sum();
+                    while i < end_idx
+                    {
+                        total1 += a1_vec[i] * b1_vec[i];
+                        total2 += a2_vec[i] * b2_vec[i];
+                        i += 1;
+                    }
+                    if let Some(slot) = slots.get_mut(acc1_slot)
+                    {
+                        *slot = make_float(total1, FloatKind::F64);
+                    }
+                    if let Some(slot) = slots.get_mut(acc2_slot)
+                    {
+                        *slot = make_float(total2, FloatKind::F64);
+                    }
+                    if let Some(slot) = slots.get_mut(index_slot)
+                    {
+                        *slot = default_int(end_idx as i128);
+                    }
+                    frame.stack.push(make_float(total2, FloatKind::F64));
                 }
-                let mut i = start;
-                let mut sum = Simd::<f64, 4>::splat(0.0);
-                while i + 4 <= end_idx
+                Instruction::Add
+                | Instruction::Sub
+                | Instruction::Mul
+                | Instruction::Div
+                | Instruction::Eq
+                | Instruction::Gt
+                | Instruction::Lt =>
                 {
-                    let av = Simd::from_slice(&a_vec[i..i + 4]);
-                    let bv = Simd::from_slice(&b_vec[i..i + 4]);
-                    sum += av * bv;
-                    i += 4;
+                    let r = frame.stack.pop().unwrap();
+                    let l = frame.stack.pop().unwrap();
+                    let op = match inst
+                    {
+                        Instruction::Add => BinOpKind::Add,
+                        Instruction::Sub => BinOpKind::Sub,
+                        Instruction::Mul => BinOpKind::Mul,
+                        Instruction::Div => BinOpKind::Div,
+                        Instruction::Eq => BinOpKind::Eq,
+                        Instruction::Gt => BinOpKind::Gt,
+                        Instruction::Lt => BinOpKind::Lt,
+                        _ => unreachable!(),
+                    };
+                    let res = eval_binop(op, l, r)?;
+                    frame.stack.push(res);
                 }
-                let mut total = acc + sum.reduce_sum();
-                while i < end_idx
-                {
-                    total += a_vec[i] * b_vec[i];
-                    i += 1;
-                }
-                if let Some(slot) = slots.get_mut(*acc_slot)
-                {
-                    *slot = make_float(total, FloatKind::F64);
-                }
-                if let Some(slot) = slots.get_mut(*index_slot)
-                {
-                    *slot = default_int(end_idx as i128);
-                }
-                stack.push(make_float(total, FloatKind::F64));
             }
-            Instruction::F64Dot2Range {
-                acc1_slot,
-                a1_slot,
-                b1_slot,
-                acc2_slot,
-                a2_slot,
-                b2_slot,
-                index_slot,
-                end,
-            } =>
+
+            if advance_ip
             {
-                let start = match slots.get(*index_slot)
-                {
-                    Some(v) => number_to_usize(v).unwrap_or(0),
-                    None => 0,
-                };
-                let end_val = match end
-                {
-                    RangeEnd::Slot(s) => slots.get(*s).cloned().unwrap_or(Value::Nil),
-                    RangeEnd::Const(idx) => const_pool.get(*idx).cloned().unwrap_or(Value::Nil),
-                };
-                let end_idx = number_to_usize(&end_val).ok_or_else(|| RuntimeError {
-                    message: "Range end must be a non-negative number".to_string(),
-                    line: 0,
-                })?;
-                let acc1 = match slots.get(*acc1_slot)
-                {
-                    Some(Value::Float { value, .. }) => *value,
-                    Some(v) => int_value_as_f64(v).unwrap_or(0.0),
-                    _ => 0.0,
-                };
-                let acc2 = match slots.get(*acc2_slot)
-                {
-                    Some(Value::Float { value, .. }) => *value,
-                    Some(v) => int_value_as_f64(v).unwrap_or(0.0),
-                    _ => 0.0,
-                };
-                let a1 = match slots.get(*a1_slot)
-                {
-                    Some(Value::F64Array(arr)) => arr.clone(),
-                    _ =>
-                    {
-                        return Err(RuntimeError {
-                            message: "F64Dot2Range requires F64Array a1".to_string(),
-                            line: 0,
-                        });
-                    }
-                };
-                let b1 = match slots.get(*b1_slot)
-                {
-                    Some(Value::F64Array(arr)) => arr.clone(),
-                    _ =>
-                    {
-                        return Err(RuntimeError {
-                            message: "F64Dot2Range requires F64Array b1".to_string(),
-                            line: 0,
-                        });
-                    }
-                };
-                let a2 = match slots.get(*a2_slot)
-                {
-                    Some(Value::F64Array(arr)) => arr.clone(),
-                    _ =>
-                    {
-                        return Err(RuntimeError {
-                            message: "F64Dot2Range requires F64Array a2".to_string(),
-                            line: 0,
-                        });
-                    }
-                };
-                let b2 = match slots.get(*b2_slot)
-                {
-                    Some(Value::F64Array(arr)) => arr.clone(),
-                    _ =>
-                    {
-                        return Err(RuntimeError {
-                            message: "F64Dot2Range requires F64Array b2".to_string(),
-                            line: 0,
-                        });
-                    }
-                };
-                let a1_vec = a1.borrow();
-                let b1_vec = b1.borrow();
-                let a2_vec = a2.borrow();
-                let b2_vec = b2.borrow();
-                if end_idx > a1_vec.len()
-                    || end_idx > b1_vec.len()
-                    || end_idx > a2_vec.len()
-                    || end_idx > b2_vec.len()
-                {
-                    return Err(RuntimeError {
-                        message: "F64Dot2Range index out of bounds".to_string(),
-                        line: 0,
-                    });
-                }
-                let mut i = start;
-                let mut sum1 = Simd::<f64, 4>::splat(0.0);
-                let mut sum2 = Simd::<f64, 4>::splat(0.0);
-                while i + 4 <= end_idx
-                {
-                    let a1v = Simd::from_slice(&a1_vec[i..i + 4]);
-                    let b1v = Simd::from_slice(&b1_vec[i..i + 4]);
-                    let a2v = Simd::from_slice(&a2_vec[i..i + 4]);
-                    let b2v = Simd::from_slice(&b2_vec[i..i + 4]);
-                    sum1 += a1v * b1v;
-                    sum2 += a2v * b2v;
-                    i += 4;
-                }
-                let mut total1 = acc1 + sum1.reduce_sum();
-                let mut total2 = acc2 + sum2.reduce_sum();
-                while i < end_idx
-                {
-                    total1 += a1_vec[i] * b1_vec[i];
-                    total2 += a2_vec[i] * b2_vec[i];
-                    i += 1;
-                }
-                if let Some(slot) = slots.get_mut(*acc1_slot)
-                {
-                    *slot = make_float(total1, FloatKind::F64);
-                }
-                if let Some(slot) = slots.get_mut(*acc2_slot)
-                {
-                    *slot = make_float(total2, FloatKind::F64);
-                }
-                if let Some(slot) = slots.get_mut(*index_slot)
-                {
-                    *slot = default_int(end_idx as i128);
-                }
-                stack.push(make_float(total2, FloatKind::F64));
-            }
-            Instruction::Add
-            | Instruction::Sub
-            | Instruction::Mul
-            | Instruction::Div
-            | Instruction::Eq
-            | Instruction::Gt
-            | Instruction::Lt =>
-            {
-                let r = stack.pop().unwrap();
-                let l = stack.pop().unwrap();
-                let op = match &code[ip]
-                {
-                    Instruction::Add => BinOpKind::Add,
-                    Instruction::Sub => BinOpKind::Sub,
-                    Instruction::Mul => BinOpKind::Mul,
-                    Instruction::Div => BinOpKind::Div,
-                    Instruction::Eq => BinOpKind::Eq,
-                    Instruction::Gt => BinOpKind::Gt,
-                    Instruction::Lt => BinOpKind::Lt,
-                    _ => unreachable!(),
-                };
-                let res = eval_binop(op, l, r)?;
-                stack.push(res);
+                frame.ip += 1;
             }
         }
-        ip += 1;
+
+        if let Some(frame) = next_frame
+        {
+            frames.push(frame);
+        }
     }
-    Ok(stack.pop().unwrap())
 }
 
 fn is_simple(expr: &Expr) -> bool
@@ -7910,10 +8073,7 @@ fn is_simple(expr: &Expr) -> bool
             is_simple(function) && args.iter().all(is_simple)
         }
         ExprKind::Array(elements) => elements.iter().all(is_simple),
-        ExprKind::StructLiteral { fields, .. } =>
-        {
-            fields.iter().all(|(_, v)| is_simple(v))
-        }
+        ExprKind::StructLiteral { fields, .. } => fields.iter().all(|(_, v)| is_simple(v)),
         ExprKind::ArrayGenerator { generator, size } => is_simple(generator) && is_simple(size),
         ExprKind::Map(entries) => entries.iter().all(|(k, v)| is_simple(k) && is_simple(v)),
         ExprKind::Index { target, index } => is_simple(target) && is_simple(index),
@@ -8436,7 +8596,9 @@ impl Interpreter
                 }
                 if !map_mut.data.contains_key(&intern::intern("lib"))
                 {
-                    map_mut.data.insert(intern::intern("lib"), build_lib_module());
+                    map_mut
+                        .data
+                        .insert(intern::intern("lib"), build_lib_module());
                     changed = true;
                 }
                 if changed
@@ -8614,10 +8776,7 @@ impl Interpreter
         for name in &spec.names
         {
             let val = env_ref.get(*name).ok_or_else(|| RuntimeError {
-                message: format!(
-                    "export '{}' not found in module",
-                    symbol_name(*name).as_str()
-                ),
+                message: format!("export '{}' not found in module", symbol_name(*name).as_str()),
                 line: spec.line,
             })?;
             if matches!(val, Value::Uninitialized)
@@ -8654,14 +8813,15 @@ impl Interpreter
         let mut current = match self.get_local_value(first)
         {
             Some(Value::Map(map)) => map,
-            Some(_) => {
+            Some(_) =>
+            {
                 return Err(RuntimeError {
                     message: format!(
                         "Module namespace '{}' is not a module",
                         symbol_name(first).as_str()
                     ),
                     line,
-                })
+                });
             }
             None =>
             {
@@ -8683,7 +8843,9 @@ impl Interpreter
                 else
                 {
                     let new_map = Rc::new(RefCell::new(MapValue::new(FxHashMap::default())));
-                    map_mut.data.insert(seg_name.clone(), Value::Map(new_map.clone()));
+                    map_mut
+                        .data
+                        .insert(seg_name.clone(), Value::Map(new_map.clone()));
                     map_mut.version = map_mut.version.wrapping_add(1);
                     new_map
                 }
@@ -8693,12 +8855,19 @@ impl Interpreter
 
         let last = *namespace.last().unwrap();
         let mut map_mut = current.borrow_mut();
-        map_mut.data.insert(symbol_name(last), Value::Map(module_map));
+        map_mut
+            .data
+            .insert(symbol_name(last), Value::Map(module_map));
         map_mut.version = map_mut.version.wrapping_add(1);
         Ok(())
     }
 
-    fn import_module(&mut self, path: &Rc<String>, alias: Option<SymbolId>, line: usize) -> EvalResult
+    fn import_module(
+        &mut self,
+        path: &Rc<String>,
+        alias: Option<SymbolId>,
+        line: usize,
+    ) -> EvalResult
     {
         let file_path = self.resolve_module_file(path.as_str(), line)?;
         let metadata = fs::metadata(&file_path).map_err(|e| RuntimeError {
@@ -8731,7 +8900,8 @@ impl Interpreter
         {
             self.env.borrow_mut().define(alias, Value::Map(exports_map));
         }
-        self.module_lookup_cache.remove(&Self::module_lookup_key(&namespace));
+        self.module_lookup_cache
+            .remove(&Self::module_lookup_key(&namespace));
         Ok(Value::Nil)
     }
 
@@ -8757,11 +8927,12 @@ impl Interpreter
         let mut ast = match parse_result
         {
             Ok(ast) => ast,
-            Err(_) => {
+            Err(_) =>
+            {
                 return Err(RuntimeError {
                     message: "Failed to parse module file".to_string(),
                     line,
-                })
+                });
             }
         };
 
@@ -8832,7 +9003,8 @@ impl Interpreter
             line,
         })?;
 
-        let module = WasmModule::load(&resolved).map_err(|message| RuntimeError { message, line })?;
+        let module =
+            WasmModule::load(&resolved).map_err(|message| RuntimeError { message, line })?;
         let mut exports = FxHashMap::default();
         {
             let module_ref = module.borrow();
@@ -9275,7 +9447,8 @@ impl Interpreter
 
         let estimated_params = arg_vals
             .iter()
-            .map(|v| match v {
+            .map(|v| match v
+            {
                 Value::String(_) | Value::F64Array(_) | Value::Array(_) => 2,
                 _ => 1,
             })
@@ -9502,12 +9675,10 @@ impl Interpreter
                             line,
                         });
                     };
-                    let byte_len = len
-                        .checked_mul(8)
-                        .ok_or_else(|| RuntimeError {
-                            message: "Wasm array length too large".to_string(),
-                            line,
-                        })?;
+                    let byte_len = len.checked_mul(8).ok_or_else(|| RuntimeError {
+                        message: "Wasm array length too large".to_string(),
+                        line,
+                    })?;
                     let mut results = [WasmValue::I32(0)];
                     let alloc_params = module
                         .func_types
@@ -9605,12 +9776,10 @@ impl Interpreter
                             line,
                         });
                     };
-                    let byte_len = len
-                        .checked_mul(4)
-                        .ok_or_else(|| RuntimeError {
-                            message: "Wasm array length too large".to_string(),
-                            line,
-                        })?;
+                    let byte_len = len.checked_mul(4).ok_or_else(|| RuntimeError {
+                        message: "Wasm array length too large".to_string(),
+                        line,
+                    })?;
                     let mut results = [WasmValue::I32(0)];
                     let alloc_params = module
                         .func_types
@@ -10101,14 +10270,11 @@ impl Interpreter
                 self.import_module(path, *alias, line)?;
                 Ok(Value::Nil)
             }
-            ExprKind::Export { .. } =>
-            {
-                Err(RuntimeError {
-                    message: "export declarations are only valid at the top of module files"
-                        .to_string(),
-                    line,
-                })
-            }
+            ExprKind::Export { .. } => Err(RuntimeError {
+                message: "export declarations are only valid at the top of module files"
+                    .to_string(),
+                line,
+            }),
             ExprKind::Load(path) =>
             {
                 self.load_wasm_module(path, line)?;
@@ -10354,7 +10520,8 @@ impl Interpreter
                             line,
                         })?;
                         let resolved = resolve_type_ref(&self.env, &field.type_ref, line)?;
-                        let coerced = coerce_value_to_type(val.clone(), &resolved, line, key.as_str())?;
+                        let coerced =
+                            coerce_value_to_type(val.clone(), &resolved, line, key.as_str())?;
                         inst.fields.borrow_mut()[*idx] = coerced.clone();
                     }
                     _ =>
@@ -10531,10 +10698,14 @@ impl Interpreter
                         line,
                     });
                 }
-                let type_val = self.env.borrow().get(*type_name).ok_or_else(|| RuntimeError {
-                    message: format!("Unknown struct '{}'", symbol_name(*type_name).as_str()),
-                    line,
-                })?;
+                let type_val = self
+                    .env
+                    .borrow()
+                    .get(*type_name)
+                    .ok_or_else(|| RuntimeError {
+                        message: format!("Unknown struct '{}'", symbol_name(*type_name).as_str()),
+                        line,
+                    })?;
                 let ty = match type_val
                 {
                     Value::StructType(ty) => ty,
@@ -10765,14 +10936,16 @@ impl Interpreter
                 let mut values = Vec::with_capacity(ty.fields.len());
                 for field in &ty.fields
                 {
-                    let val = field_values.remove(&field.name).ok_or_else(|| RuntimeError {
-                        message: format!(
-                            "Missing field '{}' for {}",
-                            field.name.as_str(),
-                            ty.name
-                        ),
-                        line,
-                    })?;
+                    let val = field_values
+                        .remove(&field.name)
+                        .ok_or_else(|| RuntimeError {
+                            message: format!(
+                                "Missing field '{}' for {}",
+                                field.name.as_str(),
+                                ty.name
+                            ),
+                            line,
+                        })?;
                     let resolved = resolve_type_ref(&self.env, &field.type_ref, line)?;
                     let coerced = coerce_value_to_type(val, &resolved, line, field.name.as_str())?;
                     values.push(coerced);
@@ -11135,7 +11308,10 @@ impl Interpreter
                                 Value::BytesView(view) => Ok(default_int(view.len as i128)),
                                 Value::Map(map) => Ok(default_int(map.borrow().data.len() as i128)),
                                 Value::Mmap(mmap) => Ok(default_int(mmap.len() as i128)),
-                                Value::MmapMut(mmap) => Ok(default_int(mmap.borrow().len() as i128)),
+                                Value::MmapMut(mmap) =>
+                                {
+                                    Ok(default_int(mmap.borrow().len() as i128))
+                                }
                                 _ => Ok(default_int(0)),
                             };
                         }

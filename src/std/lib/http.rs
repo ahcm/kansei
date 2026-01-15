@@ -16,7 +16,13 @@ fn str_arg(args: &[Value], idx: usize, name: &str) -> Result<String, String>
 fn response_map(status: i64, body: String) -> Value
 {
     let mut map = FxHashMap::default();
-    map.insert(intern::intern("status"), Value::Integer { value: status as i128, kind: crate::ast::IntKind::I64 });
+    map.insert(
+        intern::intern("status"),
+        Value::Integer {
+            value: status as i128,
+            kind: crate::ast::IntKind::I64,
+        },
+    );
     map.insert(intern::intern("body"), Value::String(intern::intern_owned(body)));
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
 }

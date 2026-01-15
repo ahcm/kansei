@@ -36,10 +36,7 @@ fn bytes_from_value(value: &Value, name: &str) -> Result<Vec<u8>, String>
             let end = view.offset.saturating_add(view.len);
             match &view.source
             {
-                crate::value::BytesViewSource::Mmap(mmap) =>
-                {
-                    Ok(mmap[view.offset..end].to_vec())
-                }
+                crate::value::BytesViewSource::Mmap(mmap) => Ok(mmap[view.offset..end].to_vec()),
                 crate::value::BytesViewSource::MmapMut(mmap) =>
                 {
                     let data = mmap.borrow();
@@ -69,8 +66,7 @@ fn native_mmap_open(args: &[Value]) -> Result<Value, String>
                 .read(true)
                 .open(&path)
                 .map_err(|e| format!("Mmap.open failed: {e}"))?;
-            let mmap = unsafe { Mmap::map(&file) }
-                .map_err(|e| format!("Mmap.open failed: {e}"))?;
+            let mmap = unsafe { Mmap::map(&file) }.map_err(|e| format!("Mmap.open failed: {e}"))?;
             Ok(Value::Mmap(Rc::new(mmap)))
         }
         "rw" =>
@@ -80,8 +76,8 @@ fn native_mmap_open(args: &[Value]) -> Result<Value, String>
                 .write(true)
                 .open(&path)
                 .map_err(|e| format!("Mmap.open failed: {e}"))?;
-            let mmap = unsafe { MmapMut::map_mut(&file) }
-                .map_err(|e| format!("Mmap.open failed: {e}"))?;
+            let mmap =
+                unsafe { MmapMut::map_mut(&file) }.map_err(|e| format!("Mmap.open failed: {e}"))?;
             Ok(Value::MmapMut(Rc::new(RefCell::new(mmap))))
         }
         _ => Err("Mmap.open mode must be \"r\" or \"rw\"".to_string()),
@@ -90,18 +86,28 @@ fn native_mmap_open(args: &[Value]) -> Result<Value, String>
 
 fn native_mmap_len(args: &[Value]) -> Result<Value, String>
 {
-    let value = args.get(0).ok_or_else(|| "Mmap.len expects a mapping".to_string())?;
+    let value = args
+        .get(0)
+        .ok_or_else(|| "Mmap.len expects a mapping".to_string())?;
     match value
     {
-        Value::Mmap(mmap) => Ok(Value::Integer { value: mmap.len() as i128, kind: crate::ast::IntKind::I64 }),
-        Value::MmapMut(mmap) => Ok(Value::Integer { value: mmap.borrow().len() as i128, kind: crate::ast::IntKind::I64 }),
+        Value::Mmap(mmap) => Ok(Value::Integer {
+            value: mmap.len() as i128,
+            kind: crate::ast::IntKind::I64,
+        }),
+        Value::MmapMut(mmap) => Ok(Value::Integer {
+            value: mmap.borrow().len() as i128,
+            kind: crate::ast::IntKind::I64,
+        }),
         _ => Err("Mmap.len expects a mapping".to_string()),
     }
 }
 
 fn native_mmap_read(args: &[Value]) -> Result<Value, String>
 {
-    let value = args.get(0).ok_or_else(|| "Mmap.read expects a mapping".to_string())?;
+    let value = args
+        .get(0)
+        .ok_or_else(|| "Mmap.read expects a mapping".to_string())?;
     let start = int_arg(args, 1, "Mmap.read")?;
     let len = int_arg(args, 2, "Mmap.read")?;
     if start < 0 || len < 0
@@ -142,13 +148,19 @@ fn native_mmap_slice(args: &[Value]) -> Result<Value, String>
 
 fn native_mmap_write(args: &[Value]) -> Result<Value, String>
 {
-    let value = args.get(0).ok_or_else(|| "Mmap.write expects a mapping".to_string())?;
+    let value = args
+        .get(0)
+        .ok_or_else(|| "Mmap.write expects a mapping".to_string())?;
     let start = int_arg(args, 1, "Mmap.write")?;
     if start < 0
     {
         return Err("Mmap.write expects a non-negative start".to_string());
     }
-    let bytes = bytes_from_value(args.get(2).ok_or_else(|| "Mmap.write expects bytes".to_string())?, "Mmap.write")?;
+    let bytes = bytes_from_value(
+        args.get(2)
+            .ok_or_else(|| "Mmap.write expects bytes".to_string())?,
+        "Mmap.write",
+    )?;
     let start = start as usize;
     match value
     {
@@ -169,12 +181,16 @@ fn native_mmap_write(args: &[Value]) -> Result<Value, String>
 
 fn native_mmap_flush(args: &[Value]) -> Result<Value, String>
 {
-    let value = args.get(0).ok_or_else(|| "Mmap.flush expects a writable mapping".to_string())?;
+    let value = args
+        .get(0)
+        .ok_or_else(|| "Mmap.flush expects a writable mapping".to_string())?;
     match value
     {
         Value::MmapMut(mmap) =>
         {
-            mmap.borrow().flush().map_err(|e| format!("Mmap.flush failed: {e}"))?;
+            mmap.borrow()
+                .flush()
+                .map_err(|e| format!("Mmap.flush failed: {e}"))?;
             Ok(Value::Boolean(true))
         }
         _ => Err("Mmap.flush expects a writable mapping".to_string()),

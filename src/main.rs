@@ -3,10 +3,10 @@
 mod ast;
 mod eval;
 mod intern;
-mod lexer;
-mod parser;
 #[path = "std/mod.rs"]
 mod kansei_std;
+mod lexer;
+mod parser;
 mod value;
 mod wasm;
 

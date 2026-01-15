@@ -23,7 +23,8 @@ fn array_strings(val: Option<&Value>, name: &str) -> Result<Vec<String>, String>
         Some(Value::Array(arr)) => arr
             .borrow()
             .iter()
-            .map(|v| match v {
+            .map(|v| match v
+            {
                 Value::String(s) => Ok(s.as_str().to_string()),
                 _ => Err(format!("{name} expects an array of strings")),
             })
@@ -42,20 +43,12 @@ fn native_clap_parse(args: &[Value]) -> Result<Value, String>
     for flag in &flags
     {
         let name = leak_name(arg_name(flag));
-        cmd = cmd.arg(
-            Arg::new(name)
-                .long(name)
-                .action(ArgAction::SetTrue),
-        );
+        cmd = cmd.arg(Arg::new(name).long(name).action(ArgAction::SetTrue));
     }
     for opt in &options
     {
         let name = leak_name(arg_name(opt));
-        cmd = cmd.arg(
-            Arg::new(name)
-                .long(name)
-                .action(ArgAction::Set),
-        );
+        cmd = cmd.arg(Arg::new(name).long(name).action(ArgAction::Set));
     }
     cmd = cmd.arg(
         Arg::new("args")

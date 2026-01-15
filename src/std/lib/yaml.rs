@@ -27,19 +27,22 @@ fn value_to_json(value: &Value) -> JsonValue
 fn native_yaml_parse(args: &[Value]) -> Result<Value, String>
 {
     let text = str_arg(args, 0, "Yaml.parse")?;
-    let yaml_val: serde_yaml::Value = serde_yaml::from_str(&text)
-        .map_err(|e| format!("Yaml.parse failed: {e}"))?;
+    let yaml_val: serde_yaml::Value =
+        serde_yaml::from_str(&text).map_err(|e| format!("Yaml.parse failed: {e}"))?;
     let json = serde_json::to_value(yaml_val).map_err(|e| format!("Yaml.parse failed: {e}"))?;
     Ok(json_to_value(json))
 }
 
 fn native_yaml_stringify(args: &[Value]) -> Result<Value, String>
 {
-    let value = args.get(0).ok_or_else(|| "Yaml.stringify expects a value".to_string())?;
+    let value = args
+        .get(0)
+        .ok_or_else(|| "Yaml.stringify expects a value".to_string())?;
     let json = value_to_json(value);
-    let yaml_val: serde_yaml::Value = serde_json::from_value(json)
-        .map_err(|e| format!("Yaml.stringify failed: {e}"))?;
-    let out = serde_yaml::to_string(&yaml_val).map_err(|e| format!("Yaml.stringify failed: {e}"))?;
+    let yaml_val: serde_yaml::Value =
+        serde_json::from_value(json).map_err(|e| format!("Yaml.stringify failed: {e}"))?;
+    let out =
+        serde_yaml::to_string(&yaml_val).map_err(|e| format!("Yaml.stringify failed: {e}"))?;
     Ok(Value::String(intern::intern_owned(out)))
 }
 

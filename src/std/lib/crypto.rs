@@ -19,10 +19,7 @@ fn bytes_arg(args: &[Value], idx: usize, name: &str) -> Result<Vec<u8>, String>
             let end = view.offset.saturating_add(view.len);
             match &view.source
             {
-                crate::value::BytesViewSource::Mmap(mmap) =>
-                {
-                    Ok(mmap[view.offset..end].to_vec())
-                }
+                crate::value::BytesViewSource::Mmap(mmap) => Ok(mmap[view.offset..end].to_vec()),
                 crate::value::BytesViewSource::MmapMut(mmap) =>
                 {
                     let data = mmap.borrow();
@@ -40,10 +37,19 @@ fn int_arg(args: &[Value], idx: usize, name: &str) -> Result<usize, String>
     {
         Some(Value::Integer { value, .. }) =>
         {
-            if *value < 0 { Err(format!("{name} expects non-negative integer")) }
-            else { usize::try_from(*value).map_err(|_| format!("{name} expects non-negative integer")) }
+            if *value < 0
+            {
+                Err(format!("{name} expects non-negative integer"))
+            }
+            else
+            {
+                usize::try_from(*value).map_err(|_| format!("{name} expects non-negative integer"))
+            }
         }
-        Some(Value::Unsigned { value, .. }) => usize::try_from(*value).map_err(|_| format!("{name} expects non-negative integer")),
+        Some(Value::Unsigned { value, .. }) =>
+        {
+            usize::try_from(*value).map_err(|_| format!("{name} expects non-negative integer"))
+        }
         _ => Err(format!("{name} expects an integer")),
     }
 }
@@ -110,6 +116,9 @@ pub fn build_crypto_module() -> Value
     map.insert(intern::intern("blake3"), Value::NativeFunction(native_crypto_blake3));
     map.insert(intern::intern("hmac_sha256"), Value::NativeFunction(native_crypto_hmac_sha256));
     map.insert(intern::intern("random_bytes"), Value::NativeFunction(native_crypto_random_bytes));
-    map.insert(intern::intern("random_bytes_buf"), Value::NativeFunction(native_crypto_random_bytes_buf));
+    map.insert(
+        intern::intern("random_bytes_buf"),
+        Value::NativeFunction(native_crypto_random_bytes_buf),
+    );
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
 }

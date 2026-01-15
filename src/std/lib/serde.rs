@@ -15,15 +15,24 @@ pub(crate) fn json_to_value(json: JsonValue) -> Value
         {
             if let Some(i) = n.as_i64()
             {
-                Value::Integer { value: i as i128, kind: crate::ast::IntKind::I64 }
+                Value::Integer {
+                    value: i as i128,
+                    kind: crate::ast::IntKind::I64,
+                }
             }
             else if let Some(u) = n.as_u64()
             {
-                Value::Unsigned { value: u as u128, kind: crate::ast::IntKind::U64 }
+                Value::Unsigned {
+                    value: u as u128,
+                    kind: crate::ast::IntKind::U64,
+                }
             }
             else
             {
-                Value::Float { value: n.as_f64().unwrap_or(0.0), kind: crate::ast::FloatKind::F64 }
+                Value::Float {
+                    value: n.as_f64().unwrap_or(0.0),
+                    kind: crate::ast::FloatKind::F64,
+                }
             }
         }
         JsonValue::String(s) => Value::String(intern::intern_owned(s)),
@@ -52,12 +61,9 @@ pub(crate) fn value_to_json(value: &Value) -> JsonValue
         Value::Boolean(b) => JsonValue::Bool(*b),
         Value::Integer { value, .. } => JsonValue::Number(serde_json::Number::from(*value as i64)),
         Value::Unsigned { value, .. } => JsonValue::Number(serde_json::Number::from(*value as u64)),
-        Value::Float { value, .. } =>
-        {
-            serde_json::Number::from_f64(*value)
-                .map(JsonValue::Number)
-                .unwrap_or(JsonValue::Null)
-        }
+        Value::Float { value, .. } => serde_json::Number::from_f64(*value)
+            .map(JsonValue::Number)
+            .unwrap_or(JsonValue::Null),
         Value::String(s) => JsonValue::String(s.as_str().to_string()),
         Value::Array(arr) =>
         {
@@ -66,7 +72,16 @@ pub(crate) fn value_to_json(value: &Value) -> JsonValue
         }
         Value::F64Array(arr) =>
         {
-            let vals = arr.borrow().iter().map(|v| JsonValue::Number(serde_json::Number::from_f64(*v).unwrap_or_else(|| serde_json::Number::from(0)))).collect();
+            let vals = arr
+                .borrow()
+                .iter()
+                .map(|v| {
+                    JsonValue::Number(
+                        serde_json::Number::from_f64(*v)
+                            .unwrap_or_else(|| serde_json::Number::from(0)),
+                    )
+                })
+                .collect();
             JsonValue::Array(vals)
         }
         Value::Map(map) =>
@@ -88,8 +103,8 @@ fn native_serde_parse(args: &[Value]) -> Result<Value, String>
     {
         Some(Value::String(s)) =>
         {
-            let json: JsonValue = serde_json::from_str(s.as_str())
-                .map_err(|e| format!("Serde.parse failed: {e}"))?;
+            let json: JsonValue =
+                serde_json::from_str(s.as_str()).map_err(|e| format!("Serde.parse failed: {e}"))?;
             Ok(json_to_value(json))
         }
         _ => Err("Serde.parse expects a JSON string".to_string()),
@@ -98,7 +113,9 @@ fn native_serde_parse(args: &[Value]) -> Result<Value, String>
 
 fn native_serde_stringify(args: &[Value]) -> Result<Value, String>
 {
-    let value = args.get(0).ok_or_else(|| "Serde.stringify expects a value".to_string())?;
+    let value = args
+        .get(0)
+        .ok_or_else(|| "Serde.stringify expects a value".to_string())?;
     let json = value_to_json(value);
     let out = serde_json::to_string(&json).map_err(|e| format!("Serde.stringify failed: {e}"))?;
     Ok(Value::String(intern::intern_owned(out)))

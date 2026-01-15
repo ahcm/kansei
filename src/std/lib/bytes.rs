@@ -72,10 +72,7 @@ fn bytes_to_vec(value: &Value, name: &str) -> Result<Vec<u8>, String>
             let end = view.offset.saturating_add(view.len);
             match &view.source
             {
-                crate::value::BytesViewSource::Mmap(mmap) =>
-                {
-                    Ok(mmap[view.offset..end].to_vec())
-                }
+                crate::value::BytesViewSource::Mmap(mmap) => Ok(mmap[view.offset..end].to_vec()),
                 crate::value::BytesViewSource::MmapMut(mmap) =>
                 {
                     let data = mmap.borrow();
@@ -121,10 +118,7 @@ fn bytes_slice(value: &Value, start: usize, len: usize) -> Result<Vec<u8>, Strin
             let abs_end = view.offset + end;
             match &view.source
             {
-                crate::value::BytesViewSource::Mmap(mmap) =>
-                {
-                    Ok(mmap[abs_start..abs_end].to_vec())
-                }
+                crate::value::BytesViewSource::Mmap(mmap) => Ok(mmap[abs_start..abs_end].to_vec()),
                 crate::value::BytesViewSource::MmapMut(mmap) =>
                 {
                     let data = mmap.borrow();
@@ -166,17 +160,18 @@ fn native_bytes_from_string(args: &[Value]) -> Result<Value, String>
 {
     match args.get(0)
     {
-        Some(Value::String(s)) =>
-        {
-            Ok(Value::Bytes(Rc::new(s.as_bytes().to_vec())))
-        }
+        Some(Value::String(s)) => Ok(Value::Bytes(Rc::new(s.as_bytes().to_vec()))),
         _ => Err("Bytes.from_string expects a string".to_string()),
     }
 }
 
 fn native_bytes_to_string(args: &[Value]) -> Result<Value, String>
 {
-    let bytes = bytes_to_vec(args.get(0).ok_or_else(|| "Bytes.to_string expects bytes".to_string())?, "Bytes.to_string")?;
+    let bytes = bytes_to_vec(
+        args.get(0)
+            .ok_or_else(|| "Bytes.to_string expects bytes".to_string())?,
+        "Bytes.to_string",
+    )?;
     match String::from_utf8(bytes)
     {
         Ok(s) => Ok(Value::String(intern::intern_owned(s))),
@@ -186,34 +181,50 @@ fn native_bytes_to_string(args: &[Value]) -> Result<Value, String>
 
 fn native_bytes_from_array(args: &[Value]) -> Result<Value, String>
 {
-    let arr = args.get(0).ok_or_else(|| "Bytes.from_array expects an array".to_string())?;
+    let arr = args
+        .get(0)
+        .ok_or_else(|| "Bytes.from_array expects an array".to_string())?;
     let bytes = bytes_from_array(arr, "Bytes.from_array")?;
     Ok(Value::Bytes(Rc::new(bytes)))
 }
 
 fn native_bytes_to_array(args: &[Value]) -> Result<Value, String>
 {
-    let bytes = bytes_to_vec(args.get(0).ok_or_else(|| "Bytes.to_array expects bytes".to_string())?, "Bytes.to_array")?;
+    let bytes = bytes_to_vec(
+        args.get(0)
+            .ok_or_else(|| "Bytes.to_array expects bytes".to_string())?,
+        "Bytes.to_array",
+    )?;
     let vals = bytes
         .into_iter()
-        .map(|b| Value::Integer { value: b as i128, kind: crate::ast::IntKind::I64 })
+        .map(|b| Value::Integer {
+            value: b as i128,
+            kind: crate::ast::IntKind::I64,
+        })
         .collect::<Vec<_>>();
     Ok(Value::Array(Rc::new(RefCell::new(vals))))
 }
 
 fn native_bytes_len(args: &[Value]) -> Result<Value, String>
 {
-    let value = args.get(0).ok_or_else(|| "Bytes.len expects bytes".to_string())?;
+    let value = args
+        .get(0)
+        .ok_or_else(|| "Bytes.len expects bytes".to_string())?;
     match bytes_len(value)
     {
-        Some(len) => Ok(Value::Integer { value: len as i128, kind: crate::ast::IntKind::I64 }),
+        Some(len) => Ok(Value::Integer {
+            value: len as i128,
+            kind: crate::ast::IntKind::I64,
+        }),
         None => Err("Bytes.len expects Bytes, ByteBuf, BytesView, Mmap, or String".to_string()),
     }
 }
 
 fn native_bytes_slice(args: &[Value]) -> Result<Value, String>
 {
-    let value = args.get(0).ok_or_else(|| "Bytes.slice expects bytes".to_string())?;
+    let value = args
+        .get(0)
+        .ok_or_else(|| "Bytes.slice expects bytes".to_string())?;
     let start = int_arg(args, 1, "Bytes.slice")?;
     let len = int_arg(args, 2, "Bytes.slice")?;
     if start < 0 || len < 0
@@ -226,7 +237,9 @@ fn native_bytes_slice(args: &[Value]) -> Result<Value, String>
 
 fn native_bytes_slice_view(args: &[Value]) -> Result<Value, String>
 {
-    let value = args.get(0).ok_or_else(|| "Bytes.slice_view expects bytes".to_string())?;
+    let value = args
+        .get(0)
+        .ok_or_else(|| "Bytes.slice_view expects bytes".to_string())?;
     let start = int_arg(args, 1, "Bytes.slice_view")?;
     let len = int_arg(args, 2, "Bytes.slice_view")?;
     if start < 0 || len < 0
@@ -285,7 +298,9 @@ fn native_bytes_buf(args: &[Value]) -> Result<Value, String>
 
 fn native_bytes_get(args: &[Value]) -> Result<Value, String>
 {
-    let value = args.get(0).ok_or_else(|| "Bytes.get expects bytes".to_string())?;
+    let value = args
+        .get(0)
+        .ok_or_else(|| "Bytes.get expects bytes".to_string())?;
     let idx = int_arg(args, 1, "Bytes.get")?;
     if idx < 0
     {
@@ -298,7 +313,10 @@ fn native_bytes_get(args: &[Value]) -> Result<Value, String>
         {
             if idx < bytes.len()
             {
-                Ok(Value::Integer { value: bytes[idx] as i128, kind: crate::ast::IntKind::I64 })
+                Ok(Value::Integer {
+                    value: bytes[idx] as i128,
+                    kind: crate::ast::IntKind::I64,
+                })
             }
             else
             {
@@ -310,7 +328,10 @@ fn native_bytes_get(args: &[Value]) -> Result<Value, String>
             let data = buf.borrow();
             if idx < data.len()
             {
-                Ok(Value::Integer { value: data[idx] as i128, kind: crate::ast::IntKind::I64 })
+                Ok(Value::Integer {
+                    value: data[idx] as i128,
+                    kind: crate::ast::IntKind::I64,
+                })
             }
             else
             {
@@ -331,7 +352,10 @@ fn native_bytes_get(args: &[Value]) -> Result<Value, String>
                         data[offset]
                     }
                 };
-                Ok(Value::Integer { value: byte as i128, kind: crate::ast::IntKind::I64 })
+                Ok(Value::Integer {
+                    value: byte as i128,
+                    kind: crate::ast::IntKind::I64,
+                })
             }
             else
             {
@@ -343,7 +367,10 @@ fn native_bytes_get(args: &[Value]) -> Result<Value, String>
             let bytes = s.as_bytes();
             if idx < bytes.len()
             {
-                Ok(Value::Integer { value: bytes[idx] as i128, kind: crate::ast::IntKind::I64 })
+                Ok(Value::Integer {
+                    value: bytes[idx] as i128,
+                    kind: crate::ast::IntKind::I64,
+                })
             }
             else
             {
@@ -354,7 +381,10 @@ fn native_bytes_get(args: &[Value]) -> Result<Value, String>
         {
             if idx < mmap.len()
             {
-                Ok(Value::Integer { value: mmap[idx] as i128, kind: crate::ast::IntKind::I64 })
+                Ok(Value::Integer {
+                    value: mmap[idx] as i128,
+                    kind: crate::ast::IntKind::I64,
+                })
             }
             else
             {
@@ -366,7 +396,10 @@ fn native_bytes_get(args: &[Value]) -> Result<Value, String>
             let data = mmap.borrow();
             if idx < data.len()
             {
-                Ok(Value::Integer { value: data[idx] as i128, kind: crate::ast::IntKind::I64 })
+                Ok(Value::Integer {
+                    value: data[idx] as i128,
+                    kind: crate::ast::IntKind::I64,
+                })
             }
             else
             {
@@ -379,14 +412,20 @@ fn native_bytes_get(args: &[Value]) -> Result<Value, String>
 
 fn native_bytes_set(args: &[Value]) -> Result<Value, String>
 {
-    let value = args.get(0).ok_or_else(|| "Bytes.set expects ByteBuf or MmapMut".to_string())?;
+    let value = args
+        .get(0)
+        .ok_or_else(|| "Bytes.set expects ByteBuf or MmapMut".to_string())?;
     let idx = int_arg(args, 1, "Bytes.set")?;
     if idx < 0
     {
         return Err("Bytes.set expects a non-negative index".to_string());
     }
     let idx = idx as usize;
-    let byte = byte_value(args.get(2).ok_or_else(|| "Bytes.set expects a byte".to_string())?, "Bytes.set")?;
+    let byte = byte_value(
+        args.get(2)
+            .ok_or_else(|| "Bytes.set expects a byte".to_string())?,
+        "Bytes.set",
+    )?;
     match value
     {
         Value::ByteBuf(buf) =>
@@ -421,8 +460,14 @@ fn native_bytes_set(args: &[Value]) -> Result<Value, String>
 
 fn native_bytes_push(args: &[Value]) -> Result<Value, String>
 {
-    let value = args.get(0).ok_or_else(|| "Bytes.push expects ByteBuf".to_string())?;
-    let byte = byte_value(args.get(1).ok_or_else(|| "Bytes.push expects a byte".to_string())?, "Bytes.push")?;
+    let value = args
+        .get(0)
+        .ok_or_else(|| "Bytes.push expects ByteBuf".to_string())?;
+    let byte = byte_value(
+        args.get(1)
+            .ok_or_else(|| "Bytes.push expects a byte".to_string())?,
+        "Bytes.push",
+    )?;
     match value
     {
         Value::ByteBuf(buf) =>
@@ -436,8 +481,14 @@ fn native_bytes_push(args: &[Value]) -> Result<Value, String>
 
 fn native_bytes_fill(args: &[Value]) -> Result<Value, String>
 {
-    let value = args.get(0).ok_or_else(|| "Bytes.fill expects ByteBuf".to_string())?;
-    let byte = byte_value(args.get(1).ok_or_else(|| "Bytes.fill expects a byte".to_string())?, "Bytes.fill")?;
+    let value = args
+        .get(0)
+        .ok_or_else(|| "Bytes.fill expects ByteBuf".to_string())?;
+    let byte = byte_value(
+        args.get(1)
+            .ok_or_else(|| "Bytes.fill expects a byte".to_string())?,
+        "Bytes.fill",
+    )?;
     match value
     {
         Value::ByteBuf(buf) =>
@@ -464,9 +515,13 @@ fn native_bytes_fill(args: &[Value]) -> Result<Value, String>
 
 fn native_bytes_copy(args: &[Value]) -> Result<Value, String>
 {
-    let dst = args.get(0).ok_or_else(|| "Bytes.copy expects a destination".to_string())?;
+    let dst = args
+        .get(0)
+        .ok_or_else(|| "Bytes.copy expects a destination".to_string())?;
     let dst_start = int_arg(args, 1, "Bytes.copy")?;
-    let src = args.get(2).ok_or_else(|| "Bytes.copy expects a source".to_string())?;
+    let src = args
+        .get(2)
+        .ok_or_else(|| "Bytes.copy expects a source".to_string())?;
     let src_start = int_arg(args, 3, "Bytes.copy")?;
     let len = int_arg(args, 4, "Bytes.copy")?;
     if dst_start < 0 || src_start < 0 || len < 0
@@ -513,8 +568,12 @@ fn native_bytes_copy(args: &[Value]) -> Result<Value, String>
 
 fn native_bytes_find(args: &[Value]) -> Result<Value, String>
 {
-    let haystack = args.get(0).ok_or_else(|| "Bytes.find expects bytes".to_string())?;
-    let needle = args.get(1).ok_or_else(|| "Bytes.find expects a needle".to_string())?;
+    let haystack = args
+        .get(0)
+        .ok_or_else(|| "Bytes.find expects bytes".to_string())?;
+    let needle = args
+        .get(1)
+        .ok_or_else(|| "Bytes.find expects a needle".to_string())?;
     let start = match args.get(2)
     {
         Some(_) => int_arg(args, 2, "Bytes.find")?,
@@ -528,7 +587,10 @@ fn native_bytes_find(args: &[Value]) -> Result<Value, String>
     let needle_bytes = bytes_to_vec(needle, "Bytes.find")?;
     if needle_bytes.is_empty()
     {
-        return Ok(Value::Integer { value: start as i128, kind: crate::ast::IntKind::I64 });
+        return Ok(Value::Integer {
+            value: start as i128,
+            kind: crate::ast::IntKind::I64,
+        });
     }
     let start = start as usize;
     if start > hay_bytes.len()
@@ -539,7 +601,10 @@ fn native_bytes_find(args: &[Value]) -> Result<Value, String>
     {
         if hay_bytes[i..i + needle_bytes.len()] == needle_bytes[..]
         {
-            return Ok(Value::Integer { value: i as i128, kind: crate::ast::IntKind::I64 });
+            return Ok(Value::Integer {
+                value: i as i128,
+                kind: crate::ast::IntKind::I64,
+            });
         }
     }
     Ok(Value::Nil)
@@ -547,7 +612,9 @@ fn native_bytes_find(args: &[Value]) -> Result<Value, String>
 
 fn native_bytes_freeze(args: &[Value]) -> Result<Value, String>
 {
-    let value = args.get(0).ok_or_else(|| "Bytes.freeze expects bytes".to_string())?;
+    let value = args
+        .get(0)
+        .ok_or_else(|| "Bytes.freeze expects bytes".to_string())?;
     let bytes = bytes_to_vec(value, "Bytes.freeze")?;
     Ok(Value::Bytes(Rc::new(bytes)))
 }

@@ -843,9 +843,11 @@ impl PartialEq for Value
             (Value::Array(a), Value::Array(b)) => a == b, // RefCell PartialEq compares inner values
             (Value::F64Array(a), Value::F64Array(b)) => a == b,
             (Value::Bytes(a), Value::Bytes(b)) => a == b,
-            (Value::ByteBuf(a), Value::ByteBuf(b)) => a.borrow().as_slice() == b.borrow().as_slice(),
-            (Value::Bytes(a), Value::ByteBuf(b))
-            | (Value::ByteBuf(b), Value::Bytes(a)) =>
+            (Value::ByteBuf(a), Value::ByteBuf(b)) =>
+            {
+                a.borrow().as_slice() == b.borrow().as_slice()
+            }
+            (Value::Bytes(a), Value::ByteBuf(b)) | (Value::ByteBuf(b), Value::Bytes(a)) =>
             {
                 a.as_slice() == b.borrow().as_slice()
             }
@@ -855,20 +857,19 @@ impl PartialEq for Value
                     && a.len == b.len
                     && bytes_view_to_vec(a) == bytes_view_to_vec(b)
             }
-            (Value::BytesView(a), Value::Bytes(b))
-            | (Value::Bytes(b), Value::BytesView(a)) =>
+            (Value::BytesView(a), Value::Bytes(b)) | (Value::Bytes(b), Value::BytesView(a)) =>
             {
                 bytes_view_to_vec(a) == b.as_ref().as_slice()
             }
-            (Value::BytesView(a), Value::ByteBuf(b))
-            | (Value::ByteBuf(b), Value::BytesView(a)) =>
+            (Value::BytesView(a), Value::ByteBuf(b)) | (Value::ByteBuf(b), Value::BytesView(a)) =>
             {
                 bytes_view_to_vec(a) == b.borrow().as_slice()
             }
             (Value::StructType(a), Value::StructType(b)) => Rc::ptr_eq(a, b),
             (Value::StructInstance(a), Value::StructInstance(b)) =>
             {
-                Rc::ptr_eq(&a.ty, &b.ty) && a.fields.borrow().as_slice() == b.fields.borrow().as_slice()
+                Rc::ptr_eq(&a.ty, &b.ty)
+                    && a.fields.borrow().as_slice() == b.fields.borrow().as_slice()
             }
             (Value::BoundMethod(a), Value::BoundMethod(b)) =>
             {
@@ -932,7 +933,10 @@ impl fmt::Debug for Value
             Value::StructInstance(inst) => write!(f, "StructInstance({})", inst.ty.name),
             Value::BoundMethod(_) => write!(f, "BoundMethod(...)"),
             Value::Map(m) => write!(f, "Map({:?})", m.borrow().data),
-            Value::DataFrame(df) => write!(f, "DataFrame({}x{})", df.borrow().height(), df.borrow().width()),
+            Value::DataFrame(df) =>
+            {
+                write!(f, "DataFrame({}x{})", df.borrow().height(), df.borrow().width())
+            }
             Value::Sqlite(_) => write!(f, "Sqlite(<connection>)"),
             Value::Mmap(m) => write!(f, "Mmap({} bytes)", m.len()),
             Value::MmapMut(m) => write!(f, "MmapMut({} bytes)", m.borrow().len()),

@@ -30,9 +30,24 @@ fn native_regex_find(args: &[Value]) -> Result<Value, String>
     if let Some(mat) = re.find(&text)
     {
         let mut map = FxHashMap::default();
-        map.insert(intern::intern("start"), Value::Integer { value: mat.start() as i128, kind: crate::ast::IntKind::I64 });
-        map.insert(intern::intern("end"), Value::Integer { value: mat.end() as i128, kind: crate::ast::IntKind::I64 });
-        map.insert(intern::intern("match"), Value::String(intern::intern_owned(mat.as_str().to_string())));
+        map.insert(
+            intern::intern("start"),
+            Value::Integer {
+                value: mat.start() as i128,
+                kind: crate::ast::IntKind::I64,
+            },
+        );
+        map.insert(
+            intern::intern("end"),
+            Value::Integer {
+                value: mat.end() as i128,
+                kind: crate::ast::IntKind::I64,
+            },
+        );
+        map.insert(
+            intern::intern("match"),
+            Value::String(intern::intern_owned(mat.as_str().to_string())),
+        );
         Ok(Value::Map(Rc::new(RefCell::new(MapValue::new(map)))))
     }
     else

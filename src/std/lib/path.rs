@@ -66,7 +66,8 @@ fn native_path_normalize(args: &[Value]) -> Result<Value, String>
             {
                 buf.pop();
             }
-            Component::CurDir => {}
+            Component::CurDir =>
+            {}
             _ => buf.push(comp.as_os_str()),
         }
     }

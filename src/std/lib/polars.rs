@@ -1,6 +1,6 @@
 use crate::ast::IntKind;
 use crate::intern;
-use crate::value::{Value, MapValue};
+use crate::value::{MapValue, Value};
 use polars::prelude::*;
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
@@ -25,7 +25,8 @@ fn polars_str_arg(args: &[Value], idx: usize, name: &str) -> Result<String, Stri
     }
 }
 
-fn polars_usize_arg(args: &[Value], idx: usize, default: usize, name: &str) -> Result<usize, String>
+fn polars_usize_arg(args: &[Value], idx: usize, default: usize, name: &str)
+-> Result<usize, String>
 {
     match args.get(idx)
     {
@@ -38,7 +39,8 @@ fn polars_usize_arg(args: &[Value], idx: usize, default: usize, name: &str) -> R
             }
             else
             {
-                usize::try_from(*value).map_err(|_| format!("{name} expects a non-negative integer"))
+                usize::try_from(*value)
+                    .map_err(|_| format!("{name} expects a non-negative integer"))
             }
         }
         Some(Value::Unsigned { value, .. }) =>
@@ -63,8 +65,7 @@ fn native_polars_write_csv(args: &[Value]) -> Result<Value, String>
 {
     let df = polars_df_arg(args, 0, "Polars.write_csv")?;
     let path = polars_str_arg(args, 1, "Polars.write_csv")?;
-    let mut file = File::create(&path)
-        .map_err(|e| format!("Polars.write_csv failed: {e}"))?;
+    let mut file = File::create(&path).map_err(|e| format!("Polars.write_csv failed: {e}"))?;
     CsvWriter::new(&mut file)
         .finish(&mut df.borrow().clone())
         .map_err(|e| format!("Polars.write_csv failed: {e}"))?;
@@ -78,8 +79,14 @@ fn native_polars_shape(args: &[Value]) -> Result<Value, String>
     let rows = df_ref.height() as i128;
     let cols = df_ref.width() as i128;
     let arr = vec![
-        Value::Integer { value: rows, kind: IntKind::I64 },
-        Value::Integer { value: cols, kind: IntKind::I64 },
+        Value::Integer {
+            value: rows,
+            kind: IntKind::I64,
+        },
+        Value::Integer {
+            value: cols,
+            kind: IntKind::I64,
+        },
     ];
     Ok(Value::Array(Rc::new(RefCell::new(arr))))
 }
@@ -107,7 +114,9 @@ fn native_polars_head(args: &[Value]) -> Result<Value, String>
 fn native_polars_select(args: &[Value]) -> Result<Value, String>
 {
     let df = polars_df_arg(args, 0, "Polars.select")?;
-    let cols_val = args.get(1).ok_or_else(|| "Polars.select expects columns array".to_string())?;
+    let cols_val = args
+        .get(1)
+        .ok_or_else(|| "Polars.select expects columns array".to_string())?;
     let cols = match cols_val
     {
         Value::Array(arr) => arr

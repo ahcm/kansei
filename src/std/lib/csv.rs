@@ -35,7 +35,9 @@ fn native_csv_parse(args: &[Value]) -> Result<Value, String>
 
 fn native_csv_stringify(args: &[Value]) -> Result<Value, String>
 {
-    let rows_val = args.get(0).ok_or_else(|| "Csv.stringify expects rows".to_string())?;
+    let rows_val = args
+        .get(0)
+        .ok_or_else(|| "Csv.stringify expects rows".to_string())?;
     let rows = match rows_val
     {
         Value::Array(arr) => arr.borrow(),
@@ -57,7 +59,9 @@ fn native_csv_stringify(args: &[Value]) -> Result<Value, String>
         wtr.write_record(&fields)
             .map_err(|e| format!("Csv.stringify failed: {e}"))?;
     }
-    let data = wtr.into_inner().map_err(|e| format!("Csv.stringify failed: {e}"))?;
+    let data = wtr
+        .into_inner()
+        .map_err(|e| format!("Csv.stringify failed: {e}"))?;
     let out = String::from_utf8(data).map_err(|e| format!("Csv.stringify failed: {e}"))?;
     Ok(Value::String(intern::intern_owned(out)))
 }

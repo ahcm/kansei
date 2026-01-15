@@ -19,11 +19,7 @@ fn io_path_arg(args: &[Value], idx: usize, name: &str) -> Result<String, String>
 
 fn io_content_arg(args: &[Value], idx: usize) -> Result<String, String>
 {
-    Ok(args
-        .get(idx)
-        .cloned()
-        .unwrap_or(Value::Nil)
-        .to_string())
+    Ok(args.get(idx).cloned().unwrap_or(Value::Nil).to_string())
 }
 
 fn io_bytes_arg(args: &[Value], idx: usize, name: &str) -> Result<Vec<u8>, String>
@@ -38,10 +34,7 @@ fn io_bytes_arg(args: &[Value], idx: usize, name: &str) -> Result<Vec<u8>, Strin
             let end = view.offset.saturating_add(view.len);
             match &view.source
             {
-                crate::value::BytesViewSource::Mmap(mmap) =>
-                {
-                    Ok(mmap[view.offset..end].to_vec())
-                }
+                crate::value::BytesViewSource::Mmap(mmap) => Ok(mmap[view.offset..end].to_vec()),
                 crate::value::BytesViewSource::MmapMut(mmap) =>
                 {
                     let data = mmap.borrow();
@@ -163,9 +156,7 @@ fn native_io_cwd(_args: &[Value]) -> Result<Value, String>
 {
     match env::current_dir()
     {
-        Ok(path) => Ok(Value::String(intern::intern_owned(
-            path.to_string_lossy().to_string(),
-        ))),
+        Ok(path) => Ok(Value::String(intern::intern_owned(path.to_string_lossy().to_string()))),
         Err(_) => Ok(Value::Nil),
     }
 }

@@ -27,14 +27,20 @@ fn str_arg(args: &[Value], idx: usize, name: &str) -> Result<String, String>
 fn native_datetime_now_ms(_args: &[Value]) -> Result<Value, String>
 {
     let ms = Utc::now().timestamp_millis();
-    Ok(Value::Integer { value: ms as i128, kind: crate::ast::IntKind::I64 })
+    Ok(Value::Integer {
+        value: ms as i128,
+        kind: crate::ast::IntKind::I64,
+    })
 }
 
 fn native_datetime_format(args: &[Value]) -> Result<Value, String>
 {
     let ts = int_arg(args, 0, "DateTime.format")?;
     let fmt = str_arg(args, 1, "DateTime.format")?;
-    let dt = Utc.timestamp_millis_opt(ts).single().ok_or_else(|| "DateTime.format invalid timestamp".to_string())?;
+    let dt = Utc
+        .timestamp_millis_opt(ts)
+        .single()
+        .ok_or_else(|| "DateTime.format invalid timestamp".to_string())?;
     Ok(Value::String(intern::intern_owned(dt.format(&fmt).to_string())))
 }
 
@@ -45,7 +51,10 @@ fn native_datetime_parse(args: &[Value]) -> Result<Value, String>
     let naive = chrono::NaiveDateTime::parse_from_str(&text, &fmt)
         .map_err(|e| format!("DateTime.parse failed: {e}"))?;
     let dt: DateTime<Utc> = DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc);
-    Ok(Value::Integer { value: dt.timestamp_millis() as i128, kind: crate::ast::IntKind::I64 })
+    Ok(Value::Integer {
+        value: dt.timestamp_millis() as i128,
+        kind: crate::ast::IntKind::I64,
+    })
 }
 
 fn native_datetime_rfc3339(_args: &[Value]) -> Result<Value, String>

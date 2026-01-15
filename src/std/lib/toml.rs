@@ -36,10 +36,12 @@ fn native_toml_parse(args: &[Value]) -> Result<Value, String>
 
 fn native_toml_stringify(args: &[Value]) -> Result<Value, String>
 {
-    let value = args.get(0).ok_or_else(|| "Toml.stringify expects a value".to_string())?;
+    let value = args
+        .get(0)
+        .ok_or_else(|| "Toml.stringify expects a value".to_string())?;
     let json = value_to_json(value);
-    let toml_val: toml::Value = serde_json::from_value(json)
-        .map_err(|e| format!("Toml.stringify failed: {e}"))?;
+    let toml_val: toml::Value =
+        serde_json::from_value(json).map_err(|e| format!("Toml.stringify failed: {e}"))?;
     let out = toml::to_string(&toml_val).map_err(|e| format!("Toml.stringify failed: {e}"))?;
     Ok(Value::String(intern::intern_owned(out)))
 }

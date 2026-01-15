@@ -6591,6 +6591,45 @@ fn execute_instructions(
                     frame.ip += 1;
                     continue;
                 }
+                Instruction::LoadGlobalCached(name, cache) =>
+                {
+                    let val = load_global_cached(interpreter, *name, cache)?;
+                    frame.stack.push(val);
+                    frame.ip += 1;
+                    continue;
+                }
+                Instruction::LoadGlobal(name) =>
+                {
+                    let val = interpreter
+                        .env
+                        .borrow()
+                        .get(*name)
+                        .ok_or_else(|| RuntimeError {
+                            message: format!("Undefined variable: {}", symbol_name(*name).as_str()),
+                            line: 0,
+                        })?;
+                    if let Value::Uninitialized = val
+                    {
+                        return Err(RuntimeError {
+                            message: format!(
+                                "Variable '{}' used before assignment",
+                                symbol_name(*name).as_str()
+                            ),
+                            line: 0,
+                        });
+                    }
+                    frame.stack.push(val);
+                    frame.ip += 1;
+                    continue;
+                }
+                Instruction::StoreGlobal(name) =>
+                {
+                    let val = frame.stack.pop().unwrap();
+                    interpreter.env.borrow_mut().set(*name, val.clone());
+                    frame.stack.push(val);
+                    frame.ip += 1;
+                    continue;
+                }
                 Instruction::Pop =>
                 {
                     frame.stack.pop();

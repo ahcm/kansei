@@ -2427,12 +2427,27 @@ fn compile_expr(
                                 return false;
                             }
                         }
-                        code.push(Instruction::CallGlobalCached(
-                            *name,
-                            Rc::new(RefCell::new(GlobalCache::default())),
-                            Rc::new(RefCell::new(CallSiteCache::default())),
-                            args.len(),
-                        ));
+                        let global_cache = Rc::new(RefCell::new(GlobalCache::default()));
+                        let call_cache = Rc::new(RefCell::new(CallSiteCache::default()));
+                        match args.len()
+                        {
+                            0 => code.push(Instruction::CallGlobalCached0(
+                                *name,
+                                global_cache,
+                                call_cache,
+                            )),
+                            1 => code.push(Instruction::CallGlobalCached1(
+                                *name,
+                                global_cache,
+                                call_cache,
+                            )),
+                            _ => code.push(Instruction::CallGlobalCached(
+                                *name,
+                                global_cache,
+                                call_cache,
+                                args.len(),
+                            )),
+                        }
                     }
                     else
                     {
@@ -2470,12 +2485,27 @@ fn compile_expr(
                                 return false;
                             }
                         }
-                        code.push(Instruction::CallMethodCached(
-                            name.clone(),
-                            Rc::new(RefCell::new(MapAccessCache::default())),
-                            Rc::new(RefCell::new(CallSiteCache::default())),
-                            args.len(),
-                        ));
+                        let map_cache = Rc::new(RefCell::new(MapAccessCache::default()));
+                        let call_cache = Rc::new(RefCell::new(CallSiteCache::default()));
+                        match args.len()
+                        {
+                            0 => code.push(Instruction::CallMethodCached0(
+                                name.clone(),
+                                map_cache,
+                                call_cache,
+                            )),
+                            1 => code.push(Instruction::CallMethodCached1(
+                                name.clone(),
+                                map_cache,
+                                call_cache,
+                            )),
+                            _ => code.push(Instruction::CallMethodCached(
+                                name.clone(),
+                                map_cache,
+                                call_cache,
+                                args.len(),
+                            )),
+                        }
                     }
                     else
                     {
@@ -3630,6 +3660,16 @@ fn collect_cache_metrics(code: &[Instruction])
                 map_hits += cache.hits;
                 map_misses += cache.misses;
             }
+            Instruction::CallMethodCached0(_, map_cache, call_cache)
+            | Instruction::CallMethodCached1(_, map_cache, call_cache) =>
+            {
+                let cache = call_cache.borrow();
+                call_hits += cache.hits;
+                call_misses += cache.misses;
+                let cache = map_cache.borrow();
+                map_hits += cache.hits;
+                map_misses += cache.misses;
+            }
             Instruction::CallMethodWithBlockCached(_, map_cache, call_cache, _, _) =>
             {
                 let cache = call_cache.borrow();
@@ -3642,6 +3682,16 @@ fn collect_cache_metrics(code: &[Instruction])
             Instruction::LoadGlobalCached(_, cache) =>
             {
                 let cache = cache.borrow();
+                global_hits += cache.hits;
+                global_misses += cache.misses;
+            }
+            Instruction::CallGlobalCached0(_, global_cache, call_cache)
+            | Instruction::CallGlobalCached1(_, global_cache, call_cache) =>
+            {
+                let cache = call_cache.borrow();
+                call_hits += cache.hits;
+                call_misses += cache.misses;
+                let cache = global_cache.borrow();
                 global_hits += cache.hits;
                 global_misses += cache.misses;
             }
@@ -3682,6 +3732,22 @@ fn format_bytecode_instruction(inst: &Instruction) -> String
                 "CallMethodWithBlockCached({:?}, <map_cache>, <call_cache>, <block>, {argc})",
                 name
             )
+        }
+        Instruction::CallMethodCached0(name, _, _) =>
+        {
+            format!("CallMethodCached0({:?}, <map_cache>, <call_cache>)", name)
+        }
+        Instruction::CallMethodCached1(name, _, _) =>
+        {
+            format!("CallMethodCached1({:?}, <map_cache>, <call_cache>)", name)
+        }
+        Instruction::CallGlobalCached0(name, _, _) =>
+        {
+            format!("CallGlobalCached0({:?}, <global_cache>, <call_cache>)", name)
+        }
+        Instruction::CallGlobalCached1(name, _, _) =>
+        {
+            format!("CallGlobalCached1({:?}, <global_cache>, <call_cache>)", name)
         }
         _ => format!("{:?}", inst),
     }
@@ -6063,6 +6129,7 @@ fn execute_instructions(
         index_slot: usize,
         end: RangeEnd,
         end_cached: Option<f64>,
+        fast_until: Option<f64>,
         body: Rc<Vec<Instruction>>,
         current: i64,
         last: Value,
@@ -6073,6 +6140,7 @@ fn execute_instructions(
         index_slot: usize,
         end: RangeEnd,
         end_cached: Option<RangeEndNum>,
+        fast_until: Option<i64>,
         step: i64,
         body: Rc<Vec<Instruction>>,
         current: i64,
@@ -6084,6 +6152,7 @@ fn execute_instructions(
         index_slot: usize,
         end: RangeEnd,
         end_cached: Option<f64>,
+        fast_until: Option<f64>,
         step: f64,
         kind: FloatKind,
         body: Rc<Vec<Instruction>>,
@@ -6214,15 +6283,29 @@ fn execute_instructions(
                         {
                             state.last = result;
                             state.current += 1;
-                            let end_f = if let Some(end) = state.end_cached
+                            let should_stop = if let Some(limit) = state.fast_until
                             {
-                                end
+                                if (state.current as f64) < limit
+                                {
+                                    false
+                                }
+                                else
+                                {
+                                    state.fast_until = None;
+                                    let end_f = state
+                                        .end_cached
+                                        .unwrap_or(range_end_f64(&state.end, slots, const_pool)?);
+                                    (state.current as f64) >= end_f
+                                }
                             }
                             else
                             {
-                                range_end_f64(&state.end, slots, const_pool)?
+                                let end_f = state
+                                    .end_cached
+                                    .unwrap_or(range_end_f64(&state.end, slots, const_pool)?);
+                                (state.current as f64) >= end_f
                             };
-                            if (state.current as f64) >= end_f
+                            if should_stop
                             {
                                 if let Some(slot) = slots.get_mut(state.index_slot)
                                 {
@@ -6250,15 +6333,51 @@ fn execute_instructions(
                         {
                             state.last = result;
                             state.current = state.current + state.step;
-                            let should_stop = match state.end_cached
+                            let should_stop = if let Some(limit) = state.fast_until
                             {
-                                Some(RangeEndNum::Float(end_f)) => (state.current as f64) >= end_f,
-                                Some(RangeEndNum::Int(end_i)) => state.current >= end_i,
-                                None => match range_end_num(&state.end, slots, const_pool)?
+                                if state.current < limit
                                 {
-                                    RangeEndNum::Float(end_f) => (state.current as f64) >= end_f,
-                                    RangeEndNum::Int(end_i) => state.current >= end_i,
-                                },
+                                    false
+                                }
+                                else
+                                {
+                                    state.fast_until = None;
+                                    match state.end_cached
+                                    {
+                                        Some(RangeEndNum::Float(end_f)) =>
+                                        {
+                                            (state.current as f64) >= end_f
+                                        }
+                                        Some(RangeEndNum::Int(end_i)) => state.current >= end_i,
+                                        None => match range_end_num(&state.end, slots, const_pool)?
+                                        {
+                                            RangeEndNum::Float(end_f) =>
+                                            {
+                                                (state.current as f64) >= end_f
+                                            }
+                                            RangeEndNum::Int(end_i) => state.current >= end_i,
+                                        },
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                match state.end_cached
+                                {
+                                    Some(RangeEndNum::Float(end_f)) =>
+                                    {
+                                        (state.current as f64) >= end_f
+                                    }
+                                    Some(RangeEndNum::Int(end_i)) => state.current >= end_i,
+                                    None => match range_end_num(&state.end, slots, const_pool)?
+                                    {
+                                        RangeEndNum::Float(end_f) =>
+                                        {
+                                            (state.current as f64) >= end_f
+                                        }
+                                        RangeEndNum::Int(end_i) => state.current >= end_i,
+                                    },
+                                }
                             };
                             if should_stop
                             {
@@ -6288,15 +6407,29 @@ fn execute_instructions(
                         {
                             state.last = result;
                             state.current += state.step;
-                            let end_f = if let Some(end) = state.end_cached
+                            let should_stop = if let Some(limit) = state.fast_until
                             {
-                                end
+                                if state.current < limit
+                                {
+                                    false
+                                }
+                                else
+                                {
+                                    state.fast_until = None;
+                                    let end_f = state
+                                        .end_cached
+                                        .unwrap_or(range_end_f64(&state.end, slots, const_pool)?);
+                                    state.current >= end_f
+                                }
                             }
                             else
                             {
-                                range_end_f64(&state.end, slots, const_pool)?
+                                let end_f = state
+                                    .end_cached
+                                    .unwrap_or(range_end_f64(&state.end, slots, const_pool)?);
+                                state.current >= end_f
                             };
-                            if state.current >= end_f
+                            if should_stop
                             {
                                 if let Some(slot) = slots.get_mut(state.index_slot)
                                 {
@@ -6563,11 +6696,51 @@ fn execute_instructions(
                     let result = eval_call_value_cached(interpreter, func_val, args, &call_cache)?;
                     frame.stack.push(result);
                 }
+                Instruction::CallGlobalCached0(name, global_cache, call_cache) =>
+                {
+                    let func_val = load_global_cached(interpreter, name, &global_cache)?;
+                    let args = smallvec::SmallVec::<[Value; 8]>::new();
+                    let result = eval_call_value_cached(interpreter, func_val, args, &call_cache)?;
+                    frame.stack.push(result);
+                }
+                Instruction::CallGlobalCached1(name, global_cache, call_cache) =>
+                {
+                    let arg = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing argument for call".to_string(),
+                        line: 0,
+                    })?;
+                    let func_val = load_global_cached(interpreter, name, &global_cache)?;
+                    let mut args = smallvec::SmallVec::<[Value; 8]>::new();
+                    args.push(arg);
+                    let result = eval_call_value_cached(interpreter, func_val, args, &call_cache)?;
+                    frame.stack.push(result);
+                }
                 Instruction::CallMethodCached(name, map_cache, call_cache, argc) =>
                 {
                     let args = pop_args_from_stack(&mut frame.stack, argc)?;
                     let func_val =
                         pop_method_target_and_resolve(&mut frame.stack, &name, &map_cache)?;
+                    let result = eval_call_value_cached(interpreter, func_val, args, &call_cache)?;
+                    frame.stack.push(result);
+                }
+                Instruction::CallMethodCached0(name, map_cache, call_cache) =>
+                {
+                    let func_val =
+                        pop_method_target_and_resolve(&mut frame.stack, &name, &map_cache)?;
+                    let args = smallvec::SmallVec::<[Value; 8]>::new();
+                    let result = eval_call_value_cached(interpreter, func_val, args, &call_cache)?;
+                    frame.stack.push(result);
+                }
+                Instruction::CallMethodCached1(name, map_cache, call_cache) =>
+                {
+                    let arg = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing argument for call".to_string(),
+                        line: 0,
+                    })?;
+                    let func_val =
+                        pop_method_target_and_resolve(&mut frame.stack, &name, &map_cache)?;
+                    let mut args = smallvec::SmallVec::<[Value; 8]>::new();
+                    args.push(arg);
                     let result = eval_call_value_cached(interpreter, func_val, args, &call_cache)?;
                     frame.stack.push(result);
                 }
@@ -6761,6 +6934,7 @@ fn execute_instructions(
                         _ => None,
                     };
                     let end_f = end_cached.unwrap_or(range_end_f64(&end, slots, const_pool)?);
+                    let fast_until = end_cached.map(|end| end - 3.0);
                     if (current as f64) >= end_f
                     {
                         if let Some(slot) = slots.get_mut(index_slot)
@@ -6779,6 +6953,7 @@ fn execute_instructions(
                             index_slot,
                             end,
                             end_cached,
+                            fast_until,
                             body: body.clone(),
                             current,
                             last: Value::Nil,
@@ -6815,6 +6990,7 @@ fn execute_instructions(
                             _ => None,
                         };
                         let end_f = end_cached.unwrap_or(range_end_f64(&end, slots, const_pool)?);
+                        let fast_until = end_cached.map(|end| end - (step_f * 3.0));
                         if current >= end_f
                         {
                             if let Some(slot) = slots.get_mut(index_slot)
@@ -6833,6 +7009,7 @@ fn execute_instructions(
                                 index_slot,
                                 end,
                                 end_cached,
+                                fast_until,
                                 step: step_f,
                                 kind,
                                 body: body.clone(),
@@ -6857,6 +7034,11 @@ fn execute_instructions(
                         let end_cached = match end
                         {
                             RangeEnd::Const(_) => Some(range_end_num(&end, slots, const_pool)?),
+                            _ => None,
+                        };
+                        let fast_until = match (&end_cached, step)
+                        {
+                            (Some(RangeEndNum::Int(end_i)), 1) => Some(end_i.saturating_sub(3)),
                             _ => None,
                         };
                         let should_stop = match end_cached
@@ -6887,6 +7069,7 @@ fn execute_instructions(
                                 index_slot,
                                 end,
                                 end_cached,
+                                fast_until,
                                 step,
                                 body: body.clone(),
                                 current,
@@ -6937,6 +7120,7 @@ fn execute_instructions(
                         _ => None,
                     };
                     let end_f = end_cached.unwrap_or(range_end_f64(&end, slots, const_pool)?);
+                    let fast_until = end_cached.map(|end| end - (step_f * 3.0));
                     if current >= end_f
                     {
                         if let Some(slot) = slots.get_mut(index_slot)
@@ -6951,16 +7135,17 @@ fn execute_instructions(
                         {
                             *slot = make_float(current, kind);
                         }
-                        frame.pending = Some(Pending::ForRangeFloat(ForRangeFloatState {
-                            index_slot,
-                            end,
-                            end_cached,
-                            step: step_f,
-                            kind,
-                            body: body.clone(),
-                            current,
-                            last: Value::Nil,
-                        }));
+                            frame.pending = Some(Pending::ForRangeFloat(ForRangeFloatState {
+                                index_slot,
+                                end,
+                                end_cached,
+                                fast_until,
+                                step: step_f,
+                                kind,
+                                body: body.clone(),
+                                current,
+                                last: Value::Nil,
+                            }));
                         next_frame = Some(Frame {
                             code: body.clone(),
                             ip: 0,

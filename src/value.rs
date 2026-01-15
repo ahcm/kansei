@@ -374,7 +374,11 @@ pub enum Instruction
     DivCached(Rc<RefCell<BinaryOpCache>>),
     CallValueCached(Rc<RefCell<CallSiteCache>>, usize),
     CallGlobalCached(SymbolId, Rc<RefCell<GlobalCache>>, Rc<RefCell<CallSiteCache>>, usize),
+    CallGlobalCached0(SymbolId, Rc<RefCell<GlobalCache>>, Rc<RefCell<CallSiteCache>>),
+    CallGlobalCached1(SymbolId, Rc<RefCell<GlobalCache>>, Rc<RefCell<CallSiteCache>>),
     CallMethodCached(Rc<String>, Rc<RefCell<MapAccessCache>>, Rc<RefCell<CallSiteCache>>, usize),
+    CallMethodCached0(Rc<String>, Rc<RefCell<MapAccessCache>>, Rc<RefCell<CallSiteCache>>),
+    CallMethodCached1(Rc<String>, Rc<RefCell<MapAccessCache>>, Rc<RefCell<CallSiteCache>>),
     CallMethodWithBlockCached(
         Rc<String>,
         Rc<RefCell<MapAccessCache>>,

@@ -6493,9 +6493,73 @@ fn execute_instructions(
 
         {
             let frame = frames.last_mut().unwrap();
-            let inst = frame.code[frame.ip].clone();
             let mut advance_ip = true;
 
+            match &frame.code[frame.ip]
+            {
+                Instruction::LoadConstIdx(idx) =>
+                {
+                    let val = const_pool.get(*idx).cloned().unwrap_or(Value::Nil);
+                    frame.stack.push(val);
+                    frame.ip += 1;
+                    continue;
+                }
+                Instruction::LoadSlot(s) =>
+                {
+                    frame.stack.push(slots[*s].clone());
+                    frame.ip += 1;
+                    continue;
+                }
+                Instruction::StoreSlot(s) =>
+                {
+                    let val = frame.stack.pop().unwrap();
+                    if let Some(slot) = slots.get_mut(*s)
+                    {
+                        *slot = val.clone();
+                    }
+                    frame.stack.push(val);
+                    frame.ip += 1;
+                    continue;
+                }
+                Instruction::Pop =>
+                {
+                    frame.stack.pop();
+                    frame.ip += 1;
+                    continue;
+                }
+                Instruction::Dup =>
+                {
+                    let val = frame.stack.last().cloned().ok_or_else(|| RuntimeError {
+                        message: "Stack underflow on dup".to_string(),
+                        line: 0,
+                    })?;
+                    frame.stack.push(val);
+                    frame.ip += 1;
+                    continue;
+                }
+                Instruction::JumpIfFalse(target) =>
+                {
+                    let cond = frame.stack.pop().unwrap_or(Value::Nil);
+                    let is_false = matches!(cond, Value::Boolean(false) | Value::Nil);
+                    if is_false
+                    {
+                        frame.ip = *target;
+                    }
+                    else
+                    {
+                        frame.ip += 1;
+                    }
+                    continue;
+                }
+                Instruction::Jump(target) =>
+                {
+                    frame.ip = *target;
+                    continue;
+                }
+                _ => {}
+            }
+
+            let inst = frame.code[frame.ip].clone();
             match inst
             {
                 Instruction::LoadConstIdx(idx) =>

@@ -127,13 +127,20 @@ struct Point {
   y: Float64
 }
 
-fn sum(point { x: Float64, y: Float64 })
-  point.x + point.y
+fn sum(p { x: Float64, y: Float64 })  # matches structs having x and y
+  p.x + p.y
 end
 
 p = Point { x: 1.0, y: 2.0 }
 p.x = 3
 puts sum(p)
+
+
+fn Point.sum(self)      # only works on Point, needs self, cannot shadow a field
+  self.x + self.y
+end
+
+puts p.sum()
 ```
 
 ### std::IO

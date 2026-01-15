@@ -10549,6 +10549,18 @@ impl Interpreter
                         });
                     }
                 };
+                let method_key = symbol_name(*name);
+                if ty.field_map.contains_key(&method_key)
+                {
+                    return Err(RuntimeError {
+                        message: format!(
+                            "Method '{}' conflicts with field on {}",
+                            method_key.as_str(),
+                            ty.name
+                        ),
+                        line,
+                    });
+                }
                 let func_env = self.env.clone();
                 let (resolved_body, slot_names) = if let Some(slot_names) = slots
                 {
@@ -10611,7 +10623,6 @@ impl Interpreter
                     const_pool: Rc::new(const_pool),
                     env: func_env,
                 }));
-                let method_key = symbol_name(*name);
                 ty.methods.borrow_mut().insert(method_key, func.clone());
                 Ok(func)
             }

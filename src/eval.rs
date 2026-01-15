@@ -6062,6 +6062,7 @@ fn execute_instructions(
     {
         index_slot: usize,
         end: RangeEnd,
+        end_cached: Option<f64>,
         body: Rc<Vec<Instruction>>,
         current: i64,
         last: Value,
@@ -6071,6 +6072,7 @@ fn execute_instructions(
     {
         index_slot: usize,
         end: RangeEnd,
+        end_cached: Option<RangeEndNum>,
         step: i64,
         body: Rc<Vec<Instruction>>,
         current: i64,
@@ -6081,6 +6083,7 @@ fn execute_instructions(
     {
         index_slot: usize,
         end: RangeEnd,
+        end_cached: Option<f64>,
         step: f64,
         kind: FloatKind,
         body: Rc<Vec<Instruction>>,
@@ -6149,7 +6152,7 @@ fn execute_instructions(
     frames.push(Frame {
         code: code.clone(),
         ip: 0,
-        stack: Vec::with_capacity(8),
+        stack: interpreter.take_stack(),
         pending: None,
     });
     let mut last_result = Value::Nil;
@@ -6169,6 +6172,7 @@ fn execute_instructions(
         {
             let mut frame = frames.pop().unwrap();
             let result = frame.stack.pop().unwrap_or(Value::Nil);
+            interpreter.recycle_stack(frame.stack);
             last_result = result.clone();
             if frames.is_empty()
             {
@@ -6197,7 +6201,7 @@ fn execute_instructions(
                                 next_frame = Some(Frame {
                                     code: body,
                                     ip: 0,
-                                    stack: Vec::with_capacity(8),
+                                    stack: interpreter.take_stack(),
                                     pending: None,
                                 });
                             }
@@ -6210,7 +6214,14 @@ fn execute_instructions(
                         {
                             state.last = result;
                             state.current += 1;
-                            let end_f = range_end_f64(&state.end, slots, const_pool)?;
+                            let end_f = if let Some(end) = state.end_cached
+                            {
+                                end
+                            }
+                            else
+                            {
+                                range_end_f64(&state.end, slots, const_pool)?
+                            };
                             if (state.current as f64) >= end_f
                             {
                                 if let Some(slot) = slots.get_mut(state.index_slot)
@@ -6230,7 +6241,7 @@ fn execute_instructions(
                                 next_frame = Some(Frame {
                                     code: body,
                                     ip: 0,
-                                    stack: Vec::with_capacity(8),
+                                    stack: interpreter.take_stack(),
                                     pending: None,
                                 });
                             }
@@ -6239,10 +6250,15 @@ fn execute_instructions(
                         {
                             state.last = result;
                             state.current = state.current + state.step;
-                            let should_stop = match range_end_num(&state.end, slots, const_pool)?
+                            let should_stop = match state.end_cached
                             {
-                                RangeEndNum::Float(end_f) => (state.current as f64) >= end_f,
-                                RangeEndNum::Int(end_i) => state.current >= end_i,
+                                Some(RangeEndNum::Float(end_f)) => (state.current as f64) >= end_f,
+                                Some(RangeEndNum::Int(end_i)) => state.current >= end_i,
+                                None => match range_end_num(&state.end, slots, const_pool)?
+                                {
+                                    RangeEndNum::Float(end_f) => (state.current as f64) >= end_f,
+                                    RangeEndNum::Int(end_i) => state.current >= end_i,
+                                },
                             };
                             if should_stop
                             {
@@ -6263,7 +6279,7 @@ fn execute_instructions(
                                 next_frame = Some(Frame {
                                     code: body,
                                     ip: 0,
-                                    stack: Vec::with_capacity(8),
+                                    stack: interpreter.take_stack(),
                                     pending: None,
                                 });
                             }
@@ -6272,7 +6288,14 @@ fn execute_instructions(
                         {
                             state.last = result;
                             state.current += state.step;
-                            let end_f = range_end_f64(&state.end, slots, const_pool)?;
+                            let end_f = if let Some(end) = state.end_cached
+                            {
+                                end
+                            }
+                            else
+                            {
+                                range_end_f64(&state.end, slots, const_pool)?
+                            };
                             if state.current >= end_f
                             {
                                 if let Some(slot) = slots.get_mut(state.index_slot)
@@ -6292,7 +6315,7 @@ fn execute_instructions(
                                 next_frame = Some(Frame {
                                     code: body,
                                     ip: 0,
-                                    stack: Vec::with_capacity(8),
+                                    stack: interpreter.take_stack(),
                                     pending: None,
                                 });
                             }
@@ -6617,7 +6640,7 @@ fn execute_instructions(
                         next_frame = Some(Frame {
                             code: body.clone(),
                             ip: 0,
-                            stack: Vec::with_capacity(8),
+                            stack: interpreter.take_stack(),
                             pending: None,
                         });
                     }
@@ -6660,7 +6683,7 @@ fn execute_instructions(
                         next_frame = Some(Frame {
                             code: body.clone(),
                             ip: 0,
-                            stack: Vec::with_capacity(8),
+                            stack: interpreter.take_stack(),
                             pending: None,
                         });
                     }
@@ -6703,7 +6726,7 @@ fn execute_instructions(
                         next_frame = Some(Frame {
                             code: body.clone(),
                             ip: 0,
-                            stack: Vec::with_capacity(8),
+                            stack: interpreter.take_stack(),
                             pending: None,
                         });
                     }
@@ -6732,7 +6755,12 @@ fn execute_instructions(
                             });
                         }
                     };
-                    let end_f = range_end_f64(&end, slots, const_pool)?;
+                    let end_cached = match end
+                    {
+                        RangeEnd::Const(_) => Some(range_end_f64(&end, slots, const_pool)?),
+                        _ => None,
+                    };
+                    let end_f = end_cached.unwrap_or(range_end_f64(&end, slots, const_pool)?);
                     if (current as f64) >= end_f
                     {
                         if let Some(slot) = slots.get_mut(index_slot)
@@ -6750,6 +6778,7 @@ fn execute_instructions(
                         frame.pending = Some(Pending::ForRange(ForRangeState {
                             index_slot,
                             end,
+                            end_cached,
                             body: body.clone(),
                             current,
                             last: Value::Nil,
@@ -6757,7 +6786,7 @@ fn execute_instructions(
                         next_frame = Some(Frame {
                             code: body.clone(),
                             ip: 0,
-                            stack: Vec::with_capacity(8),
+                            stack: interpreter.take_stack(),
                             pending: None,
                         });
                     }
@@ -6780,7 +6809,12 @@ fn execute_instructions(
                     } = current_val
                     {
                         let step_f = step as f64;
-                        let end_f = range_end_f64(&end, slots, const_pool)?;
+                        let end_cached = match end
+                        {
+                            RangeEnd::Const(_) => Some(range_end_f64(&end, slots, const_pool)?),
+                            _ => None,
+                        };
+                        let end_f = end_cached.unwrap_or(range_end_f64(&end, slots, const_pool)?);
                         if current >= end_f
                         {
                             if let Some(slot) = slots.get_mut(index_slot)
@@ -6798,6 +6832,7 @@ fn execute_instructions(
                             frame.pending = Some(Pending::ForRangeFloat(ForRangeFloatState {
                                 index_slot,
                                 end,
+                                end_cached,
                                 step: step_f,
                                 kind,
                                 body: body.clone(),
@@ -6807,7 +6842,7 @@ fn execute_instructions(
                             next_frame = Some(Frame {
                                 code: body.clone(),
                                 ip: 0,
-                                stack: Vec::with_capacity(8),
+                                stack: interpreter.take_stack(),
                                 pending: None,
                             });
                         }
@@ -6819,10 +6854,20 @@ fn execute_instructions(
                                 message: "Range index must be a number".to_string(),
                                 line: 0,
                             })?;
-                        let should_stop = match range_end_num(&end, slots, const_pool)?
+                        let end_cached = match end
                         {
-                            RangeEndNum::Float(end_f) => (current as f64) >= end_f,
-                            RangeEndNum::Int(end_i) => current >= end_i,
+                            RangeEnd::Const(_) => Some(range_end_num(&end, slots, const_pool)?),
+                            _ => None,
+                        };
+                        let should_stop = match end_cached
+                        {
+                            Some(RangeEndNum::Float(end_f)) => (current as f64) >= end_f,
+                            Some(RangeEndNum::Int(end_i)) => current >= end_i,
+                            None => match range_end_num(&end, slots, const_pool)?
+                            {
+                                RangeEndNum::Float(end_f) => (current as f64) >= end_f,
+                                RangeEndNum::Int(end_i) => current >= end_i,
+                            },
                         };
                         if should_stop
                         {
@@ -6841,6 +6886,7 @@ fn execute_instructions(
                             frame.pending = Some(Pending::ForRangeInt(ForRangeIntState {
                                 index_slot,
                                 end,
+                                end_cached,
                                 step,
                                 body: body.clone(),
                                 current,
@@ -6849,7 +6895,7 @@ fn execute_instructions(
                             next_frame = Some(Frame {
                                 code: body.clone(),
                                 ip: 0,
-                                stack: Vec::with_capacity(8),
+                                stack: interpreter.take_stack(),
                                 pending: None,
                             });
                         }
@@ -6885,7 +6931,12 @@ fn execute_instructions(
                         }
                     };
                     let step_f = normalize_float_value(step, kind);
-                    let end_f = range_end_f64(&end, slots, const_pool)?;
+                    let end_cached = match end
+                    {
+                        RangeEnd::Const(_) => Some(range_end_f64(&end, slots, const_pool)?),
+                        _ => None,
+                    };
+                    let end_f = end_cached.unwrap_or(range_end_f64(&end, slots, const_pool)?);
                     if current >= end_f
                     {
                         if let Some(slot) = slots.get_mut(index_slot)
@@ -6903,6 +6954,7 @@ fn execute_instructions(
                         frame.pending = Some(Pending::ForRangeFloat(ForRangeFloatState {
                             index_slot,
                             end,
+                            end_cached,
                             step: step_f,
                             kind,
                             body: body.clone(),
@@ -6912,7 +6964,7 @@ fn execute_instructions(
                         next_frame = Some(Frame {
                             code: body.clone(),
                             ip: 0,
-                            stack: Vec::with_capacity(8),
+                            stack: interpreter.take_stack(),
                             pending: None,
                         });
                     }
@@ -8364,6 +8416,8 @@ pub struct Interpreter
     env_pool: Vec<Rc<RefCell<Environment>>>,
     // Pool of reusable register buffers for reg-simple functions
     reg_pool: Vec<Vec<Value>>,
+    // Pool of reusable operand stacks for bytecode frames
+    stack_pool: Vec<Vec<Value>>,
     bytecode_mode: BytecodeMode,
     module_cache: FxHashMap<String, ModuleCacheEntry>,
     module_lookup_cache: FxHashMap<String, ModuleLookupEntry>,
@@ -8382,6 +8436,7 @@ impl Interpreter
             block_stack: Vec::new(),
             env_pool: Vec::with_capacity(32),
             reg_pool: Vec::with_capacity(32),
+            stack_pool: Vec::with_capacity(32),
             bytecode_mode: BytecodeMode::Simple,
             module_cache: FxHashMap::default(),
             module_lookup_cache: FxHashMap::default(),
@@ -8422,6 +8477,17 @@ impl Interpreter
         {
             None
         }
+    }
+
+    fn take_stack(&mut self) -> Vec<Value>
+    {
+        self.stack_pool.pop().unwrap_or_else(|| Vec::with_capacity(8))
+    }
+
+    fn recycle_stack(&mut self, mut stack: Vec<Value>)
+    {
+        stack.clear();
+        self.stack_pool.push(stack);
     }
 
     fn get_env(

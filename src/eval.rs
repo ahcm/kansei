@@ -6556,6 +6556,27 @@ fn execute_instructions(
                     frame.ip = *target;
                     continue;
                 }
+                Instruction::Add | Instruction::Sub | Instruction::Mul | Instruction::Div
+                | Instruction::Eq | Instruction::Gt | Instruction::Lt =>
+                {
+                    let r = frame.stack.pop().unwrap();
+                    let l = frame.stack.pop().unwrap();
+                    let op = match frame.code[frame.ip]
+                    {
+                        Instruction::Add => BinOpKind::Add,
+                        Instruction::Sub => BinOpKind::Sub,
+                        Instruction::Mul => BinOpKind::Mul,
+                        Instruction::Div => BinOpKind::Div,
+                        Instruction::Eq => BinOpKind::Eq,
+                        Instruction::Gt => BinOpKind::Gt,
+                        Instruction::Lt => BinOpKind::Lt,
+                        _ => unreachable!(),
+                    };
+                    let res = eval_binop(op, l, r)?;
+                    frame.stack.push(res);
+                    frame.ip += 1;
+                    continue;
+                }
                 _ => {}
             }
 

@@ -316,6 +316,8 @@ pub enum Instruction
     CallValue(usize),
     CallValueWithBlock(Rc<Closure>, usize),
     CallValueWithBlockCached(Rc<RefCell<CallSiteCache>>, Rc<Closure>, usize),
+    CallValueWithBlockCached0(Rc<RefCell<CallSiteCache>>, Rc<Closure>),
+    CallValueWithBlockCached1(Rc<RefCell<CallSiteCache>>, Rc<Closure>),
     CallValueCached0(Rc<RefCell<CallSiteCache>>),
     CallValueCached1(Rc<RefCell<CallSiteCache>>),
     ForEach
@@ -387,6 +389,18 @@ pub enum Instruction
         Rc<RefCell<CallSiteCache>>,
         Rc<Closure>,
         usize,
+    ),
+    CallMethodWithBlockCached0(
+        Rc<String>,
+        Rc<RefCell<MapAccessCache>>,
+        Rc<RefCell<CallSiteCache>>,
+        Rc<Closure>,
+    ),
+    CallMethodWithBlockCached1(
+        Rc<String>,
+        Rc<RefCell<MapAccessCache>>,
+        Rc<RefCell<CallSiteCache>>,
+        Rc<Closure>,
     ),
     ArrayGen,
     Dup,

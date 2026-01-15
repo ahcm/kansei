@@ -2279,13 +2279,31 @@ fn compile_expr(
                                     return false;
                                 }
                             }
-                            code.push(Instruction::CallMethodWithBlockCached(
-                                name.clone(),
-                                Rc::new(RefCell::new(MapAccessCache::default())),
-                                Rc::new(RefCell::new(CallSiteCache::default())),
-                                Rc::new(block.as_ref().unwrap().clone()),
-                                args.len(),
-                            ));
+                            let map_cache = Rc::new(RefCell::new(MapAccessCache::default()));
+                            let call_cache = Rc::new(RefCell::new(CallSiteCache::default()));
+                            let block_ref = Rc::new(block.as_ref().unwrap().clone());
+                            match args.len()
+                            {
+                                0 => code.push(Instruction::CallMethodWithBlockCached0(
+                                    name.clone(),
+                                    map_cache,
+                                    call_cache,
+                                    block_ref,
+                                )),
+                                1 => code.push(Instruction::CallMethodWithBlockCached1(
+                                    name.clone(),
+                                    map_cache,
+                                    call_cache,
+                                    block_ref,
+                                )),
+                                _ => code.push(Instruction::CallMethodWithBlockCached(
+                                    name.clone(),
+                                    map_cache,
+                                    call_cache,
+                                    block_ref,
+                                    args.len(),
+                                )),
+                            }
                         }
                         else
                         {
@@ -2326,11 +2344,24 @@ fn compile_expr(
                 }
                 if use_caches
                 {
-                    code.push(Instruction::CallValueWithBlockCached(
-                        Rc::new(RefCell::new(crate::value::CallSiteCache::default())),
-                        Rc::new(block.as_ref().unwrap().clone()),
-                        args.len(),
-                    ));
+                    let call_cache = Rc::new(RefCell::new(crate::value::CallSiteCache::default()));
+                    let block_ref = Rc::new(block.as_ref().unwrap().clone());
+                    match args.len()
+                    {
+                        0 => code.push(Instruction::CallValueWithBlockCached0(
+                            call_cache,
+                            block_ref,
+                        )),
+                        1 => code.push(Instruction::CallValueWithBlockCached1(
+                            call_cache,
+                            block_ref,
+                        )),
+                        _ => code.push(Instruction::CallValueWithBlockCached(
+                            call_cache,
+                            block_ref,
+                            args.len(),
+                        )),
+                    }
                 }
                 else
                 {
@@ -3651,6 +3682,13 @@ fn collect_cache_metrics(code: &[Instruction])
                 call_hits += cache.hits;
                 call_misses += cache.misses;
             }
+            Instruction::CallValueWithBlockCached0(cache, _)
+            | Instruction::CallValueWithBlockCached1(cache, _) =>
+            {
+                let cache = cache.borrow();
+                call_hits += cache.hits;
+                call_misses += cache.misses;
+            }
             Instruction::CallGlobalCached(_, global_cache, call_cache, _) =>
             {
                 let cache = call_cache.borrow();
@@ -3680,6 +3718,16 @@ fn collect_cache_metrics(code: &[Instruction])
                 map_misses += cache.misses;
             }
             Instruction::CallMethodWithBlockCached(_, map_cache, call_cache, _, _) =>
+            {
+                let cache = call_cache.borrow();
+                call_hits += cache.hits;
+                call_misses += cache.misses;
+                let cache = map_cache.borrow();
+                map_hits += cache.hits;
+                map_misses += cache.misses;
+            }
+            Instruction::CallMethodWithBlockCached0(_, map_cache, call_cache, _)
+            | Instruction::CallMethodWithBlockCached1(_, map_cache, call_cache, _) =>
             {
                 let cache = call_cache.borrow();
                 call_hits += cache.hits;
@@ -3735,6 +3783,14 @@ fn format_bytecode_instruction(inst: &Instruction) -> String
         {
             format!("CallValueWithBlockCached(<cache>, <block>, {argc})")
         }
+        Instruction::CallValueWithBlockCached0(_, _) =>
+        {
+            "CallValueWithBlockCached0(<cache>, <block>)".to_string()
+        }
+        Instruction::CallValueWithBlockCached1(_, _) =>
+        {
+            "CallValueWithBlockCached1(<cache>, <block>)".to_string()
+        }
         Instruction::CallValueCached0(_) =>
         {
             "CallValueCached0(<cache>)".to_string()
@@ -3747,6 +3803,20 @@ fn format_bytecode_instruction(inst: &Instruction) -> String
         {
             format!(
                 "CallMethodWithBlockCached({:?}, <map_cache>, <call_cache>, <block>, {argc})",
+                name
+            )
+        }
+        Instruction::CallMethodWithBlockCached0(name, _, _, _) =>
+        {
+            format!(
+                "CallMethodWithBlockCached0({:?}, <map_cache>, <call_cache>, <block>)",
+                name
+            )
+        }
+        Instruction::CallMethodWithBlockCached1(name, _, _, _) =>
+        {
+            format!(
+                "CallMethodWithBlockCached1({:?}, <map_cache>, <call_cache>, <block>)",
                 name
             )
         }
@@ -6816,6 +6886,33 @@ fn execute_instructions(
                     )?;
                     frame.stack.push(result);
                 }
+                Instruction::CallValueWithBlockCached0(cache, block) =>
+                {
+                    let func_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing function value for call".to_string(),
+                        line: 0,
+                    })?;
+                    let args = smallvec::SmallVec::<[Value; 8]>::new();
+                    let result =
+                        eval_call_value_cached_with_block(interpreter, func_val, args, &cache, &block)?;
+                    frame.stack.push(result);
+                }
+                Instruction::CallValueWithBlockCached1(cache, block) =>
+                {
+                    let arg = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing argument for call".to_string(),
+                        line: 0,
+                    })?;
+                    let func_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing function value for call".to_string(),
+                        line: 0,
+                    })?;
+                    let mut args = smallvec::SmallVec::<[Value; 8]>::new();
+                    args.push(arg);
+                    let result =
+                        eval_call_value_cached_with_block(interpreter, func_val, args, &cache, &block)?;
+                    frame.stack.push(result);
+                }
                 Instruction::CallGlobalCached(name, global_cache, call_cache, argc) =>
                 {
                     let args = pop_args_from_stack(&mut frame.stack, argc)?;
@@ -6871,12 +6968,12 @@ fn execute_instructions(
                     let result = eval_call_value_cached(interpreter, func_val, args, &call_cache)?;
                     frame.stack.push(result);
                 }
-                Instruction::CallMethodWithBlockCached(
-                    name,
-                    map_cache,
-                    call_cache,
-                    block,
-                    argc,
+            Instruction::CallMethodWithBlockCached(
+                name,
+                map_cache,
+                call_cache,
+                block,
+                argc,
                 ) =>
                 {
                     let args = pop_args_from_stack(&mut frame.stack, argc)?;
@@ -6889,8 +6986,41 @@ fn execute_instructions(
                         &call_cache,
                         &block,
                     )?;
-                    frame.stack.push(result);
-                }
+                frame.stack.push(result);
+            }
+            Instruction::CallMethodWithBlockCached0(name, map_cache, call_cache, block) =>
+            {
+                let func_val =
+                    pop_method_target_and_resolve(&mut frame.stack, &name, &map_cache)?;
+                let args = smallvec::SmallVec::<[Value; 8]>::new();
+                let result = eval_call_value_cached_with_block(
+                    interpreter,
+                    func_val,
+                    args,
+                    &call_cache,
+                    &block,
+                )?;
+                frame.stack.push(result);
+            }
+            Instruction::CallMethodWithBlockCached1(name, map_cache, call_cache, block) =>
+            {
+                let arg = frame.stack.pop().ok_or_else(|| RuntimeError {
+                    message: "Missing argument for call".to_string(),
+                    line: 0,
+                })?;
+                let func_val =
+                    pop_method_target_and_resolve(&mut frame.stack, &name, &map_cache)?;
+                let mut args = smallvec::SmallVec::<[Value; 8]>::new();
+                args.push(arg);
+                let result = eval_call_value_cached_with_block(
+                    interpreter,
+                    func_val,
+                    args,
+                    &call_cache,
+                    &block,
+                )?;
+                frame.stack.push(result);
+            }
                 Instruction::ForEach { var_slot, body } =>
                 {
                     let iter_val = frame.stack.pop().ok_or_else(|| RuntimeError {

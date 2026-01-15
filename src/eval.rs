@@ -6686,6 +6686,26 @@ fn execute_instructions(
                     frame.ip += 1;
                     continue;
                 }
+                Instruction::AddCached(cache)
+                | Instruction::SubCached(cache)
+                | Instruction::MulCached(cache)
+                | Instruction::DivCached(cache) =>
+                {
+                    let r = frame.stack.pop().unwrap();
+                    let l = frame.stack.pop().unwrap();
+                    let op = match frame.code[frame.ip]
+                    {
+                        Instruction::AddCached(_) => BinOpKind::Add,
+                        Instruction::SubCached(_) => BinOpKind::Sub,
+                        Instruction::MulCached(_) => BinOpKind::Mul,
+                        Instruction::DivCached(_) => BinOpKind::Div,
+                        _ => unreachable!(),
+                    };
+                    let res = eval_cached_binop(op, cache, l, r)?;
+                    frame.stack.push(res);
+                    frame.ip += 1;
+                    continue;
+                }
                 _ => {}
             }
 

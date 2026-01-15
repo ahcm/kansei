@@ -2549,10 +2549,13 @@ fn compile_expr(
             {
                 if use_caches
                 {
-                    code.push(Instruction::CallValueCached(
-                        Rc::new(RefCell::new(crate::value::CallSiteCache::default())),
-                        args.len(),
-                    ));
+                    let call_cache = Rc::new(RefCell::new(crate::value::CallSiteCache::default()));
+                    match args.len()
+                    {
+                        0 => code.push(Instruction::CallValueCached0(call_cache)),
+                        1 => code.push(Instruction::CallValueCached1(call_cache)),
+                        _ => code.push(Instruction::CallValueCached(call_cache, args.len())),
+                    }
                 }
                 else
                 {
@@ -3636,6 +3639,12 @@ fn collect_cache_metrics(code: &[Instruction])
                 call_hits += cache.hits;
                 call_misses += cache.misses;
             }
+            Instruction::CallValueCached0(cache) | Instruction::CallValueCached1(cache) =>
+            {
+                let cache = cache.borrow();
+                call_hits += cache.hits;
+                call_misses += cache.misses;
+            }
             Instruction::CallValueWithBlockCached(cache, _, _) =>
             {
                 let cache = cache.borrow();
@@ -3725,6 +3734,14 @@ fn format_bytecode_instruction(inst: &Instruction) -> String
         Instruction::CallValueWithBlockCached(_, _, argc) =>
         {
             format!("CallValueWithBlockCached(<cache>, <block>, {argc})")
+        }
+        Instruction::CallValueCached0(_) =>
+        {
+            "CallValueCached0(<cache>)".to_string()
+        }
+        Instruction::CallValueCached1(_) =>
+        {
+            "CallValueCached1(<cache>)".to_string()
         }
         Instruction::CallMethodWithBlockCached(name, _, _, _, argc) =>
         {
@@ -6659,6 +6676,31 @@ fn execute_instructions(
                         message: "Missing function value for call".to_string(),
                         line: 0,
                     })?;
+                    let result = eval_call_value_cached(interpreter, func_val, args, &cache)?;
+                    frame.stack.push(result);
+                }
+                Instruction::CallValueCached0(cache) =>
+                {
+                    let func_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing function value for call".to_string(),
+                        line: 0,
+                    })?;
+                    let args = smallvec::SmallVec::<[Value; 8]>::new();
+                    let result = eval_call_value_cached(interpreter, func_val, args, &cache)?;
+                    frame.stack.push(result);
+                }
+                Instruction::CallValueCached1(cache) =>
+                {
+                    let arg = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing argument for call".to_string(),
+                        line: 0,
+                    })?;
+                    let func_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing function value for call".to_string(),
+                        line: 0,
+                    })?;
+                    let mut args = smallvec::SmallVec::<[Value; 8]>::new();
+                    args.push(arg);
                     let result = eval_call_value_cached(interpreter, func_val, args, &cache)?;
                     frame.stack.push(result);
                 }

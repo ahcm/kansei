@@ -316,6 +316,8 @@ pub enum Instruction
     CallValue(usize),
     CallValueWithBlock(Rc<Closure>, usize),
     CallValueWithBlockCached(Rc<RefCell<CallSiteCache>>, Rc<Closure>, usize),
+    CallValueCached0(Rc<RefCell<CallSiteCache>>),
+    CallValueCached1(Rc<RefCell<CallSiteCache>>),
     ForEach
     {
         var_slot: usize,

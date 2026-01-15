@@ -6175,6 +6175,47 @@ fn range_end_num(
     }
 }
 
+#[derive(Clone)]
+enum HotInstr
+{
+    LoadConstIdx(usize),
+    LoadSlot(usize),
+    StoreSlot(usize),
+    Pop,
+    Dup,
+    JumpIfFalse(usize),
+    Jump(usize),
+    BinOp(BinOpKind),
+}
+
+fn build_hot_cache(code: &[Instruction]) -> Rc<Vec<Option<HotInstr>>>
+{
+    let mut out = Vec::with_capacity(code.len());
+    for inst in code
+    {
+        let hot = match inst
+        {
+            Instruction::LoadConstIdx(idx) => Some(HotInstr::LoadConstIdx(*idx)),
+            Instruction::LoadSlot(slot) => Some(HotInstr::LoadSlot(*slot)),
+            Instruction::StoreSlot(slot) => Some(HotInstr::StoreSlot(*slot)),
+            Instruction::Pop => Some(HotInstr::Pop),
+            Instruction::Dup => Some(HotInstr::Dup),
+            Instruction::JumpIfFalse(target) => Some(HotInstr::JumpIfFalse(*target)),
+            Instruction::Jump(target) => Some(HotInstr::Jump(*target)),
+            Instruction::Add => Some(HotInstr::BinOp(BinOpKind::Add)),
+            Instruction::Sub => Some(HotInstr::BinOp(BinOpKind::Sub)),
+            Instruction::Mul => Some(HotInstr::BinOp(BinOpKind::Mul)),
+            Instruction::Div => Some(HotInstr::BinOp(BinOpKind::Div)),
+            Instruction::Eq => Some(HotInstr::BinOp(BinOpKind::Eq)),
+            Instruction::Gt => Some(HotInstr::BinOp(BinOpKind::Gt)),
+            Instruction::Lt => Some(HotInstr::BinOp(BinOpKind::Lt)),
+            _ => None,
+        };
+        out.push(hot);
+    }
+    Rc::new(out)
+}
+
 fn execute_instructions(
     interpreter: &mut Interpreter,
     code: &Rc<Vec<Instruction>>,
@@ -6258,6 +6299,7 @@ fn execute_instructions(
     struct Frame
     {
         code: Rc<Vec<Instruction>>,
+        hot_cache: Rc<Vec<Option<HotInstr>>>,
         ip: usize,
         stack: Vec<Value>,
         pending: Option<Pending>,
@@ -6307,6 +6349,7 @@ fn execute_instructions(
     let mut frames = Vec::new();
     frames.push(Frame {
         code: code.clone(),
+        hot_cache: build_hot_cache(code),
         ip: 0,
         stack: interpreter.take_stack(),
         pending: None,
@@ -6355,7 +6398,8 @@ fn execute_instructions(
                                 let body = state.body.clone();
                                 pending_next = Some(Pending::ForEach(state));
                                 next_frame = Some(Frame {
-                                    code: body,
+                                    code: body.clone(),
+                                    hot_cache: build_hot_cache(&body),
                                     ip: 0,
                                     stack: interpreter.take_stack(),
                                     pending: None,
@@ -6409,7 +6453,8 @@ fn execute_instructions(
                                 let body = state.body.clone();
                                 pending_next = Some(Pending::ForRange(state));
                                 next_frame = Some(Frame {
-                                    code: body,
+                                    code: body.clone(),
+                                    hot_cache: build_hot_cache(&body),
                                     ip: 0,
                                     stack: interpreter.take_stack(),
                                     pending: None,
@@ -6483,7 +6528,8 @@ fn execute_instructions(
                                 let body = state.body.clone();
                                 pending_next = Some(Pending::ForRangeInt(state));
                                 next_frame = Some(Frame {
-                                    code: body,
+                                    code: body.clone(),
+                                    hot_cache: build_hot_cache(&body),
                                     ip: 0,
                                     stack: interpreter.take_stack(),
                                     pending: None,
@@ -6533,7 +6579,8 @@ fn execute_instructions(
                                 let body = state.body.clone();
                                 pending_next = Some(Pending::ForRangeFloat(state));
                                 next_frame = Some(Frame {
-                                    code: body,
+                                    code: body.clone(),
+                                    hot_cache: build_hot_cache(&body),
                                     ip: 0,
                                     stack: interpreter.take_stack(),
                                     pending: None,
@@ -6563,6 +6610,81 @@ fn execute_instructions(
 
         {
             let frame = frames.last_mut().unwrap();
+            if let Some(hot) = frame.hot_cache[frame.ip].clone()
+            {
+                match hot
+                {
+                    HotInstr::LoadConstIdx(idx) =>
+                    {
+                        let val = const_pool.get(idx).cloned().unwrap_or(Value::Nil);
+                        frame.stack.push(val);
+                        frame.ip += 1;
+                        continue;
+                    }
+                    HotInstr::LoadSlot(slot) =>
+                    {
+                        frame.stack.push(slots[slot].clone());
+                        frame.ip += 1;
+                        continue;
+                    }
+                    HotInstr::StoreSlot(slot) =>
+                    {
+                        let val = frame.stack.pop().unwrap();
+                        if let Some(dst) = slots.get_mut(slot)
+                        {
+                            *dst = val.clone();
+                        }
+                        frame.stack.push(val);
+                        frame.ip += 1;
+                        continue;
+                    }
+                    HotInstr::Pop =>
+                    {
+                        frame.stack.pop();
+                        frame.ip += 1;
+                        continue;
+                    }
+                    HotInstr::Dup =>
+                    {
+                        let val = frame.stack.last().cloned().ok_or_else(|| RuntimeError {
+                            message: "Stack underflow on dup".to_string(),
+                            line: 0,
+                        })?;
+                        frame.stack.push(val);
+                        frame.ip += 1;
+                        continue;
+                    }
+                    HotInstr::JumpIfFalse(target) =>
+                    {
+                        let cond = frame.stack.pop().unwrap_or(Value::Nil);
+                        let is_false = matches!(cond, Value::Boolean(false) | Value::Nil);
+                        if is_false
+                        {
+                            frame.ip = target;
+                        }
+                        else
+                        {
+                            frame.ip += 1;
+                        }
+                        continue;
+                    }
+                    HotInstr::Jump(target) =>
+                    {
+                        frame.ip = target;
+                        continue;
+                    }
+                    HotInstr::BinOp(op) =>
+                    {
+                        let r = frame.stack.pop().unwrap();
+                        let l = frame.stack.pop().unwrap();
+                        let res = eval_binop(op, l, r)?;
+                        frame.stack.push(res);
+                        frame.ip += 1;
+                        continue;
+                    }
+                }
+            }
+
             let mut advance_ip = true;
 
             match &frame.code[frame.ip]
@@ -7128,6 +7250,7 @@ fn execute_instructions(
                         frame.pending = Some(Pending::ForEach(state));
                         next_frame = Some(Frame {
                             code: body.clone(),
+                            hot_cache: build_hot_cache(&body),
                             ip: 0,
                             stack: interpreter.take_stack(),
                             pending: None,
@@ -7171,6 +7294,7 @@ fn execute_instructions(
                         frame.pending = Some(Pending::ForEach(state));
                         next_frame = Some(Frame {
                             code: body.clone(),
+                            hot_cache: build_hot_cache(&body),
                             ip: 0,
                             stack: interpreter.take_stack(),
                             pending: None,
@@ -7214,6 +7338,7 @@ fn execute_instructions(
                         frame.pending = Some(Pending::ForEach(state));
                         next_frame = Some(Frame {
                             code: body.clone(),
+                            hot_cache: build_hot_cache(&body),
                             ip: 0,
                             stack: interpreter.take_stack(),
                             pending: None,
@@ -7276,6 +7401,7 @@ fn execute_instructions(
                         }));
                         next_frame = Some(Frame {
                             code: body.clone(),
+                            hot_cache: build_hot_cache(&body),
                             ip: 0,
                             stack: interpreter.take_stack(),
                             pending: None,
@@ -7334,6 +7460,7 @@ fn execute_instructions(
                             }));
                             next_frame = Some(Frame {
                                 code: body.clone(),
+                                hot_cache: build_hot_cache(&body),
                                 ip: 0,
                                 stack: interpreter.take_stack(),
                                 pending: None,
@@ -7393,6 +7520,7 @@ fn execute_instructions(
                             }));
                             next_frame = Some(Frame {
                                 code: body.clone(),
+                                hot_cache: build_hot_cache(&body),
                                 ip: 0,
                                 stack: interpreter.take_stack(),
                                 pending: None,
@@ -7464,6 +7592,7 @@ fn execute_instructions(
                             }));
                         next_frame = Some(Frame {
                             code: body.clone(),
+                            hot_cache: build_hot_cache(&body),
                             ip: 0,
                             stack: interpreter.take_stack(),
                             pending: None,

@@ -18,7 +18,7 @@ spectral = Path.join(base, "spectral_norm_wasm.wasm")
 
 if not File.exists(plotters)
   puts "Missing wasm output: " + plotters
-  exit(1)
+  program.exit(1)
 end
 
 if not File.exists(spectral)
@@ -33,7 +33,7 @@ fn copy_wasm(src, dst)
   end
   if not File.copy(src, dst)
     puts "Failed to copy " + src + " -> " + dst
-    exit(1)
+    program.exit(1)
   end
 end
 

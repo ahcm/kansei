@@ -1,5 +1,6 @@
 use base64::engine::general_purpose::STANDARD as BASE64_STD;
 use base64::Engine;
+use image::ImageEncoder;
 use plotters::coord::Shift;
 use plotters::prelude::*;
 use plotters::series::LineSeries;
@@ -558,11 +559,11 @@ fn build_chart_png(
     {
         let encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
         if encoder
-            .encode(
+            .write_image(
                 &buffer,
                 width,
                 height,
-                image::ColorType::Rgb8,
+                image::ColorType::Rgb8.into(),
             )
             .is_err()
         {

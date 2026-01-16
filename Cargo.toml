@@ -31,7 +31,7 @@ uuid = { version = "1.10.0", features = ["v4"] }
 toml = "0.8.19"
 serde_yaml = "0.9.34"
 flate2 = { version = "1.0.30", default-features = false, features = ["rust_backend"] }
-image = { version = "0.25.2", default-features = false, features = ["png"] }
+image = { version = "0.25.9", default-features = false, features = ["png"] }
 rusqlite = { version = "0.31.0", features = ["bundled"] }
 memmap2 = "0.9.4"
 

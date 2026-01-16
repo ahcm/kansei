@@ -14,6 +14,7 @@ pub mod polars;
 pub mod regex;
 pub mod serde;
 pub mod sqlite;
+pub mod tests;
 pub mod toml;
 pub mod uuid;
 pub mod yaml;
@@ -40,6 +41,7 @@ pub use polars::build_polars_module;
 pub use regex::build_regex_module;
 pub use serde::build_serde_module;
 pub use sqlite::build_sqlite_module;
+pub use tests::build_tests_module;
 pub use toml::build_toml_module;
 pub use uuid::build_uuid_module;
 pub use yaml::build_yaml_module;
@@ -66,5 +68,6 @@ pub fn build_lib_module() -> Value
     lib_map.insert(intern::intern("Sqlite"), build_sqlite_module());
     lib_map.insert(intern::intern("Bytes"), build_bytes_module());
     lib_map.insert(intern::intern("Mmap"), build_mmap_module());
+    lib_map.insert(intern::intern("tests"), build_tests_module());
     Value::Map(Rc::new(RefCell::new(MapValue::new(lib_map))))
 }

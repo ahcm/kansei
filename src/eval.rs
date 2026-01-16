@@ -8847,8 +8847,8 @@ fn should_compile(simple: bool, _uses_env: bool, mode: BytecodeMode) -> bool
     match mode
     {
         BytecodeMode::Off => false,
-        BytecodeMode::Simple => simple,
-        BytecodeMode::Advanced => simple,
+        BytecodeMode::Simple => simple && !_uses_env,
+        BytecodeMode::Advanced => simple && !_uses_env,
     }
 }
 

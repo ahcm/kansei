@@ -31,6 +31,7 @@ pub enum Token
     EqualEqual,
     BangEqual,
     AndAnd,
+    OrOr,
     Less,
     Greater,
     If,
@@ -50,6 +51,7 @@ pub enum Token
     Clone,
     Not,
     And,
+    Or,
     Pipe,
     End,
     True,
@@ -252,8 +254,16 @@ impl Lexer
                 }
                 '|' =>
                 {
-                    self.position += 1;
-                    Token::Pipe
+                    if self.peek() == '|'
+                    {
+                        self.position += 2;
+                        Token::OrOr
+                    }
+                    else
+                    {
+                        self.position += 1;
+                        Token::Pipe
+                    }
                 }
                 '&' =>
                 {
@@ -460,6 +470,7 @@ impl Lexer
             "clone" => Token::Clone,
             "not" => Token::Not,
             "and" => Token::And,
+            "or" => Token::Or,
             "true" => Token::True,
             "false" => Token::False,
             "fn" => Token::Fn,

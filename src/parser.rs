@@ -88,6 +88,45 @@ impl Parser
 
     fn parse_expression(&mut self) -> Expr
     {
+        self.parse_or()
+    }
+
+    fn parse_or(&mut self) -> Expr
+    {
+        let mut left = self.parse_and();
+
+        while matches!(self.current_token.token, Token::Or | Token::OrOr)
+        {
+            let line = self.current_token.line;
+            let is_bool = matches!(self.current_token.token, Token::OrOr);
+            self.eat();
+            let right = self.parse_and();
+            left = if is_bool
+            {
+                self.make_expr(
+                    ExprKind::OrBool {
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    },
+                    line,
+                )
+            }
+            else
+            {
+                self.make_expr(
+                    ExprKind::Or {
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    },
+                    line,
+                )
+            };
+        }
+        left
+    }
+
+    fn parse_and(&mut self) -> Expr
+    {
         let mut left = self.parse_comparison();
 
         while matches!(self.current_token.token, Token::And | Token::AndAnd)

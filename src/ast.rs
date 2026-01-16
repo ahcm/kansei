@@ -113,6 +113,16 @@ pub enum ExprKind
         left: Box<Expr>,
         right: Box<Expr>,
     },
+    Or
+    {
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
+    OrBool
+    {
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
 
     // Operations
     BinaryOp

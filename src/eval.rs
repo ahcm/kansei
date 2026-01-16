@@ -1456,7 +1456,10 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<SymbolId>)
         {
             collect_declarations(expr, decls);
         }
-        ExprKind::And { left, right } | ExprKind::AndBool { left, right } =>
+        ExprKind::And { left, right }
+        | ExprKind::AndBool { left, right }
+        | ExprKind::Or { left, right }
+        | ExprKind::OrBool { left, right } =>
         {
             collect_declarations(left, decls);
             collect_declarations(right, decls);
@@ -1569,7 +1572,10 @@ fn resolve_functions(expr: &mut Expr)
         {
             resolve_functions(expr);
         }
-        ExprKind::And { left, right } | ExprKind::AndBool { left, right } =>
+        ExprKind::And { left, right }
+        | ExprKind::AndBool { left, right }
+        | ExprKind::Or { left, right }
+        | ExprKind::OrBool { left, right } =>
         {
             resolve_functions(left);
             resolve_functions(right);
@@ -1704,7 +1710,10 @@ fn uses_environment(expr: &Expr) -> bool
             uses_environment(function) || args.iter().any(uses_environment)
         }
         ExprKind::Not(expr) => uses_environment(expr),
-        ExprKind::And { left, right } | ExprKind::AndBool { left, right } =>
+        ExprKind::And { left, right }
+        | ExprKind::AndBool { left, right }
+        | ExprKind::Or { left, right }
+        | ExprKind::OrBool { left, right } =>
         {
             uses_environment(left) || uses_environment(right)
         }
@@ -2022,7 +2031,10 @@ fn is_pure_expr(expr: &Expr) -> bool
         | ExprKind::Nil => true,
         ExprKind::Identifier { .. } => true,
         ExprKind::Not(expr) => is_pure_expr(expr),
-        ExprKind::And { left, right } | ExprKind::AndBool { left, right } =>
+        ExprKind::And { left, right }
+        | ExprKind::AndBool { left, right }
+        | ExprKind::Or { left, right }
+        | ExprKind::OrBool { left, right } =>
         {
             is_pure_expr(left) && is_pure_expr(right)
         }
@@ -2324,6 +2336,60 @@ fn compile_expr(
             let false_target = code.len();
             let false_idx = push_const(consts, Value::Boolean(false));
             code.push(Instruction::LoadConstIdx(false_idx));
+            let end_target = code.len();
+            code[jump_false_idx] = Instruction::JumpIfFalse(false_target);
+            code[jump_end_idx] = Instruction::Jump(end_target);
+            if !want_value
+            {
+                code.push(Instruction::Pop);
+            }
+        }
+        ExprKind::Or { left, right } =>
+        {
+            if !compile_expr(left, code, consts, true)
+            {
+                return false;
+            }
+            let jump_false_idx = code.len();
+            code.push(Instruction::JumpIfFalse(usize::MAX));
+            let true_idx = push_const(consts, Value::Boolean(true));
+            code.push(Instruction::LoadConstIdx(true_idx));
+            let jump_end_idx = code.len();
+            code.push(Instruction::Jump(usize::MAX));
+            let false_target = code.len();
+            if !compile_expr(right, code, consts, true)
+            {
+                return false;
+            }
+            code.push(Instruction::Not);
+            code.push(Instruction::Not);
+            let end_target = code.len();
+            code[jump_false_idx] = Instruction::JumpIfFalse(false_target);
+            code[jump_end_idx] = Instruction::Jump(end_target);
+            if !want_value
+            {
+                code.push(Instruction::Pop);
+            }
+        }
+        ExprKind::OrBool { left, right } =>
+        {
+            if !compile_expr(left, code, consts, true)
+            {
+                return false;
+            }
+            code.push(Instruction::CheckBool);
+            let jump_false_idx = code.len();
+            code.push(Instruction::JumpIfFalse(usize::MAX));
+            let true_idx = push_const(consts, Value::Boolean(true));
+            code.push(Instruction::LoadConstIdx(true_idx));
+            let jump_end_idx = code.len();
+            code.push(Instruction::Jump(usize::MAX));
+            let false_target = code.len();
+            if !compile_expr(right, code, consts, true)
+            {
+                return false;
+            }
+            code.push(Instruction::CheckBool);
             let end_target = code.len();
             code[jump_false_idx] = Instruction::JumpIfFalse(false_target);
             code[jump_end_idx] = Instruction::Jump(end_target);
@@ -3524,7 +3590,10 @@ fn find_compile_failure(expr: &Expr) -> Option<String>
             .or_else(|| find_compile_failure(value)),
         ExprKind::Clone(expr) => find_compile_failure(expr),
         ExprKind::Not(expr) => find_compile_failure(expr),
-        ExprKind::And { left, right } | ExprKind::AndBool { left, right } =>
+        ExprKind::And { left, right }
+        | ExprKind::AndBool { left, right }
+        | ExprKind::Or { left, right }
+        | ExprKind::OrBool { left, right } =>
         {
             find_compile_failure(left).or_else(|| find_compile_failure(right))
         }
@@ -3683,7 +3752,10 @@ fn collect_function_exprs(
         {
             collect_function_exprs(expr, out);
         }
-        ExprKind::And { left, right } | ExprKind::AndBool { left, right } =>
+        ExprKind::And { left, right }
+        | ExprKind::AndBool { left, right }
+        | ExprKind::Or { left, right }
+        | ExprKind::OrBool { left, right } =>
         {
             collect_function_exprs(left, out);
             collect_function_exprs(right, out);
@@ -4207,6 +4279,20 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
             },
             line: expr.line,
         },
+        ExprKind::Or { left, right } => Expr {
+            kind: ExprKind::Or {
+                left: Box::new(substitute(left, args)),
+                right: Box::new(substitute(right, args)),
+            },
+            line: expr.line,
+        },
+        ExprKind::OrBool { left, right } => Expr {
+            kind: ExprKind::OrBool {
+                left: Box::new(substitute(left, args)),
+                right: Box::new(substitute(right, args)),
+            },
+            line: expr.line,
+        },
         ExprKind::Clone(expr) => Expr {
             kind: ExprKind::Clone(Box::new(substitute(expr, args))),
             line: expr.line,
@@ -4351,7 +4437,10 @@ fn expr_size(expr: &Expr) -> usize
     {
         ExprKind::BinaryOp { left, right, .. } => 1 + expr_size(left) + expr_size(right),
         ExprKind::Not(expr) => 1 + expr_size(expr),
-        ExprKind::And { left, right } | ExprKind::AndBool { left, right } =>
+        ExprKind::And { left, right }
+        | ExprKind::AndBool { left, right }
+        | ExprKind::Or { left, right }
+        | ExprKind::OrBool { left, right } =>
         {
             1 + expr_size(left) + expr_size(right)
         }
@@ -4438,7 +4527,9 @@ fn is_reg_simple(expr: &Expr) -> bool
         | ExprKind::FormatString(_)
         | ExprKind::Not(_)
         | ExprKind::And { .. }
-        | ExprKind::AndBool { .. } => false,
+        | ExprKind::AndBool { .. }
+        | ExprKind::Or { .. }
+        | ExprKind::OrBool { .. } => false,
         ExprKind::Block(stmts) => stmts.iter().all(is_reg_simple),
         ExprKind::BinaryOp { left, right, .. } => is_reg_simple(left) && is_reg_simple(right),
         ExprKind::Call {
@@ -4563,7 +4654,10 @@ fn compile_reg_expr(
             Some(dst)
         }
         ExprKind::Not(_) => None,
-        ExprKind::And { .. } | ExprKind::AndBool { .. } => None,
+        ExprKind::And { .. }
+        | ExprKind::AndBool { .. }
+        | ExprKind::Or { .. }
+        | ExprKind::OrBool { .. } => None,
         ExprKind::BinaryOp { left, op, right } =>
         {
             let left = compile_reg_expr(left, code, consts, alloc)?;
@@ -4875,6 +4969,10 @@ fn is_inline_safe_arg(expr: &Expr) -> bool
         ExprKind::Identifier { .. } => true,
         ExprKind::Not(expr) => is_inline_safe_arg(expr),
         ExprKind::And { left, right } | ExprKind::AndBool { left, right } =>
+        {
+            is_inline_safe_arg(left) && is_inline_safe_arg(right)
+        }
+        ExprKind::Or { left, right } | ExprKind::OrBool { left, right } =>
         {
             is_inline_safe_arg(left) && is_inline_safe_arg(right)
         }
@@ -9030,6 +9128,10 @@ fn is_simple(expr: &Expr) -> bool
         {
             is_simple(left) && is_simple(right)
         }
+        ExprKind::Or { left, right } | ExprKind::OrBool { left, right } =>
+        {
+            is_simple(left) && is_simple(right)
+        }
         ExprKind::Clone(expr) => is_simple(expr),
         ExprKind::IndexAssignment {
             target,
@@ -9185,6 +9287,11 @@ fn resolve(expr: &mut Expr, slot_map: &FxHashMap<SymbolId, usize>)
             resolve(expr, slot_map);
         }
         ExprKind::And { left, right } | ExprKind::AndBool { left, right } =>
+        {
+            resolve(left, slot_map);
+            resolve(right, slot_map);
+        }
+        ExprKind::Or { left, right } | ExprKind::OrBool { left, right } =>
         {
             resolve(left, slot_map);
             resolve(right, slot_map);
@@ -11310,6 +11417,46 @@ impl Interpreter
                     Value::Boolean(value) => Ok(Value::Boolean(value)),
                     _ => Err(RuntimeError {
                         message: "&& expects boolean operands".to_string(),
+                        line,
+                    }),
+                }
+            }
+            ExprKind::Or { left, right } =>
+            {
+                let left_val = self.eval(left, slots)?;
+                let left_truthy = !matches!(left_val, Value::Boolean(false) | Value::Nil);
+                if left_truthy
+                {
+                    return Ok(Value::Boolean(true));
+                }
+                let right_val = self.eval(right, slots)?;
+                let right_truthy = !matches!(right_val, Value::Boolean(false) | Value::Nil);
+                Ok(Value::Boolean(right_truthy))
+            }
+            ExprKind::OrBool { left, right } =>
+            {
+                let left_val = self.eval(left, slots)?;
+                let left_bool = match left_val
+                {
+                    Value::Boolean(value) => value,
+                    _ =>
+                    {
+                        return Err(RuntimeError {
+                            message: "|| expects boolean operands".to_string(),
+                            line,
+                        })
+                    }
+                };
+                if left_bool
+                {
+                    return Ok(Value::Boolean(true));
+                }
+                let right_val = self.eval(right, slots)?;
+                match right_val
+                {
+                    Value::Boolean(value) => Ok(Value::Boolean(value)),
+                    _ => Err(RuntimeError {
+                        message: "|| expects boolean operands".to_string(),
                         line,
                     }),
                 }

@@ -145,6 +145,19 @@ fn main() -> rustyline::Result<()>
     program_map.insert(intern::intern("args"), args_val);
     program_map.insert(intern::intern("env"), env_val);
     program_map.insert(
+        intern::intern("wasm_backend"),
+        value::Value::String(intern::intern_owned("wasmi".to_string())),
+    );
+    program_map.insert(
+        intern::intern("wasm_backends"),
+        value::Value::Array(Rc::new(RefCell::new(
+            wasm::available_wasm_backends()
+                .into_iter()
+                .map(|name| value::Value::String(intern::intern_owned(name.to_string())))
+                .collect(),
+        ))),
+    );
+    program_map.insert(
         intern::intern("exit"),
         value::Value::NativeFunction(native_program_exit),
     );

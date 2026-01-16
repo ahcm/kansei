@@ -601,6 +601,13 @@ Json = wasm.json
 result = Json.parse(f"{1 + 2}")
 ```
 
+Select the runtime backend by setting `program.wasm_backend` before loading modules. The default is `"wasmi"`. The available backends are listed in `program.wasm_backends` (for example, `"wasmtime"` only exists when compiled with `--features wasmtime`).
+
+```ruby
+program.wasm_backend = "wasmtime"
+load wasm::Json
+```
+
 ### WASM ABI
 - Export a `memory` and an `alloc(size: i32) -> i32`. `dealloc(ptr: i32, len: i32)` is optional.
 - For wasm-bindgen modules, `__wbindgen_malloc(size: i32, align: i32) -> i32`, `__wbindgen_free(ptr: i32, len: i32, align: i32)`, and `__wbindgen_add_to_stack_pointer(delta: i32) -> i32` are used when present.

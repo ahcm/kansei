@@ -11,7 +11,7 @@ use crate::value::{
     MapAccessCacheEntry, MapValue, RangeEnd, RegBinOp, RegFunction, RegInstruction, StructType,
     Value,
 };
-use crate::wasm::{WasmFunction, WasmModule};
+use crate::wasm::{WasmBackend, WasmFunction, WasmModule, WasmValue, WasmValueType, parse_wasm_backend};
 use rustc_hash::FxHashMap;
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
@@ -24,8 +24,6 @@ use std::rc::Rc;
 use std::simd::Simd;
 use std::simd::num::SimdFloat;
 use std::time::SystemTime;
-use wasmi::Value as WasmValue;
-use wasmi::core::ValueType;
 
 #[derive(Debug)]
 pub struct RuntimeError
@@ -10398,8 +10396,9 @@ impl Interpreter
             line,
         })?;
 
-        let module =
-            WasmModule::load(&resolved).map_err(|message| RuntimeError { message, line })?;
+        let backend = self.resolve_wasm_backend(line)?;
+        let module = WasmModule::load(&resolved, backend)
+            .map_err(|message| RuntimeError { message, line })?;
         let mut exports = FxHashMap::default();
         {
             let module_ref = module.borrow();
@@ -10422,6 +10421,31 @@ impl Interpreter
             .insert(module_name, Value::Map(Rc::new(RefCell::new(MapValue::new(exports)))));
         wasm_mut.version = wasm_mut.version.wrapping_add(1);
         Ok(Value::Nil)
+    }
+
+    fn resolve_wasm_backend(&self, line: usize) -> Result<WasmBackend, RuntimeError>
+    {
+        let program_sym = intern::intern_symbol("program");
+        if let Some(Value::Map(map)) = self.env.borrow().get(program_sym)
+        {
+            if let Some(value) = map.borrow().data.get(&intern::intern("wasm_backend"))
+            {
+                let backend = match value
+                {
+                    Value::String(backend) => backend.as_str(),
+                    _ =>
+                    {
+                        return Err(RuntimeError {
+                            message: "program.wasm_backend must be a string".to_string(),
+                            line,
+                        });
+                    }
+                };
+                return parse_wasm_backend(backend)
+                    .map_err(|message| RuntimeError { message, line });
+            }
+        }
+        Ok(WasmBackend::Wasmi)
     }
 
     fn import_path(&mut self, path: &[SymbolId], line: usize) -> EvalResult
@@ -10801,13 +10825,7 @@ impl Interpreter
     ) -> EvalResult
     {
         let mut module = func.module.borrow_mut();
-        if module.memory.is_none()
-        {
-            module.memory = module
-                .instance
-                .get_export(&module.store, "memory")
-                .and_then(|e| e.into_memory());
-        }
+        module.ensure_memory();
         let wasm_func = module
             .functions
             .get(&func.name)
@@ -10825,8 +10843,8 @@ impl Interpreter
             })?
             .clone();
 
-        let params = func_type.params();
-        let results = func_type.results();
+        let params = &func_type.params;
+        let results = &func_type.results;
         if results.len() > 1
         {
             return Err(RuntimeError {
@@ -10849,22 +10867,20 @@ impl Interpreter
             })
             .sum::<usize>();
         let wbindgen_mode = !params.is_empty()
-            && params[0] == ValueType::I32
+            && params[0] == WasmValueType::I32
             && params.len() == estimated_params + 1
-            && (results.is_empty() || results[0] == ValueType::I32);
+            && (results.is_empty() || results[0] == WasmValueType::I32);
 
         let mut retptr: Option<i32> = None;
         let mut retptr_alloc: Option<(i32, i32)> = None;
         if wbindgen_mode
         {
-            if let Some(add) = module.wbindgen_add_to_stack_pointer
+            if let Some(add) = module.wbindgen_add_to_stack_pointer.clone()
             {
                 let mut result = [WasmValue::I32(0)];
-                add.call(&mut module.store, &[WasmValue::I32(-16)], &mut result)
-                    .map_err(|e| RuntimeError {
-                        message: format!("Wasm stack adjust failed: {}", e),
-                        line,
-                    })?;
+                module
+                    .call_func(&add, &[WasmValue::I32(-16)], &mut result)
+                    .map_err(|message| RuntimeError { message, line })?;
                 let ptr = match result[0]
                 {
                     WasmValue::I32(v) => v,
@@ -10880,11 +10896,11 @@ impl Interpreter
             }
             else
             {
-                let (alloc, alloc_name) = if let Some(func) = module.alloc
+                let (alloc, alloc_name) = if let Some(func) = module.alloc.clone()
                 {
                     (func, "alloc")
                 }
-                else if let Some(func) = module.wbindgen_malloc
+                else if let Some(func) = module.wbindgen_malloc.clone()
                 {
                     (func, "__wbindgen_malloc")
                 }
@@ -10899,7 +10915,7 @@ impl Interpreter
                 let alloc_params = module
                     .func_types
                     .get(&intern::intern(alloc_name))
-                    .map(|t| t.params().len())
+                    .map(|t| t.params.len())
                     .unwrap_or(1);
                 let alloc_args = if alloc_params == 2
                 {
@@ -10909,12 +10925,9 @@ impl Interpreter
                 {
                     vec![WasmValue::I32(8)]
                 };
-                alloc
-                    .call(&mut module.store, &alloc_args, &mut results)
-                    .map_err(|e| RuntimeError {
-                        message: format!("Wasm alloc failed: {}", e),
-                        line,
-                    })?;
+                module
+                    .call_func(&alloc, &alloc_args, &mut results)
+                    .map_err(|message| RuntimeError { message, line })?;
                 let ptr = match results[0]
                 {
                     WasmValue::I32(v) => v,
@@ -10951,23 +10964,23 @@ impl Interpreter
                 Value::String(s) =>
                 {
                     if param_index + 1 >= params.len()
-                        || params[param_index] != ValueType::I32
-                        || params[param_index + 1] != ValueType::I32
+                        || params[param_index] != WasmValueType::I32
+                        || params[param_index + 1] != WasmValueType::I32
                     {
                         return Err(RuntimeError {
                             message: "Wasm string arguments require two i32 params".to_string(),
                             line,
                         });
                     }
-                    let memory = module.memory.ok_or_else(|| RuntimeError {
+                    let memory = module.memory_data_mut().ok_or_else(|| RuntimeError {
                         message: "Wasm module has no memory export".to_string(),
                         line,
                     })?;
-                    let (alloc, alloc_name) = if let Some(func) = module.alloc
+                    let (alloc, alloc_name) = if let Some(func) = module.alloc.clone()
                     {
                         (func, "alloc")
                     }
-                    else if let Some(func) = module.wbindgen_malloc
+                    else if let Some(func) = module.wbindgen_malloc.clone()
                     {
                         (func, "__wbindgen_malloc")
                     }
@@ -10983,7 +10996,7 @@ impl Interpreter
                     let alloc_params = module
                         .func_types
                         .get(&intern::intern(alloc_name))
-                        .map(|t| t.params().len())
+                        .map(|t| t.params.len())
                         .unwrap_or(1);
                     let alloc_args = if alloc_params == 2
                     {
@@ -10993,12 +11006,9 @@ impl Interpreter
                     {
                         vec![WasmValue::I32(bytes.len() as i32)]
                     };
-                    alloc
-                        .call(&mut module.store, &alloc_args, &mut results)
-                        .map_err(|e| RuntimeError {
-                            message: format!("Wasm alloc failed: {}", e),
-                            line,
-                        })?;
+                    module
+                        .call_func(&alloc, &alloc_args, &mut results)
+                        .map_err(|message| RuntimeError { message, line })?;
                     let ptr = match results[0]
                     {
                         WasmValue::I32(v) => v,
@@ -11010,17 +11020,16 @@ impl Interpreter
                             });
                         }
                     };
-                    let mem = memory.data_mut(&mut module.store);
                     let start = ptr as usize;
                     let end = start + bytes.len();
-                    if end > mem.len()
+                    if end > memory.len()
                     {
                         return Err(RuntimeError {
                             message: "Wasm memory overflow writing string".to_string(),
                             line,
                         });
                     }
-                    mem[start..end].copy_from_slice(bytes);
+                    memory[start..end].copy_from_slice(bytes);
                     allocs.push((ptr, bytes.len() as i32));
                     wasm_args.push(WasmValue::I32(ptr));
                     wasm_args.push(WasmValue::I32(bytes.len() as i32));
@@ -11030,8 +11039,8 @@ impl Interpreter
                 Value::F64Array(arr) =>
                 {
                     if param_index + 1 >= params.len()
-                        || params[param_index] != ValueType::I32
-                        || params[param_index + 1] != ValueType::I32
+                        || params[param_index] != WasmValueType::I32
+                        || params[param_index + 1] != WasmValueType::I32
                     {
                         return Err(RuntimeError {
                             message: "Wasm f64 array arguments require two i32 params".to_string(),
@@ -11051,15 +11060,15 @@ impl Interpreter
                         param_index += 2;
                         continue;
                     }
-                    let memory = module.memory.ok_or_else(|| RuntimeError {
+                    let memory = module.memory_data_mut().ok_or_else(|| RuntimeError {
                         message: "Wasm module has no memory export".to_string(),
                         line,
                     })?;
-                    let (alloc, alloc_name) = if let Some(func) = module.alloc
+                    let (alloc, alloc_name) = if let Some(func) = module.alloc.clone()
                     {
                         (func, "alloc")
                     }
-                    else if let Some(func) = module.wbindgen_malloc
+                    else if let Some(func) = module.wbindgen_malloc.clone()
                     {
                         (func, "__wbindgen_malloc")
                     }
@@ -11078,7 +11087,7 @@ impl Interpreter
                     let alloc_params = module
                         .func_types
                         .get(&intern::intern(alloc_name))
-                        .map(|t| t.params().len())
+                        .map(|t| t.params.len())
                         .unwrap_or(1);
                     let alloc_args = if alloc_params == 2
                     {
@@ -11088,12 +11097,9 @@ impl Interpreter
                     {
                         vec![WasmValue::I32(byte_len as i32)]
                     };
-                    alloc
-                        .call(&mut module.store, &alloc_args, &mut results)
-                        .map_err(|e| RuntimeError {
-                            message: format!("Wasm alloc failed: {}", e),
-                            line,
-                        })?;
+                    module
+                        .call_func(&alloc, &alloc_args, &mut results)
+                        .map_err(|message| RuntimeError { message, line })?;
                     let ptr = match results[0]
                     {
                         WasmValue::I32(v) => v,
@@ -11105,10 +11111,9 @@ impl Interpreter
                             });
                         }
                     };
-                    let mem = memory.data_mut(&mut module.store);
                     let start = ptr as usize;
                     let end = start + byte_len;
-                    if end > mem.len()
+                    if end > memory.len()
                     {
                         return Err(RuntimeError {
                             message: "Wasm memory overflow writing array".to_string(),
@@ -11119,7 +11124,7 @@ impl Interpreter
                     for (idx, value) in slice.iter().enumerate()
                     {
                         let offset = start + idx * 8;
-                        mem[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+                        memory[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
                     }
                     allocs.push((ptr, byte_len as i32));
                     wasm_args.push(WasmValue::I32(ptr));
@@ -11130,8 +11135,8 @@ impl Interpreter
                 Value::Array(arr) =>
                 {
                     if param_index + 1 >= params.len()
-                        || params[param_index] != ValueType::I32
-                        || params[param_index + 1] != ValueType::I32
+                        || params[param_index] != WasmValueType::I32
+                        || params[param_index + 1] != WasmValueType::I32
                     {
                         return Err(RuntimeError {
                             message: "Wasm array arguments require two i32 params".to_string(),
@@ -11152,15 +11157,15 @@ impl Interpreter
                         param_index += 2;
                         continue;
                     }
-                    let memory = module.memory.ok_or_else(|| RuntimeError {
+                    let memory = module.memory_data_mut().ok_or_else(|| RuntimeError {
                         message: "Wasm module has no memory export".to_string(),
                         line,
                     })?;
-                    let (alloc, alloc_name) = if let Some(func) = module.alloc
+                    let (alloc, alloc_name) = if let Some(func) = module.alloc.clone()
                     {
                         (func, "alloc")
                     }
-                    else if let Some(func) = module.wbindgen_malloc
+                    else if let Some(func) = module.wbindgen_malloc.clone()
                     {
                         (func, "__wbindgen_malloc")
                     }
@@ -11179,7 +11184,7 @@ impl Interpreter
                     let alloc_params = module
                         .func_types
                         .get(&intern::intern(alloc_name))
-                        .map(|t| t.params().len())
+                        .map(|t| t.params.len())
                         .unwrap_or(1);
                     let alloc_args = if alloc_params == 2
                     {
@@ -11189,12 +11194,9 @@ impl Interpreter
                     {
                         vec![WasmValue::I32(byte_len as i32)]
                     };
-                    alloc
-                        .call(&mut module.store, &alloc_args, &mut results)
-                        .map_err(|e| RuntimeError {
-                            message: format!("Wasm alloc failed: {}", e),
-                            line,
-                        })?;
+                    module
+                        .call_func(&alloc, &alloc_args, &mut results)
+                        .map_err(|message| RuntimeError { message, line })?;
                     let ptr = match results[0]
                     {
                         WasmValue::I32(v) => v,
@@ -11206,10 +11208,9 @@ impl Interpreter
                             });
                         }
                     };
-                    let mem = memory.data_mut(&mut module.store);
                     let start = ptr as usize;
                     let end = start + byte_len;
-                    if end > mem.len()
+                    if end > memory.len()
                     {
                         return Err(RuntimeError {
                             message: "Wasm memory overflow writing array".to_string(),
@@ -11231,7 +11232,7 @@ impl Interpreter
                         }
                         let bytes = (num as u32).to_le_bytes();
                         let offset = start + idx * 4;
-                        mem[offset..offset + 4].copy_from_slice(&bytes);
+                        memory[offset..offset + 4].copy_from_slice(&bytes);
                     }
                     allocs.push((ptr, byte_len as i32));
                     wasm_args.push(WasmValue::I32(ptr));
@@ -11244,8 +11245,8 @@ impl Interpreter
                     let val = if *b { 1 } else { 0 };
                     match params[param_index]
                     {
-                        ValueType::I32 => wasm_args.push(WasmValue::I32(val)),
-                        ValueType::I64 => wasm_args.push(WasmValue::I64(val as i64)),
+                        WasmValueType::I32 => wasm_args.push(WasmValue::I32(val)),
+                        WasmValueType::I64 => wasm_args.push(WasmValue::I64(val as i64)),
                         _ =>
                         {
                             return Err(RuntimeError {
@@ -11261,8 +11262,8 @@ impl Interpreter
                 {
                     match params[param_index]
                     {
-                        ValueType::F32 => wasm_args.push(WasmValue::F32((*value as f32).into())),
-                        ValueType::F64 => wasm_args.push(WasmValue::F64((*value).into())),
+                        WasmValueType::F32 => wasm_args.push(WasmValue::F32(*value as f32)),
+                        WasmValueType::F64 => wasm_args.push(WasmValue::F64(*value)),
                         _ =>
                         {
                             return Err(RuntimeError {
@@ -11282,10 +11283,10 @@ impl Interpreter
                     })?;
                     match params[param_index]
                     {
-                        ValueType::I32 => wasm_args.push(WasmValue::I32(num as i32)),
-                        ValueType::I64 => wasm_args.push(WasmValue::I64(num as i64)),
-                        ValueType::F32 => wasm_args.push(WasmValue::F32((num as f32).into())),
-                        ValueType::F64 => wasm_args.push(WasmValue::F64((num as f64).into())),
+                        WasmValueType::I32 => wasm_args.push(WasmValue::I32(num as i32)),
+                        WasmValueType::I64 => wasm_args.push(WasmValue::I64(num as i64)),
+                        WasmValueType::F32 => wasm_args.push(WasmValue::F32(num as f32)),
+                        WasmValueType::F64 => wasm_args.push(WasmValue::F64(num as f64)),
                         _ =>
                         {
                             return Err(RuntimeError {
@@ -11314,18 +11315,15 @@ impl Interpreter
         }
 
         let mut wasm_results = vec![WasmValue::I32(0); results.len()];
-        wasm_func
-            .call(&mut module.store, &wasm_args, &mut wasm_results)
-            .map_err(|e| RuntimeError {
-                message: format!("Wasm call failed: {}", e),
-                line,
-            })?;
+        module
+            .call_func(&wasm_func, &wasm_args, &mut wasm_results)
+            .map_err(|message| RuntimeError { message, line })?;
 
-        let (dealloc, dealloc_name) = if let Some(func) = module.dealloc
+        let (dealloc, dealloc_name) = if let Some(func) = module.dealloc.clone()
         {
             (Some(func), "dealloc")
         }
-        else if let Some(func) = module.wbindgen_free
+        else if let Some(func) = module.wbindgen_free.clone()
         {
             (Some(func), "__wbindgen_free")
         }
@@ -11340,7 +11338,7 @@ impl Interpreter
                 let dealloc_params = module
                     .func_types
                     .get(&intern::intern(dealloc_name))
-                    .map(|t| t.params().len())
+                    .map(|t| t.params.len())
                     .unwrap_or(2);
                 let args = if dealloc_params == 3
                 {
@@ -11350,46 +11348,49 @@ impl Interpreter
                 {
                     vec![WasmValue::I32(ptr), WasmValue::I32(len)]
                 };
-                let _ = dealloc.call(&mut module.store, &args, &mut []);
+                let _ = module.call_func(&dealloc, &args, &mut []);
             }
         }
 
         if let Some(ptr) = retptr
         {
-            let memory = module.memory.ok_or_else(|| RuntimeError {
+            let memory = module.memory_data().ok_or_else(|| RuntimeError {
                 message: "Wasm module has no memory export".to_string(),
                 line,
             })?;
             let result_str = {
-                let mem = memory.data(&module.store);
                 let start = ptr as usize;
-                if start + 8 > mem.len()
+                if start + 8 > memory.len()
                 {
                     return Err(RuntimeError {
                         message: "Wasm memory overflow reading return".to_string(),
                         line,
                     });
                 }
-                let ptr_bytes = &mem[start..start + 4];
-                let len_bytes = &mem[start + 4..start + 8];
+                let ptr_bytes = &memory[start..start + 4];
+                let len_bytes = &memory[start + 4..start + 8];
                 let str_ptr =
                     u32::from_le_bytes([ptr_bytes[0], ptr_bytes[1], ptr_bytes[2], ptr_bytes[3]]);
                 let str_len =
                     u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]]);
                 let start = str_ptr as usize;
                 let end = start + str_len as usize;
-                if end > mem.len()
+                if end > memory.len()
                 {
                     return Err(RuntimeError {
                         message: "Wasm memory overflow reading string".to_string(),
                         line,
                     });
                 }
-                Some((String::from_utf8_lossy(&mem[start..end]).to_string(), str_ptr, str_len))
+                Some((
+                    String::from_utf8_lossy(&memory[start..end]).to_string(),
+                    str_ptr,
+                    str_len,
+                ))
             };
-            if let Some(add) = module.wbindgen_add_to_stack_pointer
+            if let Some(add) = module.wbindgen_add_to_stack_pointer.clone()
             {
-                let _ = add.call(&mut module.store, &[WasmValue::I32(16)], &mut []);
+                let _ = module.call_func(&add, &[WasmValue::I32(16)], &mut []);
             }
             if let Some(dealloc) = dealloc
             {
@@ -11398,7 +11399,7 @@ impl Interpreter
                     let dealloc_params = module
                         .func_types
                         .get(&intern::intern(dealloc_name))
-                        .map(|t| t.params().len())
+                        .map(|t| t.params.len())
                         .unwrap_or(2);
                     let args = if dealloc_params == 3
                     {
@@ -11408,7 +11409,7 @@ impl Interpreter
                     {
                         vec![WasmValue::I32(ptr), WasmValue::I32(len)]
                     };
-                    let _ = dealloc.call(&mut module.store, &args, &mut []);
+                    let _ = module.call_func(&dealloc, &args, &mut []);
                 }
             }
             if let Some((s, str_ptr, str_len)) = result_str
@@ -11418,7 +11419,7 @@ impl Interpreter
                     let dealloc_params = module
                         .func_types
                         .get(&intern::intern(dealloc_name))
-                        .map(|t| t.params().len())
+                        .map(|t| t.params.len())
                         .unwrap_or(2);
                     let args = if dealloc_params == 3
                     {
@@ -11435,7 +11436,7 @@ impl Interpreter
                             WasmValue::I32(str_len as i32),
                         ]
                     };
-                    let _ = dealloc.call(&mut module.store, &args, &mut []);
+                    let _ = module.call_func(&dealloc, &args, &mut []);
                 }
                 return Ok(Value::String(intern::intern_owned(s)));
             }
@@ -11448,28 +11449,28 @@ impl Interpreter
         let wasm_result = wasm_results.get(0).cloned().unwrap_or(WasmValue::I32(0));
         match (results[0], wasm_result)
         {
-            (ValueType::I32, WasmValue::I32(v)) => Ok(make_signed_int(v as i128, IntKind::I32)),
-            (ValueType::I64, WasmValue::I64(v)) =>
+            (WasmValueType::I32, WasmValue::I32(v)) =>
+                Ok(make_signed_int(v as i128, IntKind::I32)),
+            (WasmValueType::I64, WasmValue::I64(v)) =>
             {
                 if module.memory.is_some() && func.name.ends_with("_str")
                 {
                     let ptr = (v & 0xFFFF_FFFF) as u32;
                     let len = ((v >> 32) & 0xFFFF_FFFF) as u32;
-                    let memory = module.memory.ok_or_else(|| RuntimeError {
+                    let memory = module.memory_data().ok_or_else(|| RuntimeError {
                         message: "Wasm module has no memory export".to_string(),
                         line,
                     })?;
-                    let mem = memory.data(&module.store);
                     let start = ptr as usize;
                     let end = start + len as usize;
-                    if end > mem.len()
+                    if end > memory.len()
                     {
                         return Err(RuntimeError {
                             message: "Wasm memory overflow reading string".to_string(),
                             line,
                         });
                     }
-                    let s = String::from_utf8_lossy(&mem[start..end]).to_string();
+                    let s = String::from_utf8_lossy(&memory[start..end]).to_string();
                     Ok(Value::String(intern::intern_owned(s)))
                 }
                 else
@@ -11477,14 +11478,10 @@ impl Interpreter
                     Ok(make_signed_int(v as i128, IntKind::I64))
                 }
             }
-            (ValueType::F32, WasmValue::F32(bits)) =>
-            {
-                Ok(make_float(f32::from(bits) as f64, FloatKind::F32))
-            }
-            (ValueType::F64, WasmValue::F64(bits)) =>
-            {
-                Ok(make_float(f64::from(bits), FloatKind::F64))
-            }
+            (WasmValueType::F32, WasmValue::F32(value)) =>
+                Ok(make_float(value as f64, FloatKind::F32)),
+            (WasmValueType::F64, WasmValue::F64(value)) =>
+                Ok(make_float(value, FloatKind::F64)),
             _ => Ok(Value::Nil),
         }
     }

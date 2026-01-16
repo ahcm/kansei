@@ -5672,6 +5672,127 @@ fn reg_binop_kind(op: RegBinOp) -> BinOpKind
     }
 }
 
+fn eval_f64_index_cached_value(
+    index_val: Value,
+    target_val: Value,
+    cache: &Rc<RefCell<IndexCache>>,
+) -> EvalResult
+{
+    match target_val
+    {
+        Value::F64Array(arr) =>
+        {
+            let idx = match index_val
+            {
+                Value::Integer { value, .. } if value >= 0 => value as usize,
+                Value::Unsigned { value, .. } => value as usize,
+                _ =>
+                {
+                    return Err(err_index_requires_int());
+                }
+            };
+            let arr_ptr = Rc::as_ptr(&arr) as usize;
+            let mut cache_mut = cache.borrow_mut();
+            if cache_mut.array_ptr == Some(arr_ptr) && cache_mut.index_usize == Some(idx)
+            {
+                cache_mut.hits += 1;
+            }
+            else
+            {
+                cache_mut.array_ptr = Some(arr_ptr);
+                cache_mut.index_usize = Some(idx);
+                cache_mut.misses += 1;
+            }
+            let vec = arr.borrow();
+            if idx < vec.len()
+            {
+                Ok(make_float(vec[idx], FloatKind::F64))
+            }
+            else
+            {
+                Ok(Value::Nil)
+            }
+        }
+        other => eval_index_cached_value(index_val, other, cache),
+    }
+}
+
+fn eval_map_index_cached_value(
+    index_val: Value,
+    target_val: Value,
+    cache: &Rc<RefCell<MapAccessCache>>,
+) -> EvalResult
+{
+    let result = match target_val
+    {
+        Value::StructInstance(inst) =>
+        {
+            if let Value::String(s) = index_val
+            {
+                if let Some(idx) = inst.ty.field_map.get(&s)
+                {
+                    let fields = inst.fields.borrow();
+                    fields.get(*idx).cloned().unwrap_or(Value::Nil)
+                }
+                else if let Some(method) = inst.ty.methods.borrow().get(&s).cloned()
+                {
+                    Value::BoundMethod(Rc::new(BoundMethod {
+                        receiver: Value::StructInstance(inst.clone()),
+                        func: method,
+                    }))
+                }
+                else
+                {
+                    Value::Nil
+                }
+            }
+            else
+            {
+                return Err(err_index_unsupported());
+            }
+        }
+        Value::StructType(ty) =>
+        {
+            if let Value::String(s) = index_val
+            {
+                ty.methods.borrow().get(&s).cloned().unwrap_or(Value::Nil)
+            }
+            else
+            {
+                return Err(err_index_unsupported());
+            }
+        }
+        Value::Map(map) =>
+        {
+            if let Value::String(s) = index_val
+            {
+                if s.as_str() == "keys"
+                {
+                    map_keys_array(&map.borrow())
+                }
+                else if s.as_str() == "values"
+                {
+                    map_values_array(&map.borrow())
+                }
+                else
+                {
+                    let map_ptr = Rc::as_ptr(&map) as usize;
+                    let map_ref = map.borrow();
+                    eval_map_index_cached(&map_ref, map_ptr, &s, cache)
+                }
+            }
+            else
+            {
+                let key = intern::intern_owned(index_val.inspect());
+                map.borrow().data.get(&key).cloned().unwrap_or(Value::Nil)
+            }
+        }
+        Value::Array(_) | Value::F64Array(_) => return Err(err_index_requires_int()),
+        _ => return Err(err_index_unsupported()),
+    };
+    Ok(result)
+}
+
 fn execute_reg_instructions(
     interpreter: &mut Interpreter,
     reg: &RegFunction,
@@ -6186,6 +6307,10 @@ enum HotInstr
     JumpIfFalse(usize),
     Jump(usize),
     BinOp(BinOpKind),
+    BinOpCached(BinOpKind, Rc<RefCell<BinaryOpCache>>),
+    IndexCached(Rc<RefCell<IndexCache>>),
+    F64IndexCached(Rc<RefCell<IndexCache>>),
+    MapIndexCached(Rc<RefCell<MapAccessCache>>),
 }
 
 fn build_hot_cache(code: &[Instruction]) -> Rc<Vec<Option<HotInstr>>>
@@ -6209,6 +6334,25 @@ fn build_hot_cache(code: &[Instruction]) -> Rc<Vec<Option<HotInstr>>>
             Instruction::Eq => Some(HotInstr::BinOp(BinOpKind::Eq)),
             Instruction::Gt => Some(HotInstr::BinOp(BinOpKind::Gt)),
             Instruction::Lt => Some(HotInstr::BinOp(BinOpKind::Lt)),
+            Instruction::AddCached(cache) =>
+            {
+                Some(HotInstr::BinOpCached(BinOpKind::Add, cache.clone()))
+            }
+            Instruction::SubCached(cache) =>
+            {
+                Some(HotInstr::BinOpCached(BinOpKind::Sub, cache.clone()))
+            }
+            Instruction::MulCached(cache) =>
+            {
+                Some(HotInstr::BinOpCached(BinOpKind::Mul, cache.clone()))
+            }
+            Instruction::DivCached(cache) =>
+            {
+                Some(HotInstr::BinOpCached(BinOpKind::Div, cache.clone()))
+            }
+            Instruction::IndexCached(cache) => Some(HotInstr::IndexCached(cache.clone())),
+            Instruction::F64IndexCached(cache) => Some(HotInstr::F64IndexCached(cache.clone())),
+            Instruction::MapIndexCached(cache) => Some(HotInstr::MapIndexCached(cache.clone())),
             _ => None,
         };
         out.push(hot);
@@ -6678,6 +6822,42 @@ fn execute_instructions(
                         let r = frame.stack.pop().unwrap();
                         let l = frame.stack.pop().unwrap();
                         let res = eval_binop(op, l, r)?;
+                        frame.stack.push(res);
+                        frame.ip += 1;
+                        continue;
+                    }
+                    HotInstr::BinOpCached(op, cache) =>
+                    {
+                        let r = frame.stack.pop().unwrap();
+                        let l = frame.stack.pop().unwrap();
+                        let res = eval_cached_binop(op, &cache, l, r)?;
+                        frame.stack.push(res);
+                        frame.ip += 1;
+                        continue;
+                    }
+                    HotInstr::IndexCached(cache) =>
+                    {
+                        let index_val = frame.stack.pop().unwrap();
+                        let target_val = frame.stack.pop().unwrap();
+                        let res = eval_index_cached_value(index_val, target_val, &cache)?;
+                        frame.stack.push(res);
+                        frame.ip += 1;
+                        continue;
+                    }
+                    HotInstr::F64IndexCached(cache) =>
+                    {
+                        let index_val = frame.stack.pop().unwrap();
+                        let target_val = frame.stack.pop().unwrap();
+                        let res = eval_f64_index_cached_value(index_val, target_val, &cache)?;
+                        frame.stack.push(res);
+                        frame.ip += 1;
+                        continue;
+                    }
+                    HotInstr::MapIndexCached(cache) =>
+                    {
+                        let index_val = frame.stack.pop().unwrap();
+                        let target_val = frame.stack.pop().unwrap();
+                        let res = eval_map_index_cached_value(index_val, target_val, &cache)?;
                         frame.stack.push(res);
                         frame.ip += 1;
                         continue;
@@ -7929,77 +8109,7 @@ fn execute_instructions(
                         message: "Missing target for index expression".to_string(),
                         line: 0,
                     })?;
-                    let result = match target_val
-                    {
-                        Value::StructInstance(inst) =>
-                        {
-                            if let Value::String(s) = index_val
-                            {
-                                if let Some(idx) = inst.ty.field_map.get(&s)
-                                {
-                                    let fields = inst.fields.borrow();
-                                    fields.get(*idx).cloned().unwrap_or(Value::Nil)
-                                }
-                                else if let Some(method) =
-                                    inst.ty.methods.borrow().get(&s).cloned()
-                                {
-                                    Value::BoundMethod(Rc::new(BoundMethod {
-                                        receiver: Value::StructInstance(inst.clone()),
-                                        func: method,
-                                    }))
-                                }
-                                else
-                                {
-                                    Value::Nil
-                                }
-                            }
-                            else
-                            {
-                                return Err(err_index_unsupported());
-                            }
-                        }
-                        Value::StructType(ty) =>
-                        {
-                            if let Value::String(s) = index_val
-                            {
-                                ty.methods.borrow().get(&s).cloned().unwrap_or(Value::Nil)
-                            }
-                            else
-                            {
-                                return Err(err_index_unsupported());
-                            }
-                        }
-                        Value::Map(map) =>
-                        {
-                            if let Value::String(s) = index_val
-                            {
-                                if s.as_str() == "keys"
-                                {
-                                    map_keys_array(&map.borrow())
-                                }
-                                else if s.as_str() == "values"
-                                {
-                                    map_values_array(&map.borrow())
-                                }
-                                else
-                                {
-                                    let map_ptr = Rc::as_ptr(&map) as usize;
-                                    let map_ref = map.borrow();
-                                    eval_map_index_cached(&map_ref, map_ptr, &s, &cache)
-                                }
-                            }
-                            else
-                            {
-                                let key = intern::intern_owned(index_val.inspect());
-                                map.borrow().data.get(&key).cloned().unwrap_or(Value::Nil)
-                            }
-                        }
-                        Value::Array(_) | Value::F64Array(_) =>
-                        {
-                            return Err(err_index_requires_int());
-                        }
-                        _ => return Err(err_index_unsupported()),
-                    };
+                    let result = eval_map_index_cached_value(index_val, target_val, &cache)?;
                     frame.stack.push(result);
                 }
                 Instruction::F64IndexCached(cache) =>
@@ -8012,44 +8122,7 @@ fn execute_instructions(
                         message: "Missing target for index expression".to_string(),
                         line: 0,
                     })?;
-                    let result = match target_val
-                    {
-                        Value::F64Array(arr) =>
-                        {
-                            let idx = match index_val
-                            {
-                                Value::Integer { value, .. } if value >= 0 => value as usize,
-                                Value::Unsigned { value, .. } => value as usize,
-                                _ =>
-                                {
-                                    return Err(err_index_requires_int());
-                                }
-                            };
-                            let arr_ptr = Rc::as_ptr(&arr) as usize;
-                            let mut cache_mut = cache.borrow_mut();
-                            if cache_mut.array_ptr == Some(arr_ptr)
-                                && cache_mut.index_usize == Some(idx)
-                            {
-                                cache_mut.hits += 1;
-                            }
-                            else
-                            {
-                                cache_mut.array_ptr = Some(arr_ptr);
-                                cache_mut.index_usize = Some(idx);
-                                cache_mut.misses += 1;
-                            }
-                            let vec = arr.borrow();
-                            if idx < vec.len()
-                            {
-                                make_float(vec[idx], FloatKind::F64)
-                            }
-                            else
-                            {
-                                Value::Nil
-                            }
-                        }
-                        other => eval_index_cached_value(index_val, other, &cache)?,
-                    };
+                    let result = eval_f64_index_cached_value(index_val, target_val, &cache)?;
                     frame.stack.push(result);
                 }
                 Instruction::IndexAssign =>

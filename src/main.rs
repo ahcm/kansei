@@ -20,6 +20,25 @@ use std::fs;
 use std::panic;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::process;
+
+fn native_program_exit(args: &[value::Value]) -> Result<value::Value, String>
+{
+    let code = match args.get(0)
+    {
+        None | Some(value::Value::Nil) => 0,
+        Some(value::Value::Integer { value, .. }) =>
+        {
+            i32::try_from(*value).map_err(|_| "program.exit expects a valid i32".to_string())?
+        }
+        Some(value::Value::Unsigned { value, .. }) =>
+        {
+            i32::try_from(*value).map_err(|_| "program.exit expects a valid i32".to_string())?
+        }
+        _ => return Err("program.exit expects an optional integer".to_string()),
+    };
+    process::exit(code);
+}
 
 fn main() -> rustyline::Result<()>
 {
@@ -125,6 +144,10 @@ fn main() -> rustyline::Result<()>
     );
     program_map.insert(intern::intern("args"), args_val);
     program_map.insert(intern::intern("env"), env_val);
+    program_map.insert(
+        intern::intern("exit"),
+        value::Value::NativeFunction(native_program_exit),
+    );
 
     interpreter.define_global(
         intern::intern_symbol("program"),

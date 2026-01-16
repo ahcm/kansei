@@ -81,6 +81,10 @@ name = program.name
 # The script arguments
 args = program.args
 puts args[0] # "arg1"
+
+# Exit with optional code (defaults to 0)
+program.exit()
+program.exit(1)
 ```
 
 ### Environment Variables

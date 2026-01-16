@@ -96,6 +96,12 @@ home = program.env.HOME
 ## Modules, `use`, and `import`
 Kansei exposes native modules via the `std` namespace. The `use` keyword validates that a module path exists but does not create local bindings. Use assignment to alias.
 
+`std::lib` modules are feature-gated in the Rust build. By default, all std::lib modules are enabled. To disable a module, build without defaults and opt in to the ones you want:
+
+```bash
+cargo build --no-default-features --features lib-math,lib-regex
+```
+
 ```ruby
 use std::Int64
 use std::Int128

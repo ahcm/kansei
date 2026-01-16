@@ -10,7 +10,7 @@ root = IO.cwd()
 
 cmd = "cargo build --release --target wasm32-unknown-unknown -p plotters_wasm -p spectral_norm_wasm"
 puts cmd
-`{cmd}`
+puts `{cmd}`
 
 base = Path.join(root, "target/wasm32-unknown-unknown/release")
 plotters = Path.join(base, "plotters_wasm.wasm")

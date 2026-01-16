@@ -1,2 +1,5 @@
 /target
 wasm/*/target
+wasm/*.wasm
+tests/*/wasm
+tmp/

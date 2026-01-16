@@ -30,6 +30,7 @@ pub enum Token
     EOF,
     EqualEqual,
     BangEqual,
+    AndAnd,
     Less,
     Greater,
     If,
@@ -48,6 +49,7 @@ pub enum Token
     Yield,
     Clone,
     Not,
+    And,
     Pipe,
     End,
     True,
@@ -255,8 +257,16 @@ impl Lexer
                 }
                 '&' =>
                 {
-                    self.position += 1;
-                    Token::Ampersand
+                    if self.peek() == '&'
+                    {
+                        self.position += 2;
+                        Token::AndAnd
+                    }
+                    else
+                    {
+                        self.position += 1;
+                        Token::Ampersand
+                    }
                 }
                 ';' =>
                 {
@@ -449,6 +459,7 @@ impl Lexer
             "yield" => Token::Yield,
             "clone" => Token::Clone,
             "not" => Token::Not,
+            "and" => Token::And,
             "true" => Token::True,
             "false" => Token::False,
             "fn" => Token::Fn,

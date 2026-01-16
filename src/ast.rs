@@ -103,6 +103,16 @@ pub enum ExprKind
     Shell(Rc<String>), // `ls`
     Clone(Box<Expr>),
     Not(Box<Expr>),
+    And
+    {
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
+    AndBool
+    {
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
 
     // Operations
     BinaryOp

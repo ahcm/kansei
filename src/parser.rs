@@ -88,6 +88,40 @@ impl Parser
 
     fn parse_expression(&mut self) -> Expr
     {
+        let mut left = self.parse_comparison();
+
+        while matches!(self.current_token.token, Token::And | Token::AndAnd)
+        {
+            let line = self.current_token.line;
+            let is_bool = matches!(self.current_token.token, Token::AndAnd);
+            self.eat();
+            let right = self.parse_comparison();
+            left = if is_bool
+            {
+                self.make_expr(
+                    ExprKind::AndBool {
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    },
+                    line,
+                )
+            }
+            else
+            {
+                self.make_expr(
+                    ExprKind::And {
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    },
+                    line,
+                )
+            };
+        }
+        left
+    }
+
+    fn parse_comparison(&mut self) -> Expr
+    {
         let mut left = self.parse_math();
 
         while matches!(

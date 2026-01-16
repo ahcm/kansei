@@ -373,6 +373,7 @@ pub enum Instruction
     F64IndexAssignCached(Rc<RefCell<IndexCache>>),
     CloneValue,
     Not,
+    CheckBool,
     AddCached(Rc<RefCell<BinaryOpCache>>),
     SubCached(Rc<RefCell<BinaryOpCache>>),
     MulCached(Rc<RefCell<BinaryOpCache>>),

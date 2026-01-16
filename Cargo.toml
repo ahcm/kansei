@@ -35,9 +35,11 @@ flate2 = { version = "1.0.30", default-features = false, features = ["rust_backe
 image = { version = "0.25.9", default-features = false, features = ["png"] }
 rusqlite = { version = "0.31.0", features = ["bundled"] }
 memmap2 = "0.9.4"
+eframe = { version = "0.27.2", optional = true }
 
 [features]
 default = []
 flate2-zlib = ["flate2/zlib"]
 flate2-zlib-ng = ["flate2/zlib-ng"]
 wasmtime = ["dep:wasmtime"]
+egui = ["dep:eframe"]

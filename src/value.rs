@@ -11,6 +11,7 @@ use std::rc::Rc;
 use smallvec::SmallVec;
 
 pub type NativeFunction = fn(&[Value]) -> Result<Value, String>;
+pub type HostFunction = fn(&mut crate::eval::Interpreter, &[Value]) -> Result<Value, String>;
 
 fn type_ref_label(type_ref: &TypeRef) -> String
 {
@@ -793,6 +794,7 @@ pub enum Value
     Nil,
     Function(Rc<FunctionData>),
     NativeFunction(NativeFunction),
+    HostFunction(HostFunction),
     WasmFunction(Rc<WasmFunction>),
     Reference(Rc<RefCell<Value>>),
     Uninitialized,
@@ -928,6 +930,7 @@ impl PartialEq for Value
             (Value::Nil, Value::Nil) => true,
             (Value::Function(a), Value::Function(b)) => Rc::ptr_eq(a, b),
             (Value::NativeFunction(a), Value::NativeFunction(b)) => std::ptr::fn_addr_eq(*a, *b),
+            (Value::HostFunction(a), Value::HostFunction(b)) => std::ptr::fn_addr_eq(*a, *b),
             (Value::WasmFunction(a), Value::WasmFunction(b)) => Rc::ptr_eq(a, b),
             (Value::Uninitialized, Value::Uninitialized) => true,
             _ => false,
@@ -965,6 +968,7 @@ impl fmt::Debug for Value
             Value::Nil => write!(f, "Nil"),
             Value::Function(_) => write!(f, "Function(...)"),
             Value::NativeFunction(_) => write!(f, "NativeFunction(...)"),
+            Value::HostFunction(_) => write!(f, "HostFunction(...)"),
             Value::WasmFunction(fnc) => write!(f, "WasmFunction({})", fnc.name),
             Value::Reference(r) => write!(f, "Reference({:?})", r.borrow()),
             Value::Uninitialized => write!(f, "Uninitialized"),
@@ -1024,6 +1028,7 @@ impl Value
                 format!("<function({})>", p_str.join(", "))
             }
             Value::NativeFunction(_) => "<native function>".to_string(),
+            Value::HostFunction(_) => "<host function>".to_string(),
             Value::WasmFunction(fnc) => format!("<wasm function {}>", fnc.name),
             Value::Reference(r) => r.borrow().inspect(),
             Value::Uninitialized => "<uninitialized>".to_string(),
@@ -1083,6 +1088,7 @@ impl fmt::Display for Value
                 write!(f, "<function({})>", p_str.join(", "))
             }
             Value::NativeFunction(_) => write!(f, "<native function>"),
+            Value::HostFunction(_) => write!(f, "<host function>"),
             Value::WasmFunction(fnc) => write!(f, "<wasm function {}>", fnc.name),
             Value::Reference(r) => write!(f, "{}", r.borrow()),
             Value::Uninitialized => write!(f, "<uninitialized>"),

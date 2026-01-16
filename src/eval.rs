@@ -10615,6 +10615,17 @@ impl Interpreter
                 }
                 func(&arg_vals).map_err(|message| RuntimeError { message, line })
             }
+            Value::HostFunction(func) =>
+            {
+                if block.is_some()
+                {
+                    return Err(RuntimeError {
+                        message: "Host function does not accept a block".to_string(),
+                        line,
+                    });
+                }
+                func(self, &arg_vals).map_err(|message| RuntimeError { message, line })
+            }
             Value::WasmFunction(func) =>
             {
                 if block.is_some()
@@ -11632,6 +11643,17 @@ impl Interpreter
         };
         self.block_stack.pop();
         Ok(result)
+    }
+
+    pub fn call_value_from_host(
+        &mut self,
+        func_val: Value,
+        args: Vec<Value>,
+    ) -> Result<Value, String>
+    {
+        let arg_vals: smallvec::SmallVec<[Value; 8]> = args.into_iter().collect();
+        self.call_value(func_val, arg_vals, 0, None)
+            .map_err(|err| err.message)
     }
 
     pub fn eval(&mut self, expr: &Expr, slots: &mut [Value]) -> EvalResult
@@ -12893,6 +12915,23 @@ impl Interpreter
                             arg_vals.push(self.eval(arg_expr, slots)?);
                         }
                         func(&arg_vals).map_err(|message| RuntimeError { message, line })
+                    }
+                    Value::HostFunction(func) =>
+                    {
+                        if block.is_some()
+                        {
+                            return Err(RuntimeError {
+                                message: "Host function does not accept a block".to_string(),
+                                line,
+                            });
+                        }
+                        let mut arg_vals: smallvec::SmallVec<[Value; 8]> =
+                            smallvec::SmallVec::new();
+                        for arg_expr in args
+                        {
+                            arg_vals.push(self.eval(arg_expr, slots)?);
+                        }
+                        func(self, &arg_vals).map_err(|message| RuntimeError { message, line })
                     }
                     Value::WasmFunction(func) =>
                     {

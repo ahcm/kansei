@@ -174,6 +174,13 @@ impl Parser
 
     fn parse_factor(&mut self) -> Expr
     {
+        if self.current_token.token == Token::Not
+        {
+            let line = self.current_token.line;
+            self.eat();
+            let inner = self.parse_factor();
+            return self.make_expr(ExprKind::Not(Box::new(inner)), line);
+        }
         if self.current_token.token == Token::Clone
         {
             let line = self.current_token.line;

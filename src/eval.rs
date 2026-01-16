@@ -1452,6 +1452,10 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<SymbolId>)
         {
             collect_declarations(expr, decls);
         }
+        ExprKind::Not(expr) =>
+        {
+            collect_declarations(expr, decls);
+        }
         ExprKind::FormatString(parts) =>
         {
             for part in parts
@@ -1555,6 +1559,10 @@ fn resolve_functions(expr: &mut Expr)
         {
             resolve_functions(left);
             resolve_functions(right);
+        }
+        ExprKind::Not(expr) =>
+        {
+            resolve_functions(expr);
         }
         ExprKind::Clone(expr) =>
         {
@@ -1685,6 +1693,7 @@ fn uses_environment(expr: &Expr) -> bool
         {
             uses_environment(function) || args.iter().any(uses_environment)
         }
+        ExprKind::Not(expr) => uses_environment(expr),
         ExprKind::Clone(expr) => uses_environment(expr),
         ExprKind::Use(_) => true,
         ExprKind::Load(_) => true,
@@ -1998,6 +2007,7 @@ fn is_pure_expr(expr: &Expr) -> bool
         | ExprKind::Boolean(_)
         | ExprKind::Nil => true,
         ExprKind::Identifier { .. } => true,
+        ExprKind::Not(expr) => is_pure_expr(expr),
         ExprKind::BinaryOp { left, right, .. } => is_pure_expr(left) && is_pure_expr(right),
         _ => false,
     }
@@ -2233,6 +2243,18 @@ fn compile_expr(
                 return false;
             }
             code.push(Instruction::CloneValue);
+            if !want_value
+            {
+                code.push(Instruction::Pop);
+            }
+        }
+        ExprKind::Not(expr) =>
+        {
+            if !compile_expr(expr, code, consts, true)
+            {
+                return false;
+            }
+            code.push(Instruction::Not);
             if !want_value
             {
                 code.push(Instruction::Pop);
@@ -3429,6 +3451,7 @@ fn find_compile_failure(expr: &Expr) -> Option<String>
             .or_else(|| find_compile_failure(index))
             .or_else(|| find_compile_failure(value)),
         ExprKind::Clone(expr) => find_compile_failure(expr),
+        ExprKind::Not(expr) => find_compile_failure(expr),
         ExprKind::Block(stmts) => stmts.iter().find_map(find_compile_failure),
         ExprKind::Assignment { value, .. } => find_compile_failure(value),
         ExprKind::Yield(args) => args.iter().find_map(find_compile_failure),
@@ -3577,6 +3600,10 @@ fn collect_function_exprs(
             collect_function_exprs(value, out);
         }
         ExprKind::Clone(expr) =>
+        {
+            collect_function_exprs(expr, out);
+        }
+        ExprKind::Not(expr) =>
         {
             collect_function_exprs(expr, out);
         }
@@ -4080,6 +4107,10 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
             },
             line: expr.line,
         },
+        ExprKind::Not(expr) => Expr {
+            kind: ExprKind::Not(Box::new(substitute(expr, args))),
+            line: expr.line,
+        },
         ExprKind::Clone(expr) => Expr {
             kind: ExprKind::Clone(Box::new(substitute(expr, args))),
             line: expr.line,
@@ -4223,6 +4254,7 @@ fn expr_size(expr: &Expr) -> usize
     match &expr.kind
     {
         ExprKind::BinaryOp { left, right, .. } => 1 + expr_size(left) + expr_size(right),
+        ExprKind::Not(expr) => 1 + expr_size(expr),
         ExprKind::Assignment { value, .. } => 1 + expr_size(value),
         ExprKind::IndexAssignment {
             target,
@@ -4303,7 +4335,8 @@ fn is_reg_simple(expr: &Expr) -> bool
         | ExprKind::ArrayGenerator { .. }
         | ExprKind::Map(_)
         | ExprKind::StructLiteral { .. }
-        | ExprKind::FormatString(_) => false,
+        | ExprKind::FormatString(_)
+        | ExprKind::Not(_) => false,
         ExprKind::Block(stmts) => stmts.iter().all(is_reg_simple),
         ExprKind::BinaryOp { left, right, .. } => is_reg_simple(left) && is_reg_simple(right),
         ExprKind::Call {
@@ -4427,6 +4460,7 @@ fn compile_reg_expr(
             code.push(RegInstruction::CloneValue { dst, src });
             Some(dst)
         }
+        ExprKind::Not(_) => None,
         ExprKind::BinaryOp { left, op, right } =>
         {
             let left = compile_reg_expr(left, code, consts, alloc)?;
@@ -4736,6 +4770,7 @@ fn is_inline_safe_arg(expr: &Expr) -> bool
         | ExprKind::Boolean(_)
         | ExprKind::Nil => true,
         ExprKind::Identifier { .. } => true,
+        ExprKind::Not(expr) => is_inline_safe_arg(expr),
         ExprKind::BinaryOp { left, right, .. } =>
         {
             is_inline_safe_arg(left) && is_inline_safe_arg(right)
@@ -6305,6 +6340,7 @@ enum HotInstr
     StoreSlot(usize),
     Pop,
     Dup,
+    Not,
     JumpIfFalse(usize),
     Jump(usize),
     BinOp(BinOpKind),
@@ -6326,6 +6362,7 @@ fn build_hot_cache(code: &[Instruction]) -> Rc<Vec<Option<HotInstr>>>
             Instruction::StoreSlot(slot) => Some(HotInstr::StoreSlot(*slot)),
             Instruction::Pop => Some(HotInstr::Pop),
             Instruction::Dup => Some(HotInstr::Dup),
+            Instruction::Not => Some(HotInstr::Not),
             Instruction::JumpIfFalse(target) => Some(HotInstr::JumpIfFalse(*target)),
             Instruction::Jump(target) => Some(HotInstr::Jump(*target)),
             Instruction::Add => Some(HotInstr::BinOp(BinOpKind::Add)),
@@ -6799,6 +6836,14 @@ fn execute_instructions(
                         frame.ip += 1;
                         continue;
                     }
+                    HotInstr::Not =>
+                    {
+                        let val = frame.stack.pop().unwrap_or(Value::Nil);
+                        let is_truthy = !matches!(val, Value::Boolean(false) | Value::Nil);
+                        frame.stack.push(Value::Boolean(!is_truthy));
+                        frame.ip += 1;
+                        continue;
+                    }
                     HotInstr::JumpIfFalse(target) =>
                     {
                         let cond = frame.stack.pop().unwrap_or(Value::Nil);
@@ -6949,6 +6994,14 @@ fn execute_instructions(
                     frame.ip += 1;
                     continue;
                 }
+                Instruction::Not =>
+                {
+                    let val = frame.stack.pop().unwrap_or(Value::Nil);
+                    let is_truthy = !matches!(val, Value::Boolean(false) | Value::Nil);
+                    frame.stack.push(Value::Boolean(!is_truthy));
+                    frame.ip += 1;
+                    continue;
+                }
                 Instruction::JumpIfFalse(target) =>
                 {
                     let cond = frame.stack.pop().unwrap_or(Value::Nil);
@@ -7029,6 +7082,12 @@ fn execute_instructions(
                         *slot = val.clone();
                     }
                     frame.stack.push(val);
+                }
+                Instruction::Not =>
+                {
+                    let val = frame.stack.pop().unwrap_or(Value::Nil);
+                    let is_truthy = !matches!(val, Value::Boolean(false) | Value::Nil);
+                    frame.stack.push(Value::Boolean(!is_truthy));
                 }
                 Instruction::LoadGlobalCached(name, cache) =>
                 {
@@ -8833,6 +8892,7 @@ fn is_simple(expr: &Expr) -> bool
         ExprKind::ArrayGenerator { generator, size } => is_simple(generator) && is_simple(size),
         ExprKind::Map(entries) => entries.iter().all(|(k, v)| is_simple(k) && is_simple(v)),
         ExprKind::Index { target, index } => is_simple(target) && is_simple(index),
+        ExprKind::Not(expr) => is_simple(expr),
         ExprKind::Clone(expr) => is_simple(expr),
         ExprKind::IndexAssignment {
             target,
@@ -8982,6 +9042,10 @@ fn resolve(expr: &mut Expr, slot_map: &FxHashMap<SymbolId, usize>)
         {
             resolve(target, slot_map);
             resolve(index, slot_map);
+        }
+        ExprKind::Not(expr) =>
+        {
+            resolve(expr, slot_map);
         }
         ExprKind::Clone(expr) =>
         {
@@ -11061,6 +11125,12 @@ impl Interpreter
             {
                 let val = self.eval(expr, slots)?;
                 Ok(clone_value(&val))
+            }
+            ExprKind::Not(expr) =>
+            {
+                let val = self.eval(expr, slots)?;
+                let is_truthy = !matches!(val, Value::Boolean(false) | Value::Nil);
+                Ok(Value::Boolean(!is_truthy))
             }
             ExprKind::FormatString(parts) =>
             {

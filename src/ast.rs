@@ -102,6 +102,7 @@ pub enum ExprKind
     Nil,
     Shell(Rc<String>), // `ls`
     Clone(Box<Expr>),
+    Not(Box<Expr>),
 
     // Operations
     BinaryOp

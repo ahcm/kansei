@@ -425,6 +425,7 @@ x = "Now a string"
 ## Operators
 - Arithmetic: `+`, `-`, `*`, `/`
 - Comparison: `==`, `!=`, `<`, `>`
+- Boolean: `not`
 - String Concatenation: `"Hello " + "World"`
 
 ## Control Flow

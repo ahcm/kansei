@@ -8842,13 +8842,13 @@ fn is_simple(expr: &Expr) -> bool
     }
 }
 
-fn should_compile(simple: bool, uses_env: bool, mode: BytecodeMode) -> bool
+fn should_compile(simple: bool, _uses_env: bool, mode: BytecodeMode) -> bool
 {
     match mode
     {
         BytecodeMode::Off => false,
-        BytecodeMode::Simple => simple && !uses_env,
-        BytecodeMode::Advanced => simple && !uses_env,
+        BytecodeMode::Simple => simple,
+        BytecodeMode::Advanced => simple,
     }
 }
 

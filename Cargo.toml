@@ -3,6 +3,12 @@ name = "kansei"
 version = "0.0.1"
 edition = "2024"
 
+[workspace]
+members = [
+    "wasm/plotters",
+    "wasm/spectral_norm",
+]
+
 [dependencies]
 directories = "6.0.0"
 rustc-hash = "2.1.1"

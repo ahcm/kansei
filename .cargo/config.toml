@@ -1,0 +1,2 @@
+[alias]
+wasm-build = "run --release scripts/build-wasm.ks"

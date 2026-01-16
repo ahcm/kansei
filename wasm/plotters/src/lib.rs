@@ -1,10 +1,11 @@
 use base64::engine::general_purpose::STANDARD as BASE64_STD;
 use base64::Engine;
+use plotters::coord::Shift;
 use plotters::prelude::*;
-use std::io;
+use plotters::series::LineSeries;
 use std::slice;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn alloc(size: usize) -> *mut u8
 {
     let mut buf = Vec::<u8>::with_capacity(size);
@@ -13,7 +14,7 @@ pub extern "C" fn alloc(size: usize) -> *mut u8
     ptr
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn dealloc(ptr: *mut u8, size: usize)
 {
     if ptr.is_null() || size == 0
@@ -131,10 +132,10 @@ fn compute_range(series: &[Vec<(f64, f64)>]) -> Option<(f64, f64, f64, f64)>
     {
         for (x, y) in points
         {
-            min_x = Some(min_x.map_or(*x, |v| v.min(*x)));
-            max_x = Some(max_x.map_or(*x, |v| v.max(*x)));
-            min_y = Some(min_y.map_or(*y, |v| v.min(*y)));
-            max_y = Some(max_y.map_or(*y, |v| v.max(*y)));
+            min_x = Some(min_x.map_or(*x, |v: f64| v.min(*x)));
+            max_x = Some(max_x.map_or(*x, |v: f64| v.max(*x)));
+            min_y = Some(min_y.map_or(*y, |v: f64| v.min(*y)));
+            max_y = Some(max_y.map_or(*y, |v: f64| v.max(*y)));
         }
     }
     match (min_x, max_x, min_y, max_y)
@@ -227,11 +228,11 @@ fn draw_line_chart<B: DrawingBackend>(
     let mut mesh = chart.configure_mesh();
     if let Some(label) = x_label
     {
-        mesh = mesh.x_desc(label);
+        mesh.x_desc(label);
     }
     if let Some(label) = y_label
     {
-        mesh = mesh.y_desc(label);
+        mesh.y_desc(label);
     }
     mesh.draw()?;
 
@@ -267,11 +268,11 @@ fn draw_scatter_chart<B: DrawingBackend>(
     let mut mesh = chart.configure_mesh();
     if let Some(label) = x_label
     {
-        mesh = mesh.x_desc(label);
+        mesh.x_desc(label);
     }
     if let Some(label) = y_label
     {
-        mesh = mesh.y_desc(label);
+        mesh.y_desc(label);
     }
     mesh.draw()?;
 
@@ -308,10 +309,7 @@ fn draw_bar_chart<B: DrawingBackend>(
     {
         if points.len() != first.len()
         {
-            return Err(DrawingAreaErrorKind::BackendError(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "bar series length mismatch",
-            )));
+            return Ok(());
         }
     }
 
@@ -325,11 +323,11 @@ fn draw_bar_chart<B: DrawingBackend>(
     let mut mesh = chart.configure_mesh();
     if let Some(label) = x_label
     {
-        mesh = mesh.x_desc(label);
+        mesh.x_desc(label);
     }
     if let Some(label) = y_label
     {
-        mesh = mesh.y_desc(label);
+        mesh.y_desc(label);
     }
     mesh.draw()?;
 
@@ -351,7 +349,33 @@ fn draw_bar_chart<B: DrawingBackend>(
     Ok(())
 }
 
-fn build_chart_svg<F>(
+type SvgDrawFn = for<'a> fn(
+    DrawingArea<SVGBackend<'a>, Shift>,
+    &'a [Vec<(f64, f64)>],
+    &'a [RGBColor],
+    f64,
+    f64,
+    f64,
+    f64,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) -> Result<(), DrawingAreaErrorKind<<SVGBackend<'a> as DrawingBackend>::ErrorType>>;
+
+type PngDrawFn = for<'a> fn(
+    DrawingArea<BitMapBackend<'a>, Shift>,
+    &'a [Vec<(f64, f64)>],
+    &'a [RGBColor],
+    f64,
+    f64,
+    f64,
+    f64,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) -> Result<(), DrawingAreaErrorKind<<BitMapBackend<'a> as DrawingBackend>::ErrorType>>;
+
+fn build_chart_svg(
     series: Vec<Vec<(f64, f64)>>,
     colors: Vec<RGBColor>,
     width: u32,
@@ -363,26 +387,13 @@ fn build_chart_svg<F>(
     title: Option<String>,
     x_label: Option<String>,
     y_label: Option<String>,
-    draw: F,
+    draw: SvgDrawFn,
 ) -> i64
-where
-    F: FnOnce(
-        DrawingArea<SVGBackend, Shift>,
-        &[Vec<(f64, f64)>],
-        &[RGBColor],
-        f64,
-        f64,
-        f64,
-        f64,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-    ) -> Result<(), DrawingAreaErrorKind<<SVGBackend as DrawingBackend>::ErrorType>>,
 {
     let mut svg = String::new();
     let backend = SVGBackend::with_string(&mut svg, (width, height));
     let root = backend.into_drawing_area();
-    let result = draw(
+    let result = (draw)(
         root,
         &series,
         &colors,
@@ -401,7 +412,115 @@ where
     return_string(svg)
 }
 
-fn build_chart_png<F>(
+fn draw_line_chart_svg<'a>(
+    root: DrawingArea<SVGBackend<'a>, Shift>,
+    series: &'a [Vec<(f64, f64)>],
+    colors: &'a [RGBColor],
+    min_x: f64,
+    max_x: f64,
+    min_y: f64,
+    max_y: f64,
+    title: Option<String>,
+    x_label: Option<String>,
+    y_label: Option<String>,
+) -> Result<(), DrawingAreaErrorKind<<SVGBackend<'a> as DrawingBackend>::ErrorType>>
+{
+    draw_line_chart(
+        root, series, colors, min_x, max_x, min_y, max_y, title, x_label, y_label,
+    )
+}
+
+fn draw_line_chart_png<'a>(
+    root: DrawingArea<BitMapBackend<'a>, Shift>,
+    series: &'a [Vec<(f64, f64)>],
+    colors: &'a [RGBColor],
+    min_x: f64,
+    max_x: f64,
+    min_y: f64,
+    max_y: f64,
+    title: Option<String>,
+    x_label: Option<String>,
+    y_label: Option<String>,
+) -> Result<(), DrawingAreaErrorKind<<BitMapBackend<'a> as DrawingBackend>::ErrorType>>
+{
+    draw_line_chart(
+        root, series, colors, min_x, max_x, min_y, max_y, title, x_label, y_label,
+    )
+}
+
+fn draw_scatter_chart_svg<'a>(
+    root: DrawingArea<SVGBackend<'a>, Shift>,
+    series: &'a [Vec<(f64, f64)>],
+    colors: &'a [RGBColor],
+    min_x: f64,
+    max_x: f64,
+    min_y: f64,
+    max_y: f64,
+    title: Option<String>,
+    x_label: Option<String>,
+    y_label: Option<String>,
+) -> Result<(), DrawingAreaErrorKind<<SVGBackend<'a> as DrawingBackend>::ErrorType>>
+{
+    draw_scatter_chart(
+        root, series, colors, min_x, max_x, min_y, max_y, title, x_label, y_label,
+    )
+}
+
+fn draw_scatter_chart_png<'a>(
+    root: DrawingArea<BitMapBackend<'a>, Shift>,
+    series: &'a [Vec<(f64, f64)>],
+    colors: &'a [RGBColor],
+    min_x: f64,
+    max_x: f64,
+    min_y: f64,
+    max_y: f64,
+    title: Option<String>,
+    x_label: Option<String>,
+    y_label: Option<String>,
+) -> Result<(), DrawingAreaErrorKind<<BitMapBackend<'a> as DrawingBackend>::ErrorType>>
+{
+    draw_scatter_chart(
+        root, series, colors, min_x, max_x, min_y, max_y, title, x_label, y_label,
+    )
+}
+
+fn draw_bar_chart_svg<'a>(
+    root: DrawingArea<SVGBackend<'a>, Shift>,
+    series: &'a [Vec<(f64, f64)>],
+    colors: &'a [RGBColor],
+    min_x: f64,
+    max_x: f64,
+    min_y: f64,
+    max_y: f64,
+    title: Option<String>,
+    x_label: Option<String>,
+    y_label: Option<String>,
+) -> Result<(), DrawingAreaErrorKind<<SVGBackend<'a> as DrawingBackend>::ErrorType>>
+{
+    draw_bar_chart(
+        root, series, colors, min_x, max_x, min_y, max_y, title, x_label, y_label,
+    )
+}
+
+fn draw_bar_chart_png<'a>(
+    root: DrawingArea<BitMapBackend<'a>, Shift>,
+    series: &'a [Vec<(f64, f64)>],
+    colors: &'a [RGBColor],
+    min_x: f64,
+    max_x: f64,
+    min_y: f64,
+    max_y: f64,
+    title: Option<String>,
+    x_label: Option<String>,
+    y_label: Option<String>,
+) -> Result<(), DrawingAreaErrorKind<<BitMapBackend<'a> as DrawingBackend>::ErrorType>>
+{
+    draw_bar_chart(
+        root, series, colors, min_x, max_x, min_y, max_y, title, x_label, y_label,
+    )
+}
+
+fn build_chart_png(
     series: Vec<Vec<(f64, f64)>>,
     colors: Vec<RGBColor>,
     width: u32,
@@ -413,26 +532,13 @@ fn build_chart_png<F>(
     title: Option<String>,
     x_label: Option<String>,
     y_label: Option<String>,
-    draw: F,
+    draw: PngDrawFn,
 ) -> i64
-where
-    F: FnOnce(
-        DrawingArea<BitMapBackend, Shift>,
-        &[Vec<(f64, f64)>],
-        &[RGBColor],
-        f64,
-        f64,
-        f64,
-        f64,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-    ) -> Result<(), DrawingAreaErrorKind<<BitMapBackend as DrawingBackend>::ErrorType>>,
 {
     let mut buffer = vec![0u8; (width as usize) * (height as usize) * 3];
     let backend = BitMapBackend::with_buffer(&mut buffer, (width, height));
     let root = backend.into_drawing_area();
-    let result = draw(
+    let result = (draw)(
         root,
         &series,
         &colors,
@@ -467,7 +573,7 @@ where
     return_string(encoded)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn line_chart_svg_str(
     data_ptr: *const f64,
     data_len: usize,
@@ -504,11 +610,11 @@ pub extern "C" fn line_chart_svg_str(
         None,
         None,
         None,
-        draw_line_chart,
+        draw_line_chart_svg,
     )
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn line_chart_svg_str_multi(
     data_ptr: *const f64,
     data_len: usize,
@@ -558,11 +664,11 @@ pub extern "C" fn line_chart_svg_str_multi(
         str_from_ptr(title_ptr, title_len),
         str_from_ptr(x_ptr, x_len),
         str_from_ptr(y_ptr, y_len),
-        draw_line_chart,
+        draw_line_chart_svg,
     )
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn line_chart_png_str_multi(
     data_ptr: *const f64,
     data_len: usize,
@@ -612,11 +718,11 @@ pub extern "C" fn line_chart_png_str_multi(
         str_from_ptr(title_ptr, title_len),
         str_from_ptr(x_ptr, x_len),
         str_from_ptr(y_ptr, y_len),
-        draw_line_chart,
+        draw_line_chart_png,
     )
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn scatter_chart_svg_str_multi(
     data_ptr: *const f64,
     data_len: usize,
@@ -666,11 +772,11 @@ pub extern "C" fn scatter_chart_svg_str_multi(
         str_from_ptr(title_ptr, title_len),
         str_from_ptr(x_ptr, x_len),
         str_from_ptr(y_ptr, y_len),
-        draw_scatter_chart,
+        draw_scatter_chart_svg,
     )
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn scatter_chart_png_str_multi(
     data_ptr: *const f64,
     data_len: usize,
@@ -720,11 +826,11 @@ pub extern "C" fn scatter_chart_png_str_multi(
         str_from_ptr(title_ptr, title_len),
         str_from_ptr(x_ptr, x_len),
         str_from_ptr(y_ptr, y_len),
-        draw_scatter_chart,
+        draw_scatter_chart_png,
     )
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn scatter_tsv_svg_str(
     tsv_ptr: *const u8,
     tsv_len: usize,
@@ -767,11 +873,11 @@ pub extern "C" fn scatter_tsv_svg_str(
         None,
         None,
         None,
-        draw_scatter_chart,
+        draw_scatter_chart_svg,
     )
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn scatter_tsv_png_str(
     tsv_ptr: *const u8,
     tsv_len: usize,
@@ -814,10 +920,10 @@ pub extern "C" fn scatter_tsv_png_str(
         None,
         None,
         None,
-        draw_scatter_chart,
+        draw_scatter_chart_png,
     )
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn bar_chart_svg_str_multi(
     data_ptr: *const f64,
     data_len: usize,
@@ -867,11 +973,11 @@ pub extern "C" fn bar_chart_svg_str_multi(
         str_from_ptr(title_ptr, title_len),
         str_from_ptr(x_ptr, x_len),
         str_from_ptr(y_ptr, y_len),
-        draw_bar_chart,
+        draw_bar_chart_svg,
     )
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn bar_chart_png_str_multi(
     data_ptr: *const f64,
     data_len: usize,
@@ -921,6 +1027,6 @@ pub extern "C" fn bar_chart_png_str_multi(
         str_from_ptr(title_ptr, title_len),
         str_from_ptr(x_ptr, x_len),
         str_from_ptr(y_ptr, y_len),
-        draw_bar_chart,
+        draw_bar_chart_png,
     )
 }

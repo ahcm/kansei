@@ -1,4 +1,5 @@
 use crate::intern;
+use super::LibMap;
 use crate::value::{MapValue, Value};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STD;
@@ -156,4 +157,9 @@ pub fn build_image_module() -> Value
         Value::NativeFunction(native_image_save_png_bytes),
     );
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
+}
+
+pub fn register(map: &mut LibMap)
+{
+    map.insert(intern::intern("Image"), build_image_module());
 }

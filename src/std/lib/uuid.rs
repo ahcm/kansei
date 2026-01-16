@@ -1,4 +1,5 @@
 use crate::intern;
+use super::LibMap;
 use crate::value::{MapValue, Value};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
@@ -42,4 +43,9 @@ pub fn build_uuid_module() -> Value
     map.insert(intern::intern("parse"), Value::NativeFunction(native_uuid_parse));
     map.insert(intern::intern("is_valid"), Value::NativeFunction(native_uuid_is_valid));
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
+}
+
+pub fn register(map: &mut LibMap)
+{
+    map.insert(intern::intern("Uuid"), build_uuid_module());
 }

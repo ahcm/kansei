@@ -1,4 +1,5 @@
 use crate::intern;
+use super::LibMap;
 use crate::value::{MapValue, Value};
 use regex::Regex;
 use rustc_hash::FxHashMap;
@@ -86,4 +87,9 @@ pub fn build_regex_module() -> Value
     map.insert(intern::intern("replace"), Value::NativeFunction(native_regex_replace));
     map.insert(intern::intern("split"), Value::NativeFunction(native_regex_split));
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
+}
+
+pub fn register(map: &mut LibMap)
+{
+    map.insert(intern::intern("Regex"), build_regex_module());
 }

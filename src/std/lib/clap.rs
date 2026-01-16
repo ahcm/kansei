@@ -1,4 +1,5 @@
 use crate::intern;
+use super::LibMap;
 use crate::value::{MapValue, Value};
 use clap::{Arg, ArgAction, Command};
 use rustc_hash::FxHashMap;
@@ -101,4 +102,9 @@ pub fn build_clap_module() -> Value
     let mut map = FxHashMap::default();
     map.insert(intern::intern("parse"), Value::NativeFunction(native_clap_parse));
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
+}
+
+pub fn register(map: &mut LibMap)
+{
+    map.insert(intern::intern("clap"), build_clap_module());
 }

@@ -1,4 +1,5 @@
 use crate::intern;
+use super::LibMap;
 use crate::value::{MapValue, Value};
 use hmac::{Hmac, Mac};
 use rand::RngCore;
@@ -121,4 +122,9 @@ pub fn build_crypto_module() -> Value
         Value::NativeFunction(native_crypto_random_bytes_buf),
     );
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
+}
+
+pub fn register(map: &mut LibMap)
+{
+    map.insert(intern::intern("Crypto"), build_crypto_module());
 }

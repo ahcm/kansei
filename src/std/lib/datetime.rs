@@ -1,4 +1,5 @@
 use crate::intern;
+use super::LibMap;
 use crate::value::{MapValue, Value};
 use chrono::{DateTime, TimeZone, Utc};
 use rustc_hash::FxHashMap;
@@ -70,4 +71,9 @@ pub fn build_datetime_module() -> Value
     map.insert(intern::intern("parse"), Value::NativeFunction(native_datetime_parse));
     map.insert(intern::intern("rfc3339"), Value::NativeFunction(native_datetime_rfc3339));
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
+}
+
+pub fn register(map: &mut LibMap)
+{
+    map.insert(intern::intern("DateTime"), build_datetime_module());
 }

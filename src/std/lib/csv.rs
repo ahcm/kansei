@@ -1,4 +1,5 @@
 use crate::intern;
+use super::LibMap;
 use crate::value::{MapValue, Value};
 use csv::{ReaderBuilder, WriterBuilder};
 use rustc_hash::FxHashMap;
@@ -72,4 +73,9 @@ pub fn build_csv_module() -> Value
     map.insert(intern::intern("parse"), Value::NativeFunction(native_csv_parse));
     map.insert(intern::intern("stringify"), Value::NativeFunction(native_csv_stringify));
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
+}
+
+pub fn register(map: &mut LibMap)
+{
+    map.insert(intern::intern("Csv"), build_csv_module());
 }

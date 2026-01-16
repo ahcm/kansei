@@ -1,4 +1,5 @@
 use crate::intern;
+use super::LibMap;
 use crate::value::{MapValue, Value};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STD;
@@ -132,4 +133,9 @@ pub fn build_sqlite_module() -> Value
     map.insert(intern::intern("query"), Value::NativeFunction(native_sqlite_query));
     map.insert(intern::intern("query_bytes"), Value::NativeFunction(native_sqlite_query_bytes));
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
+}
+
+pub fn register(map: &mut LibMap)
+{
+    map.insert(intern::intern("Sqlite"), build_sqlite_module());
 }

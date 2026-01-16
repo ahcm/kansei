@@ -1,5 +1,6 @@
 use crate::ast::IntKind;
 use crate::intern;
+use super::LibMap;
 use crate::value::{MapValue, Value};
 use polars::prelude::*;
 use rustc_hash::FxHashMap;
@@ -160,4 +161,9 @@ pub fn build_polars_module() -> Value
     map.insert(intern::intern("select"), Value::NativeFunction(native_polars_select));
     map.insert(intern::intern("to_csv"), Value::NativeFunction(native_polars_to_csv));
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
+}
+
+pub fn register(map: &mut LibMap)
+{
+    map.insert(intern::intern("Polars"), build_polars_module());
 }

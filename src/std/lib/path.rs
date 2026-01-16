@@ -1,4 +1,5 @@
 use crate::intern;
+use super::LibMap;
 use crate::value::{MapValue, Value};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
@@ -83,4 +84,9 @@ pub fn build_path_module() -> Value
     map.insert(intern::intern("ext"), Value::NativeFunction(native_path_ext));
     map.insert(intern::intern("normalize"), Value::NativeFunction(native_path_normalize));
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
+}
+
+pub fn register(map: &mut LibMap)
+{
+    map.insert(intern::intern("Path"), build_path_module());
 }

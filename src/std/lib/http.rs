@@ -1,4 +1,5 @@
 use crate::intern;
+use super::LibMap;
 use crate::value::{MapValue, Value};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
@@ -56,4 +57,9 @@ pub fn build_http_module() -> Value
     map.insert(intern::intern("get"), Value::NativeFunction(native_http_get));
     map.insert(intern::intern("post"), Value::NativeFunction(native_http_post));
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
+}
+
+pub fn register(map: &mut LibMap)
+{
+    map.insert(intern::intern("Http"), build_http_module());
 }

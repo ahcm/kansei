@@ -1,4 +1,5 @@
 use crate::intern;
+use super::LibMap;
 use crate::value::{MapValue, Value};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
@@ -111,4 +112,9 @@ pub fn build_math_module() -> Value
     map.insert(intern::intern("pow"), Value::NativeFunction(native_math_pow));
     map.insert(intern::intern("sqrt"), Value::NativeFunction(native_math_sqrt));
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
+}
+
+pub fn register(map: &mut LibMap)
+{
+    map.insert(intern::intern("Math"), build_math_module());
 }

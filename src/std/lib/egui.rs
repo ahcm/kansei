@@ -1,19 +1,20 @@
 use crate::eval::Interpreter;
 use crate::intern;
 use crate::value::{HostFunction, MapValue, Value};
+use super::LibMap;
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-#[cfg(feature = "egui")]
+#[cfg(feature = "lib-egui")]
 use eframe::egui;
 
-#[cfg(feature = "egui")]
+#[cfg(feature = "lib-egui")]
 thread_local! {
     static EGUI_UI: RefCell<Option<*mut egui::Ui>> = RefCell::new(None);
 }
 
-#[cfg(feature = "egui")]
+#[cfg(feature = "lib-egui")]
 fn with_egui_ui<F, T>(name: &str, f: F) -> Result<T, String>
 where
     F: FnOnce(&mut egui::Ui) -> Result<T, String>,
@@ -27,7 +28,7 @@ where
     })
 }
 
-#[cfg(feature = "egui")]
+#[cfg(feature = "lib-egui")]
 fn to_string_arg(args: &[Value], idx: usize, name: &str) -> Result<String, String>
 {
     match args.get(idx)
@@ -38,7 +39,7 @@ fn to_string_arg(args: &[Value], idx: usize, name: &str) -> Result<String, Strin
     }
 }
 
-#[cfg(feature = "egui")]
+#[cfg(feature = "lib-egui")]
 fn to_f64_arg(args: &[Value], idx: usize, name: &str) -> Result<f64, String>
 {
     match args.get(idx)
@@ -50,7 +51,7 @@ fn to_f64_arg(args: &[Value], idx: usize, name: &str) -> Result<f64, String>
     }
 }
 
-#[cfg(feature = "egui")]
+#[cfg(feature = "lib-egui")]
 fn set_ref_value(target: &Value, value: Value, name: &str) -> Result<(), String>
 {
     match target
@@ -63,7 +64,7 @@ fn set_ref_value(target: &Value, value: Value, name: &str) -> Result<(), String>
     }
 }
 
-#[cfg(feature = "egui")]
+#[cfg(feature = "lib-egui")]
 fn egui_ui_label(_interp: &mut Interpreter, args: &[Value]) -> Result<Value, String>
 {
     let text = to_string_arg(args, 0, "egui.ui.label")?;
@@ -73,7 +74,7 @@ fn egui_ui_label(_interp: &mut Interpreter, args: &[Value]) -> Result<Value, Str
     })
 }
 
-#[cfg(feature = "egui")]
+#[cfg(feature = "lib-egui")]
 fn egui_ui_heading(_interp: &mut Interpreter, args: &[Value]) -> Result<Value, String>
 {
     let text = to_string_arg(args, 0, "egui.ui.heading")?;
@@ -83,7 +84,7 @@ fn egui_ui_heading(_interp: &mut Interpreter, args: &[Value]) -> Result<Value, S
     })
 }
 
-#[cfg(feature = "egui")]
+#[cfg(feature = "lib-egui")]
 fn egui_ui_separator(_interp: &mut Interpreter, _args: &[Value]) -> Result<Value, String>
 {
     with_egui_ui("egui.ui.separator", |ui| {
@@ -92,14 +93,14 @@ fn egui_ui_separator(_interp: &mut Interpreter, _args: &[Value]) -> Result<Value
     })
 }
 
-#[cfg(feature = "egui")]
+#[cfg(feature = "lib-egui")]
 fn egui_ui_button(_interp: &mut Interpreter, args: &[Value]) -> Result<Value, String>
 {
     let text = to_string_arg(args, 0, "egui.ui.button")?;
     with_egui_ui("egui.ui.button", |ui| Ok(Value::Boolean(ui.button(text).clicked())))
 }
 
-#[cfg(feature = "egui")]
+#[cfg(feature = "lib-egui")]
 fn egui_ui_checkbox(_interp: &mut Interpreter, args: &[Value]) -> Result<Value, String>
 {
     let label = to_string_arg(args, 0, "egui.ui.checkbox")?;
@@ -122,7 +123,7 @@ fn egui_ui_checkbox(_interp: &mut Interpreter, args: &[Value]) -> Result<Value, 
     Ok(Value::Boolean(changed))
 }
 
-#[cfg(feature = "egui")]
+#[cfg(feature = "lib-egui")]
 fn egui_ui_slider(_interp: &mut Interpreter, args: &[Value]) -> Result<Value, String>
 {
     let value = args.get(0).ok_or_else(|| "egui.ui.slider expects a reference".to_string())?;
@@ -156,7 +157,7 @@ fn egui_ui_slider(_interp: &mut Interpreter, args: &[Value]) -> Result<Value, St
     Ok(Value::Boolean(changed))
 }
 
-#[cfg(feature = "egui")]
+#[cfg(feature = "lib-egui")]
 fn egui_ui_text_input(_interp: &mut Interpreter, args: &[Value]) -> Result<Value, String>
 {
     let value = args.get(0).ok_or_else(|| "egui.ui.text_input expects a reference".to_string())?;
@@ -177,7 +178,7 @@ fn egui_ui_text_input(_interp: &mut Interpreter, args: &[Value]) -> Result<Value
     Ok(Value::Boolean(changed))
 }
 
-#[cfg(feature = "egui")]
+#[cfg(feature = "lib-egui")]
 fn egui_run(interp: &mut Interpreter, args: &[Value]) -> Result<Value, String>
 {
     let title = args.get(0).map(|v| v.to_string()).unwrap_or_else(|| "Kansei".to_string());
@@ -196,7 +197,7 @@ fn egui_run(interp: &mut Interpreter, args: &[Value]) -> Result<Value, String>
     let ui_value = Value::Map(Rc::new(RefCell::new(MapValue::new(ui_map))));
 
     let interp_ptr: *mut Interpreter = interp as *mut _;
-    let mut app = KanseiEguiApp {
+    let app = KanseiEguiApp {
         interp_ptr,
         callback,
         ui_value,
@@ -219,7 +220,7 @@ fn egui_run(interp: &mut Interpreter, args: &[Value]) -> Result<Value, String>
     Ok(Value::Nil)
 }
 
-#[cfg(feature = "egui")]
+#[cfg(feature = "lib-egui")]
 struct KanseiEguiApp
 {
     interp_ptr: *mut Interpreter,
@@ -227,7 +228,7 @@ struct KanseiEguiApp
     ui_value: Value,
 }
 
-#[cfg(feature = "egui")]
+#[cfg(feature = "lib-egui")]
 impl eframe::App for KanseiEguiApp
 {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame)
@@ -251,7 +252,7 @@ impl eframe::App for KanseiEguiApp
     }
 }
 
-#[cfg(feature = "egui")]
+#[cfg(feature = "lib-egui")]
 pub fn build_egui_module() -> Value
 {
     let mut map = FxHashMap::default();
@@ -259,7 +260,13 @@ pub fn build_egui_module() -> Value
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
 }
 
-#[cfg(not(feature = "egui"))]
+#[cfg(feature = "lib-egui")]
+pub fn register(map: &mut LibMap)
+{
+    map.insert(intern::intern("egui"), build_egui_module());
+}
+
+#[cfg(not(feature = "lib-egui"))]
 pub fn build_egui_module() -> Value
 {
     let mut map = FxHashMap::default();
@@ -268,4 +275,9 @@ pub fn build_egui_module() -> Value
         Value::NativeFunction(|_| Err("std::lib::egui requires --features egui".to_string())),
     );
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
+}
+
+#[cfg(not(feature = "lib-egui"))]
+pub fn register(_map: &mut LibMap)
+{
 }

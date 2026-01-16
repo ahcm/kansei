@@ -1,4 +1,5 @@
 use crate::intern;
+use super::LibMap;
 use crate::value::{MapValue, Value};
 use rustc_hash::FxHashMap;
 use serde_json::Value as JsonValue;
@@ -127,4 +128,9 @@ pub fn build_serde_module() -> Value
     map.insert(intern::intern("parse"), Value::NativeFunction(native_serde_parse));
     map.insert(intern::intern("stringify"), Value::NativeFunction(native_serde_stringify));
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
+}
+
+pub fn register(map: &mut LibMap)
+{
+    map.insert(intern::intern("Serde"), build_serde_module());
 }

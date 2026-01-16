@@ -1,4 +1,5 @@
 use crate::intern;
+use super::LibMap;
 use crate::value::{MapValue, Value};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
@@ -638,4 +639,9 @@ pub fn build_bytes_module() -> Value
     map.insert(intern::intern("find"), Value::NativeFunction(native_bytes_find));
     map.insert(intern::intern("freeze"), Value::NativeFunction(native_bytes_freeze));
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
+}
+
+pub fn register(map: &mut LibMap)
+{
+    map.insert(intern::intern("Bytes"), build_bytes_module());
 }

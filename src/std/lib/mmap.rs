@@ -1,4 +1,5 @@
 use crate::intern;
+use super::LibMap;
 use crate::value::{MapValue, Value};
 use memmap2::{Mmap, MmapMut};
 use rustc_hash::FxHashMap;
@@ -207,4 +208,9 @@ pub fn build_mmap_module() -> Value
     map.insert(intern::intern("write"), Value::NativeFunction(native_mmap_write));
     map.insert(intern::intern("flush"), Value::NativeFunction(native_mmap_flush));
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
+}
+
+pub fn register(map: &mut LibMap)
+{
+    map.insert(intern::intern("Mmap"), build_mmap_module());
 }

@@ -62,10 +62,14 @@ pub fn parse_wasm_backend(name: &str) -> Result<WasmBackend, String>
 
 pub fn available_wasm_backends() -> Vec<&'static str>
 {
-    let mut out = vec!["wasmi"];
     #[cfg(feature = "wasmtime")]
-    out.push("wasmtime");
-    out
+    {
+        vec!["wasmi", "wasmtime"]
+    }
+    #[cfg(not(feature = "wasmtime"))]
+    {
+        vec!["wasmi"]
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -402,6 +406,7 @@ impl WasmModule
                 }
                 Ok(())
             }
+            #[cfg(feature = "wasmtime")]
             _ => Err("Wasm backend mismatch".to_string()),
         }
     }

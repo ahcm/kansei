@@ -1,5 +1,6 @@
 use crate::ast::FloatKind;
 use crate::intern;
+use super::super::LibMap;
 use crate::value::{MapValue, Value};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
@@ -100,4 +101,9 @@ pub fn build_tests_module() -> Value
         Value::NativeFunction(native_spectralnorm),
     );
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
+}
+
+pub fn register(map: &mut LibMap)
+{
+    map.insert(intern::intern("tests"), build_tests_module());
 }

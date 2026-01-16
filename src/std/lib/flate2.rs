@@ -1,4 +1,5 @@
 use crate::intern;
+use super::LibMap;
 use crate::value::{MapValue, Value};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STD;
@@ -50,4 +51,9 @@ pub fn build_flate2_module() -> Value
     map.insert(intern::intern("compress"), Value::NativeFunction(native_flate2_compress));
     map.insert(intern::intern("decompress"), Value::NativeFunction(native_flate2_decompress));
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
+}
+
+pub fn register(map: &mut LibMap)
+{
+    map.insert(intern::intern("Flate2"), build_flate2_module());
 }

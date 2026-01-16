@@ -38,8 +38,52 @@ memmap2 = "0.9.4"
 eframe = { version = "0.27.2", optional = true }
 
 [features]
-default = []
+default = ["std-lib-all"]
+std-lib-all = [
+    "lib-base64",
+    "lib-bytes",
+    "lib-clap",
+    "lib-crypto",
+    "lib-csv",
+    "lib-datetime",
+    "lib-egui",
+    "lib-flate2",
+    "lib-http",
+    "lib-image",
+    "lib-math",
+    "lib-mmap",
+    "lib-path",
+    "lib-polars",
+    "lib-regex",
+    "lib-serde",
+    "lib-sqlite",
+    "lib-tests",
+    "lib-toml",
+    "lib-uuid",
+    "lib-yaml",
+]
+lib-base64 = []
+lib-bytes = []
+lib-clap = []
+lib-crypto = []
+lib-csv = []
+lib-datetime = []
+lib-egui = ["dep:eframe"]
+lib-flate2 = []
+lib-http = []
+lib-image = []
+lib-math = []
+lib-mmap = []
+lib-path = []
+lib-polars = []
+lib-regex = []
+lib-serde = []
+lib-sqlite = []
+lib-tests = []
+lib-toml = []
+lib-uuid = []
+lib-yaml = []
 flate2-zlib = ["flate2/zlib"]
 flate2-zlib-ng = ["flate2/zlib-ng"]
 wasmtime = ["dep:wasmtime"]
-egui = ["dep:eframe"]
+egui = ["lib-egui"]

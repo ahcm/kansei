@@ -425,8 +425,10 @@ x = "Now a string"
 ## Operators
 - Arithmetic: `+`, `-`, `*`, `/`
 - Comparison: `==`, `!=`, `<`, `>`
-- Boolean: `not`
+- Boolean: `not`, `and`, `&&`
 - String Concatenation: `"Hello " + "World"`
+
+`and` is short-circuiting and treats `false`/`nil` as falsey. `&&` is also short-circuiting but requires boolean operands.
 
 ## Control Flow
 

@@ -10972,10 +10972,6 @@ impl Interpreter
                             line,
                         });
                     }
-                    let memory = module.memory_data_mut().ok_or_else(|| RuntimeError {
-                        message: "Wasm module has no memory export".to_string(),
-                        line,
-                    })?;
                     let (alloc, alloc_name) = if let Some(func) = module.alloc.clone()
                     {
                         (func, "alloc")
@@ -11020,6 +11016,10 @@ impl Interpreter
                             });
                         }
                     };
+                    let memory = module.memory_data_mut().ok_or_else(|| RuntimeError {
+                        message: "Wasm module has no memory export".to_string(),
+                        line,
+                    })?;
                     let start = ptr as usize;
                     let end = start + bytes.len();
                     if end > memory.len()
@@ -11060,10 +11060,6 @@ impl Interpreter
                         param_index += 2;
                         continue;
                     }
-                    let memory = module.memory_data_mut().ok_or_else(|| RuntimeError {
-                        message: "Wasm module has no memory export".to_string(),
-                        line,
-                    })?;
                     let (alloc, alloc_name) = if let Some(func) = module.alloc.clone()
                     {
                         (func, "alloc")
@@ -11111,6 +11107,10 @@ impl Interpreter
                             });
                         }
                     };
+                    let memory = module.memory_data_mut().ok_or_else(|| RuntimeError {
+                        message: "Wasm module has no memory export".to_string(),
+                        line,
+                    })?;
                     let start = ptr as usize;
                     let end = start + byte_len;
                     if end > memory.len()
@@ -11157,10 +11157,6 @@ impl Interpreter
                         param_index += 2;
                         continue;
                     }
-                    let memory = module.memory_data_mut().ok_or_else(|| RuntimeError {
-                        message: "Wasm module has no memory export".to_string(),
-                        line,
-                    })?;
                     let (alloc, alloc_name) = if let Some(func) = module.alloc.clone()
                     {
                         (func, "alloc")
@@ -11208,6 +11204,10 @@ impl Interpreter
                             });
                         }
                     };
+                    let memory = module.memory_data_mut().ok_or_else(|| RuntimeError {
+                        message: "Wasm module has no memory export".to_string(),
+                        line,
+                    })?;
                     let start = ptr as usize;
                     let end = start + byte_len;
                     if end > memory.len()
@@ -11287,13 +11287,6 @@ impl Interpreter
                         WasmValueType::I64 => wasm_args.push(WasmValue::I64(num as i64)),
                         WasmValueType::F32 => wasm_args.push(WasmValue::F32(num as f32)),
                         WasmValueType::F64 => wasm_args.push(WasmValue::F64(num as f64)),
-                        _ =>
-                        {
-                            return Err(RuntimeError {
-                                message: "Unsupported wasm param type".to_string(),
-                                line,
-                            });
-                        }
                     }
                     arg_index += 1;
                     param_index += 1;
@@ -11331,7 +11324,7 @@ impl Interpreter
         {
             (None, "")
         };
-        if let Some(dealloc) = dealloc
+        if let Some(dealloc) = dealloc.as_ref()
         {
             for (ptr, len) in allocs
             {
@@ -11348,7 +11341,7 @@ impl Interpreter
                 {
                     vec![WasmValue::I32(ptr), WasmValue::I32(len)]
                 };
-                let _ = module.call_func(&dealloc, &args, &mut []);
+                let _ = module.call_func(dealloc, &args, &mut []);
             }
         }
 
@@ -11392,7 +11385,7 @@ impl Interpreter
             {
                 let _ = module.call_func(&add, &[WasmValue::I32(16)], &mut []);
             }
-            if let Some(dealloc) = dealloc
+            if let Some(dealloc) = dealloc.as_ref()
             {
                 if let Some((ptr, len)) = retptr_alloc
                 {
@@ -11409,12 +11402,12 @@ impl Interpreter
                     {
                         vec![WasmValue::I32(ptr), WasmValue::I32(len)]
                     };
-                    let _ = module.call_func(&dealloc, &args, &mut []);
+                    let _ = module.call_func(dealloc, &args, &mut []);
                 }
             }
             if let Some((s, str_ptr, str_len)) = result_str
             {
-                if let Some(dealloc) = dealloc
+                if let Some(dealloc) = dealloc.as_ref()
                 {
                     let dealloc_params = module
                         .func_types
@@ -11436,7 +11429,7 @@ impl Interpreter
                             WasmValue::I32(str_len as i32),
                         ]
                     };
-                    let _ = module.call_func(&dealloc, &args, &mut []);
+                    let _ = module.call_func(dealloc, &args, &mut []);
                 }
                 return Ok(Value::String(intern::intern_owned(s)));
             }

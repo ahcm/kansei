@@ -28,6 +28,7 @@ pub enum WasmBackend
 
 impl WasmBackend
 {
+    #[allow(dead_code)]
     pub fn name(self) -> &'static str
     {
         match self
@@ -227,12 +228,12 @@ impl WasmFuncType
         let mut params = Vec::new();
         for val in func_type.params()
         {
-            params.push(map_wasmi_valtype(val)?);
+            params.push(map_wasmi_valtype(*val)?);
         }
         let mut results = Vec::new();
         for val in func_type.results()
         {
-            results.push(map_wasmi_valtype(val)?);
+            results.push(map_wasmi_valtype(*val)?);
         }
         Ok(Self { params, results })
     }
@@ -266,6 +267,7 @@ impl WasmModule
         }
     }
 
+    #[allow(dead_code)]
     pub fn backend(&self) -> WasmBackend
     {
         self.backend

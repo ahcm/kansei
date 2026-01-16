@@ -6694,6 +6694,18 @@ fn execute_instructions(
         pending: Option<Pending>,
     }
 
+    fn is_self_alias(existing: &Value, val: &Value) -> bool
+    {
+        match (existing, val)
+        {
+            (Value::Reference(old_ref), Value::Reference(new_ref)) =>
+            {
+                Rc::ptr_eq(old_ref, new_ref)
+            }
+            _ => false,
+        }
+    }
+
     fn next_foreach_value(iter: &mut ForEachIter) -> Option<Value>
     {
         match iter
@@ -7019,6 +7031,16 @@ fn execute_instructions(
                     HotInstr::StoreSlot(slot) =>
                     {
                         let val = frame.stack.pop().unwrap();
+                        if let Some(existing) = slots.get(slot)
+                        {
+                            if is_self_alias(existing, &val)
+                            {
+                                return Err(RuntimeError {
+                                    message: "cannot self alias".to_string(),
+                                    line: 0,
+                                });
+                            }
+                        }
                         if let Some(dst) = slots.get_mut(slot)
                         {
                             *dst = val.clone();
@@ -7151,6 +7173,16 @@ fn execute_instructions(
                 Instruction::StoreSlot(s) =>
                 {
                     let val = frame.stack.pop().unwrap();
+                    if let Some(existing) = slots.get(*s)
+                    {
+                        if is_self_alias(existing, &val)
+                        {
+                            return Err(RuntimeError {
+                                message: "cannot self alias".to_string(),
+                                line: 0,
+                            });
+                        }
+                    }
                     if let Some(slot) = slots.get_mut(*s)
                     {
                         *slot = val.clone();
@@ -7193,6 +7225,24 @@ fn execute_instructions(
                 Instruction::StoreGlobal(name) =>
                 {
                     let val = frame.stack.pop().unwrap();
+                    if let Value::Reference(new_ref) = &val
+                    {
+                        let env_ref = interpreter.env.borrow();
+                        let idx = *name as usize;
+                        if idx < env_ref.values.len()
+                        {
+                            if let Value::Reference(old_ref) = &env_ref.values[idx]
+                            {
+                                if Rc::ptr_eq(old_ref, new_ref)
+                                {
+                                    return Err(RuntimeError {
+                                        message: "cannot self alias".to_string(),
+                                        line: 0,
+                                    });
+                                }
+                            }
+                        }
+                    }
                     interpreter.env.borrow_mut().set(*name, val.clone());
                     frame.stack.push(val);
                     frame.ip += 1;
@@ -7297,6 +7347,16 @@ fn execute_instructions(
                 Instruction::StoreSlot(s) =>
                 {
                     let val = frame.stack.pop().unwrap();
+                    if let Some(existing) = slots.get(s)
+                    {
+                        if is_self_alias(existing, &val)
+                        {
+                            return Err(RuntimeError {
+                                message: "cannot self alias".to_string(),
+                                line: 0,
+                            });
+                        }
+                    }
                     if let Some(slot) = slots.get_mut(s)
                     {
                         *slot = val.clone();
@@ -7350,6 +7410,24 @@ fn execute_instructions(
                 Instruction::StoreGlobal(name) =>
                 {
                     let val = frame.stack.pop().unwrap();
+                    if let Value::Reference(new_ref) = &val
+                    {
+                        let env_ref = interpreter.env.borrow();
+                        let idx = name as usize;
+                        if idx < env_ref.values.len()
+                        {
+                            if let Value::Reference(old_ref) = &env_ref.values[idx]
+                            {
+                                if Rc::ptr_eq(old_ref, new_ref)
+                                {
+                                    return Err(RuntimeError {
+                                        message: "cannot self alias".to_string(),
+                                        line: 0,
+                                    });
+                                }
+                            }
+                        }
+                    }
                     interpreter.env.borrow_mut().set(name, val.clone());
                     frame.stack.push(val);
                 }
@@ -11572,6 +11650,22 @@ impl Interpreter
                 let val = self.eval(value, slots)?;
                 if let Some(s) = slot
                 {
+                    if let Value::Reference(new_ref) = &val
+                    {
+                        if let Some(existing) = slots.get(*s)
+                        {
+                            if let Value::Reference(old_ref) = existing
+                            {
+                                if Rc::ptr_eq(old_ref, new_ref)
+                                {
+                                    return Err(RuntimeError {
+                                        message: "cannot self alias".to_string(),
+                                        line,
+                                    });
+                                }
+                            }
+                        }
+                    }
                     if let Some(slot_val) = slots.get_mut(*s)
                     {
                         *slot_val = val.clone();
@@ -11579,6 +11673,24 @@ impl Interpreter
                 }
                 else
                 {
+                    if let Value::Reference(new_ref) = &val
+                    {
+                        let env_ref = self.env.borrow();
+                        let idx = *name as usize;
+                        if idx < env_ref.values.len()
+                        {
+                            if let Value::Reference(old_ref) = &env_ref.values[idx]
+                            {
+                                if Rc::ptr_eq(old_ref, new_ref)
+                                {
+                                    return Err(RuntimeError {
+                                        message: "cannot self alias".to_string(),
+                                        line,
+                                    });
+                                }
+                            }
+                        }
+                    }
                     self.env.borrow_mut().set(*name, val.clone());
                 }
                 Ok(val)

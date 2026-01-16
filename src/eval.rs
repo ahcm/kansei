@@ -1,4 +1,7 @@
-use crate::ast::{Closure, Expr, ExprKind, FloatKind, IntKind, Op, Param, ParamType, TypeRef};
+use crate::ast::{
+    Closure, Expr, ExprKind, FloatKind, FormatPart, FormatSpec, IntKind, Op, Param, ParamType,
+    TypeRef,
+};
 use crate::intern;
 use crate::intern::{SymbolId, symbol_name};
 use crate::kansei_std::{build_file_module, build_io_module, build_lib_module};
@@ -711,6 +714,230 @@ fn parse_unsigned_int(args: &[Value], kind: IntKind, label: &str) -> Result<Valu
         return Err(format!("{}.parse out of range for {:?}", label, kind));
     }
     Ok(make_unsigned_int(value, kind))
+}
+
+fn parse_format_spec(spec: &str, line: usize) -> Result<FormatSpec, RuntimeError>
+{
+    if let Some(rest) = spec.strip_prefix('.')
+    {
+        if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_digit())
+        {
+            return Err(RuntimeError {
+                message: "Invalid format precision".to_string(),
+                line,
+            });
+        }
+        let precision = rest.parse::<usize>().map_err(|_| RuntimeError {
+            message: "Invalid format precision".to_string(),
+            line,
+        })?;
+        return Ok(FormatSpec {
+            precision: Some(precision),
+        });
+    }
+    Err(RuntimeError {
+        message: "Unsupported format specifier".to_string(),
+        line,
+    })
+}
+
+fn split_format_expr(input: &str, line: usize) -> Result<(String, Option<FormatSpec>), RuntimeError>
+{
+    let mut depth_paren = 0usize;
+    let mut depth_brack = 0usize;
+    let mut depth_brace = 0usize;
+    let mut in_string = false;
+    let mut string_delim = '\0';
+    let mut split_at: Option<usize> = None;
+    for (idx, ch) in input.chars().enumerate()
+    {
+        if in_string
+        {
+            if ch == string_delim
+            {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch
+        {
+            '"' | '`' =>
+            {
+                in_string = true;
+                string_delim = ch;
+            }
+            '(' => depth_paren += 1,
+            ')' => depth_paren = depth_paren.saturating_sub(1),
+            '[' => depth_brack += 1,
+            ']' => depth_brack = depth_brack.saturating_sub(1),
+            '{' => depth_brace += 1,
+            '}' => depth_brace = depth_brace.saturating_sub(1),
+            ':' if depth_paren == 0 && depth_brack == 0 && depth_brace == 0 =>
+            {
+                split_at = Some(idx);
+                break;
+            }
+            _ =>
+            {}
+        }
+    }
+
+    if let Some(idx) = split_at
+    {
+        let expr = input[..idx].trim().to_string();
+        let spec_str = input[idx + 1..].trim();
+        if spec_str.is_empty()
+        {
+            return Err(RuntimeError {
+                message: "Empty format specifier".to_string(),
+                line,
+            });
+        }
+        let spec = parse_format_spec(spec_str, line)?;
+        Ok((expr, Some(spec)))
+    }
+    else
+    {
+        Ok((input.trim().to_string(), None))
+    }
+}
+
+fn parse_format_parts(content: &str, line: usize) -> Result<Vec<FormatPart>, RuntimeError>
+{
+    let mut parts: Vec<FormatPart> = Vec::new();
+    let mut literal = String::new();
+    let chars: Vec<char> = content.chars().collect();
+    let mut i = 0;
+    while i < chars.len()
+    {
+        let ch = chars[i];
+        if ch == '{'
+        {
+            if i + 1 < chars.len() && chars[i + 1] == '{'
+            {
+                literal.push('{');
+                i += 2;
+                continue;
+            }
+            if !literal.is_empty()
+            {
+                parts.push(FormatPart::Literal(intern::intern_owned(literal.clone())));
+                literal.clear();
+            }
+            let start = i + 1;
+            let mut end = start;
+            while end < chars.len() && chars[end] != '}'
+            {
+                end += 1;
+            }
+            if end >= chars.len()
+            {
+                return Err(RuntimeError {
+                    message: "Unclosed format string expression".to_string(),
+                    line,
+                });
+            }
+            let expr_slice: String = chars[start..end].iter().collect();
+            let (expr_str, spec) = split_format_expr(&expr_slice, line)?;
+            if expr_str.trim().is_empty()
+            {
+                return Err(RuntimeError {
+                    message: "Empty format string expression".to_string(),
+                    line,
+                });
+            }
+            let parse_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let lexer = crate::lexer::Lexer::new(&expr_str);
+                let mut parser = crate::parser::Parser::new(lexer);
+                parser.parse()
+            }));
+            let expr = match parse_result
+            {
+                Ok(expr) => expr,
+                Err(_) =>
+                {
+                    return Err(RuntimeError {
+                        message: "Invalid format string expression".to_string(),
+                        line,
+                    })
+                }
+            };
+            parts.push(FormatPart::Expr {
+                expr: Box::new(expr),
+                spec,
+            });
+            i = end + 1;
+        }
+        else if ch == '}'
+        {
+            if i + 1 < chars.len() && chars[i + 1] == '}'
+            {
+                literal.push('}');
+                i += 2;
+            }
+            else
+            {
+                return Err(RuntimeError {
+                    message: "Unmatched '}' in format string".to_string(),
+                    line,
+                });
+            }
+        }
+        else
+        {
+            literal.push(ch);
+            i += 1;
+        }
+    }
+    if !literal.is_empty()
+    {
+        parts.push(FormatPart::Literal(intern::intern_owned(literal)));
+    }
+    Ok(parts)
+}
+
+fn eval_format_parts(
+    interpreter: &mut Interpreter,
+    parts: &[FormatPart],
+    slots: &mut [Value],
+    _line: usize,
+) -> Result<String, RuntimeError>
+{
+    let mut out = String::new();
+    for part in parts
+    {
+        match part
+        {
+            FormatPart::Literal(s) => out.push_str(s.as_str()),
+            FormatPart::Expr { expr, spec } =>
+            {
+                let val = interpreter.eval(expr, slots)?;
+                if let Some(spec) = spec
+                {
+                    if let Some(precision) = spec.precision
+                    {
+                        let formatted = match &val
+                        {
+                            Value::Float { value, .. } =>
+                            {
+                                format!("{:.p$}", value, p = precision)
+                            }
+                            v if int_value_as_f64(v).is_some() =>
+                            {
+                                let num = int_value_as_f64(v).unwrap_or(0.0);
+                                format!("{:.p$}", num, p = precision)
+                            }
+                            _ => val.to_string(),
+                        };
+                        out.push_str(&formatted);
+                        continue;
+                    }
+                }
+                out.push_str(&val.to_string());
+            }
+        }
+    }
+    Ok(out)
 }
 
 fn native_int8_parse(args: &[Value]) -> Result<Value, String>
@@ -11541,51 +11768,20 @@ impl Interpreter
             }
             ExprKind::FormatString(parts) =>
             {
-                let mut out = String::new();
-                for part in parts
-                {
-                    match part
-                    {
-                        crate::ast::FormatPart::Literal(s) => out.push_str(s.as_str()),
-                        crate::ast::FormatPart::Expr { expr, spec } =>
-                        {
-                            let val = self.eval(expr, slots)?;
-                            if let Some(spec) = spec
-                            {
-                                if let Some(precision) = spec.precision
-                                {
-                                    let formatted = match &val
-                                    {
-                                        Value::Float { value, .. } =>
-                                        {
-                                            format!("{:.p$}", value, p = precision)
-                                        }
-                                        v if int_value_as_f64(v).is_some() =>
-                                        {
-                                            let num = int_value_as_f64(v).unwrap_or(0.0);
-                                            format!("{:.p$}", num, p = precision)
-                                        }
-                                        _ => val.to_string(),
-                                    };
-                                    out.push_str(&formatted);
-                                    continue;
-                                }
-                            }
-                            out.push_str(&val.to_string());
-                        }
-                    }
-                }
+                let out = eval_format_parts(self, parts, slots, line)?;
                 Ok(Value::String(intern::intern_owned(out)))
             }
             ExprKind::Shell(cmd_str) =>
             {
+                let parts = parse_format_parts(cmd_str.as_str(), line)?;
+                let cmd = eval_format_parts(self, &parts, slots, line)?;
                 let output = if cfg!(target_os = "windows")
                 {
-                    Command::new("cmd").args(&["/C", cmd_str.as_str()]).output()
+                    Command::new("cmd").args(&["/C", cmd.as_str()]).output()
                 }
                 else
                 {
-                    Command::new("sh").arg("-c").arg(cmd_str.as_str()).output()
+                    Command::new("sh").arg("-c").arg(cmd.as_str()).output()
                 };
 
                 match output

@@ -610,8 +610,10 @@ result = Json.parse(f"{1 + 2}")
 - For wasm-bindgen-style exports that include an initial `i32` retptr parameter (e.g. params are `retptr, ptr, len` and results are `[]` or `[i32]`), the host allocates 8 bytes for `(ptr, len)`, passes that retptr as the first argument, reads the returned `(ptr, len)` from memory, and frees the returned buffer with `dealloc`/`__wbindgen_free` after copying into a Kansei string.
 
 ## Shell Commands
-Backticks execute shell commands and capture stdout (trimmed).
+Backticks execute shell commands and capture stdout (trimmed). They also support `{expr}` interpolation (use `{{` and `}}` for literal braces), same as format strings.
 ```ruby
 files = `ls -la`
 puts files
+name = "Ada"
+puts `echo {name}`
 ```

@@ -1,7 +1,7 @@
 use crate::ast::{Closure, Expr, ExprKind, FloatKind, IntKind, Op, Param, ParamType, TypeRef};
 use crate::intern;
 use crate::intern::{SymbolId, symbol_name};
-use crate::kansei_std::{build_io_module, build_lib_module};
+use crate::kansei_std::{build_file_module, build_io_module, build_lib_module};
 use crate::value::{
     BinaryOpCache, BinaryOpCacheKind, BoundMethod, Builtin, CallSiteCache, Environment,
     FastRegFunction, FastRegInstruction, GlobalCache, IndexCache, Instruction, MapAccessCache,
@@ -862,6 +862,7 @@ fn build_std_module() -> Value
     std_map.insert(intern::intern("Float64"), build_float64_module());
     std_map.insert(intern::intern("Float128"), build_float128_module());
     std_map.insert(intern::intern("IO"), build_io_module());
+    std_map.insert(intern::intern("File"), build_file_module());
     std_map.insert(intern::intern("lib"), build_lib_module());
     Value::Map(Rc::new(RefCell::new(MapValue::new(std_map))))
 }
@@ -9361,6 +9362,13 @@ impl Interpreter
                 if !map_mut.data.contains_key(&intern::intern("IO"))
                 {
                     map_mut.data.insert(intern::intern("IO"), build_io_module());
+                    changed = true;
+                }
+                if !map_mut.data.contains_key(&intern::intern("File"))
+                {
+                    map_mut
+                        .data
+                        .insert(intern::intern("File"), build_file_module());
                     changed = true;
                 }
                 if !map_mut.data.contains_key(&intern::intern("lib"))

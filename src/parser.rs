@@ -760,6 +760,10 @@ impl Parser
                 if self.current_token.token == Token::Comma
                 {
                     self.eat();
+                    if self.current_token.token == Token::RightBrace
+                    {
+                        break;
+                    }
                 }
                 else
                 {

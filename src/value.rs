@@ -7,6 +7,10 @@ use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
+#[cfg(feature = "lib-net")]
+use std::net::TcpStream;
+#[cfg(feature = "lib-net")]
+use rustls::{ClientConnection, StreamOwned};
 
 use smallvec::SmallVec;
 
@@ -60,6 +64,13 @@ pub enum BytesViewSource
 {
     Mmap(Rc<Mmap>),
     MmapMut(Rc<RefCell<MmapMut>>),
+}
+
+#[cfg(feature = "lib-net")]
+pub enum NetStream
+{
+    Tcp(TcpStream),
+    Tls(StreamOwned<ClientConnection, TcpStream>),
 }
 
 #[derive(Clone)]
@@ -791,6 +802,8 @@ pub enum Value
     Sqlite(Rc<RefCell<Connection>>),
     Mmap(Rc<Mmap>),
     MmapMut(Rc<RefCell<MmapMut>>),
+    #[cfg(feature = "lib-net")]
+    NetStream(Rc<RefCell<NetStream>>),
     Nil,
     Function(Rc<FunctionData>),
     NativeFunction(NativeFunction),
@@ -927,6 +940,8 @@ impl PartialEq for Value
             (Value::Sqlite(a), Value::Sqlite(b)) => Rc::ptr_eq(a, b),
             (Value::Mmap(a), Value::Mmap(b)) => Rc::ptr_eq(a, b),
             (Value::MmapMut(a), Value::MmapMut(b)) => Rc::ptr_eq(a, b),
+            #[cfg(feature = "lib-net")]
+            (Value::NetStream(a), Value::NetStream(b)) => Rc::ptr_eq(a, b),
             (Value::Nil, Value::Nil) => true,
             (Value::Function(a), Value::Function(b)) => Rc::ptr_eq(a, b),
             (Value::NativeFunction(a), Value::NativeFunction(b)) => std::ptr::fn_addr_eq(*a, *b),
@@ -965,6 +980,8 @@ impl fmt::Debug for Value
             Value::Sqlite(_) => write!(f, "Sqlite(<connection>)"),
             Value::Mmap(m) => write!(f, "Mmap({} bytes)", m.len()),
             Value::MmapMut(m) => write!(f, "MmapMut({} bytes)", m.borrow().len()),
+            #[cfg(feature = "lib-net")]
+            Value::NetStream(_) => write!(f, "NetStream(<connection>)"),
             Value::Nil => write!(f, "Nil"),
             Value::Function(_) => write!(f, "Function(...)"),
             Value::NativeFunction(_) => write!(f, "NativeFunction(...)"),
@@ -1021,6 +1038,8 @@ impl Value
             Value::Sqlite(_) => "<Sqlite>".to_string(),
             Value::Mmap(m) => format!("<Mmap {}>", m.len()),
             Value::MmapMut(m) => format!("<MmapMut {}>", m.borrow().len()),
+            #[cfg(feature = "lib-net")]
+            Value::NetStream(_) => "<NetStream>".to_string(),
             Value::Nil => "nil".to_string(),
             Value::Function(data) =>
             {
@@ -1081,6 +1100,8 @@ impl fmt::Display for Value
             Value::Sqlite(_) => write!(f, "<Sqlite>"),
             Value::Mmap(m) => write!(f, "<Mmap {}>", m.len()),
             Value::MmapMut(m) => write!(f, "<MmapMut {}>", m.borrow().len()),
+            #[cfg(feature = "lib-net")]
+            Value::NetStream(_) => write!(f, "<NetStream>"),
             Value::Nil => write!(f, "nil"),
             Value::Function(data) =>
             {

@@ -22,6 +22,8 @@ pub mod image;
 pub mod math;
 #[cfg(feature = "lib-mmap")]
 pub mod mmap;
+#[cfg(feature = "lib-net")]
+pub mod net;
 #[cfg(feature = "lib-path")]
 pub mod path;
 #[cfg(feature = "lib-polars")]
@@ -32,6 +34,8 @@ pub mod regex;
 pub mod serde;
 #[cfg(feature = "lib-sqlite")]
 pub mod sqlite;
+#[cfg(feature = "lib-tui")]
+pub mod tui;
 #[cfg(feature = "lib-tests")]
 pub mod tests;
 #[cfg(feature = "lib-toml")]
@@ -75,6 +79,8 @@ pub fn build_lib_module() -> Value
     math::register(&mut lib_map);
     #[cfg(feature = "lib-mmap")]
     mmap::register(&mut lib_map);
+    #[cfg(feature = "lib-net")]
+    net::register(&mut lib_map);
     #[cfg(feature = "lib-path")]
     path::register(&mut lib_map);
     #[cfg(feature = "lib-polars")]
@@ -85,6 +91,8 @@ pub fn build_lib_module() -> Value
     serde::register(&mut lib_map);
     #[cfg(feature = "lib-sqlite")]
     sqlite::register(&mut lib_map);
+    #[cfg(feature = "lib-tui")]
+    tui::register(&mut lib_map);
     #[cfg(feature = "lib-tests")]
     tests::register(&mut lib_map);
     #[cfg(feature = "lib-toml")]

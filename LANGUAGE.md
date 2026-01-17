@@ -278,6 +278,29 @@ puts Bytes.find(Bytes.from_string("hello"), Bytes.from_string("ell"))
 view = Bytes.slice_view(bytes, 0, 2)
 ```
 
+### std::lib::Net
+```ruby
+use std::lib::Net
+Net = std::lib::Net
+
+conn = Net.connect("imap.example.com", 993, true)
+conn.write("NOOP\r\n")
+line = conn.read_line(4096)
+conn.close()
+```
+
+### std::lib::Tui
+```ruby
+use std::lib::Tui
+Tui = std::lib::Tui
+
+Tui.run(16, |ui, event| {
+  size = ui.size()
+  ui.paragraph(0, 0, size.width, 3, "Hello from Kansei", "Header")
+  if event.type == "key" && event.key.code == "Esc" { false } else { true }
+})
+```
+
 ### std::lib::Mmap
 ```ruby
 use std::lib::Mmap

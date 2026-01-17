@@ -685,6 +685,10 @@ impl Parser
                 self.eat();
                 loop
                 {
+                    if self.current_token.token == Token::RightBracket
+                    {
+                        break;
+                    }
                     elements.push(self.parse_expression());
                     if self.current_token.token == Token::Comma
                     {
@@ -718,6 +722,10 @@ impl Parser
                 if self.current_token.token == Token::Comma
                 {
                     self.eat();
+                    if self.current_token.token == Token::RightBrace
+                    {
+                        break;
+                    }
                 }
                 else
                 {
@@ -805,6 +813,10 @@ impl Parser
                 if self.current_token.token == Token::Comma
                 {
                     self.eat();
+                    if self.current_token.token == Token::RightBrace
+                    {
+                        break;
+                    }
                 }
                 else
                 {

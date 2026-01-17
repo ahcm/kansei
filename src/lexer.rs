@@ -482,18 +482,61 @@ impl Lexer
     fn read_string(&mut self, quote_char: char) -> Token
     {
         self.position += 1; // Skip the opening quote
-        let start = self.position;
+        let mut content = String::new();
 
         while self.position < self.input.len() && self.input[self.position] != quote_char
         {
-            if self.input[self.position] == '\n'
+            let ch = self.input[self.position];
+            if ch == '\n'
             {
                 self.line += 1;
+                content.push(ch);
+                self.position += 1;
             }
-            self.position += 1;
+            else if ch == '\\' && self.position + 1 < self.input.len()
+            {
+                let next = self.input[self.position + 1];
+                match next
+                {
+                    '"' =>
+                    {
+                        content.push('"');
+                        self.position += 2;
+                    }
+                    '\\' =>
+                    {
+                        content.push('\\');
+                        self.position += 2;
+                    }
+                    'n' =>
+                    {
+                        content.push('\n');
+                        self.position += 2;
+                    }
+                    't' =>
+                    {
+                        content.push('\t');
+                        self.position += 2;
+                    }
+                    'r' =>
+                    {
+                        content.push('\r');
+                        self.position += 2;
+                    }
+                    _ =>
+                    {
+                        // Unknown escape, keep backslash and char
+                        content.push(ch);
+                        self.position += 1;
+                    }
+                }
+            }
+            else
+            {
+                content.push(ch);
+                self.position += 1;
+            }
         }
-
-        let content: String = self.input[start..self.position].iter().collect();
 
         // Consume the closing quote if we aren't at EOF
         if self.position < self.input.len()

@@ -11797,7 +11797,7 @@ impl Interpreter
     {
         let arg_vals: smallvec::SmallVec<[Value; 8]> = args.into_iter().collect();
         self.call_value(func_val, arg_vals, 0, None)
-            .map_err(|err| err.message)
+            .map_err(|err| format!("Error at line {}: {}", err.line, err.message))
     }
 
     pub fn eval(&mut self, expr: &Expr, slots: &mut [Value]) -> EvalResult

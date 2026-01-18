@@ -793,6 +793,7 @@ pub enum Value
     Boolean(bool),
     Array(Rc<RefCell<Vec<Value>>>),
     F64Array(Rc<RefCell<Vec<f64>>>),
+    I64Array(Rc<RefCell<Vec<i64>>>),
     Bytes(Rc<Vec<u8>>),
     ByteBuf(Rc<RefCell<Vec<u8>>>),
     BytesView(Rc<BytesView>),
@@ -881,6 +882,7 @@ impl PartialEq for Value
             (Value::Boolean(a), Value::Boolean(b)) => a == b,
             (Value::Array(a), Value::Array(b)) => a == b, // RefCell PartialEq compares inner values
             (Value::F64Array(a), Value::F64Array(b)) => a == b,
+            (Value::I64Array(a), Value::I64Array(b)) => a == b,
             (Value::Bytes(a), Value::Bytes(b)) => a == b,
             (Value::ByteBuf(a), Value::ByteBuf(b)) =>
             {
@@ -968,6 +970,7 @@ impl fmt::Debug for Value
             Value::Boolean(b) => write!(f, "Boolean({})", b),
             Value::Array(a) => write!(f, "Array({:?})", a.borrow()),
             Value::F64Array(a) => write!(f, "F64Array({:?})", a.borrow()),
+            Value::I64Array(a) => write!(f, "I64Array({:?})", a.borrow()),
             Value::Bytes(b) => write!(f, "Bytes({} bytes)", b.len()),
             Value::ByteBuf(b) => write!(f, "ByteBuf({} bytes)", b.borrow().len()),
             Value::BytesView(b) => write!(f, "BytesView({} bytes)", b.len),
@@ -1012,6 +1015,11 @@ impl Value
                 format!("[{}]", elems.join(", "))
             }
             Value::F64Array(arr) =>
+            {
+                let elems: Vec<String> = arr.borrow().iter().map(|v| v.to_string()).collect();
+                format!("[{}]", elems.join(", "))
+            }
+            Value::I64Array(arr) =>
             {
                 let elems: Vec<String> = arr.borrow().iter().map(|v| v.to_string()).collect();
                 format!("[{}]", elems.join(", "))
@@ -1074,6 +1082,11 @@ impl fmt::Display for Value
                 write!(f, "[{}]", elems.join(", "))
             }
             Value::F64Array(arr) =>
+            {
+                let elems: Vec<String> = arr.borrow().iter().map(|v| v.to_string()).collect();
+                write!(f, "[{}]", elems.join(", "))
+            }
+            Value::I64Array(arr) =>
             {
                 let elems: Vec<String> = arr.borrow().iter().map(|v| v.to_string()).collect();
                 write!(f, "[{}]", elems.join(", "))

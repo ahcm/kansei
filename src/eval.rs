@@ -231,6 +231,7 @@ enum ResolvedType
     Array,
     Map,
     F64Array,
+    I64Array,
     Struct(Rc<StructType>),
     Any,
 }
@@ -251,6 +252,7 @@ impl PartialEq for ResolvedType
             (ResolvedType::Array, ResolvedType::Array) => true,
             (ResolvedType::Map, ResolvedType::Map) => true,
             (ResolvedType::F64Array, ResolvedType::F64Array) => true,
+            (ResolvedType::I64Array, ResolvedType::I64Array) => true,
             (ResolvedType::Struct(a), ResolvedType::Struct(b)) => Rc::ptr_eq(a, b),
             (ResolvedType::Any, ResolvedType::Any) => true,
             _ => false,
@@ -318,6 +320,7 @@ fn resolve_type_ref(
             "Array" => Some(ResolvedType::Array),
             "Map" => Some(ResolvedType::Map),
             "F64Array" => Some(ResolvedType::F64Array),
+            "I64Array" => Some(ResolvedType::I64Array),
             "Any" => Some(ResolvedType::Any),
             _ => None,
         };
@@ -380,6 +383,7 @@ fn resolved_type_name(resolved: &ResolvedType) -> String
         ResolvedType::Array => "Array".to_string(),
         ResolvedType::Map => "Map".to_string(),
         ResolvedType::F64Array => "F64Array".to_string(),
+        ResolvedType::I64Array => "I64Array".to_string(),
         ResolvedType::Struct(ty) => ty.name.as_str().to_string(),
         ResolvedType::Any => "Any".to_string(),
     }
@@ -500,6 +504,20 @@ fn coerce_value_to_type(
             {
                 Err(RuntimeError {
                     message: format!("{label} expects F64Array"),
+                    line,
+                })
+            }
+        }
+        ResolvedType::I64Array =>
+        {
+            if matches!(value, Value::I64Array(_))
+            {
+                Ok(value)
+            }
+            else
+            {
+                Err(RuntimeError {
+                    message: format!("{label} expects I64Array"),
                     line,
                 })
             }
@@ -1156,6 +1174,11 @@ fn clone_value(value: &Value) -> Value
         {
             let vals = arr.borrow().clone();
             Value::F64Array(Rc::new(RefCell::new(vals)))
+        }
+        Value::I64Array(arr) =>
+        {
+            let vals = arr.borrow().clone();
+            Value::I64Array(Rc::new(RefCell::new(vals)))
         }
         Value::Bytes(bytes) => Value::Bytes(bytes.clone()),
         Value::ByteBuf(buf) =>
@@ -5413,7 +5436,7 @@ fn resolve_method_value(
                 eval_map_index_cached(&map_ref, map_ptr, name, map_cache)
             }
         }
-        Value::Array(_) | Value::F64Array(_) =>
+        Value::Array(_) | Value::F64Array(_) | Value::I64Array(_) =>
         {
             return Err(err_index_requires_int());
         }
@@ -5481,6 +5504,37 @@ fn eval_index_cached_value(
                 if i < vec.len()
                 {
                     make_float(vec[i], FloatKind::F64)
+                }
+                else
+                {
+                    Value::Nil
+                }
+            }
+            else
+            {
+                return Err(err_index_requires_int());
+            }
+        }
+        Value::I64Array(arr) =>
+        {
+            if let Some(i) = int_value_as_usize(&index_val)
+            {
+                let arr_ptr = Rc::as_ptr(&arr) as usize;
+                let mut cache_mut = cache.borrow_mut();
+                if cache_mut.array_ptr == Some(arr_ptr) && cache_mut.index_usize == Some(i)
+                {
+                    cache_mut.hits += 1;
+                }
+                else
+                {
+                    cache_mut.array_ptr = Some(arr_ptr);
+                    cache_mut.index_usize = Some(i);
+                    cache_mut.misses += 1;
+                }
+                let vec = arr.borrow();
+                if i < vec.len()
+                {
+                    make_signed_int(vec[i] as i128, IntKind::I64)
                 }
                 else
                 {
@@ -5792,6 +5846,39 @@ fn eval_index_assign_value(
                                     line: 0,
                                 });
                             }
+                        }
+                    }
+                }
+                else
+                {
+                    return Err(RuntimeError {
+                        message: "Array index out of bounds".to_string(),
+                        line: 0,
+                    });
+                }
+            }
+            else
+            {
+                return Err(err_index_requires_int());
+            }
+        }
+        Value::I64Array(arr) =>
+        {
+            if let Some(i) = int_value_as_usize(&index_val)
+            {
+                let mut vec = arr.borrow_mut();
+                if i < vec.len()
+                {
+                    match &value
+                    {
+                        Value::Integer { value, .. } => vec[i] = *value as i64,
+                        Value::Unsigned { value, .. } => vec[i] = *value as i64,
+                        _ =>
+                        {
+                            return Err(RuntimeError {
+                                message: "I64Array assignment requires an integer".to_string(),
+                                line: 0,
+                            });
                         }
                     }
                 }
@@ -6678,6 +6765,7 @@ fn execute_reg_instructions(
                         Value::String(s) => default_int(s.len() as i128),
                         Value::Array(arr) => default_int(arr.borrow().len() as i128),
                         Value::F64Array(arr) => default_int(arr.borrow().len() as i128),
+                        Value::I64Array(arr) => default_int(arr.borrow().len() as i128),
                         Value::Bytes(bytes) => default_int(bytes.len() as i128),
                         Value::ByteBuf(buf) => default_int(buf.borrow().len() as i128),
                         Value::BytesView(view) => default_int(view.len as i128),
@@ -6951,6 +7039,12 @@ fn execute_instructions(
             idx: usize,
             len: usize,
         },
+        I64Array
+        {
+            arr: Rc<RefCell<Vec<i64>>>,
+            idx: usize,
+            len: usize,
+        },
         Map
         {
             keys: Vec<Rc<String>>, idx: usize
@@ -7055,6 +7149,20 @@ fn execute_instructions(
                     .get(*idx)
                     .cloned()
                     .map(|v| make_float(v, FloatKind::F64));
+                *idx += 1;
+                val
+            }
+            ForEachIter::I64Array { arr, idx, len } =>
+            {
+                if *idx >= *len
+                {
+                    return None;
+                }
+                let val = arr
+                    .borrow()
+                    .get(*idx)
+                    .cloned()
+                    .map(|v| make_signed_int(v as i128, IntKind::I64));
                 *idx += 1;
                 val
             }
@@ -7832,6 +7940,7 @@ fn execute_instructions(
                         Value::String(s) => default_int(s.len() as i128),
                         Value::Array(arr) => default_int(arr.borrow().len() as i128),
                         Value::F64Array(arr) => default_int(arr.borrow().len() as i128),
+                        Value::I64Array(arr) => default_int(arr.borrow().len() as i128),
                         Value::Bytes(bytes) => default_int(bytes.len() as i128),
                         Value::ByteBuf(buf) => default_int(buf.borrow().len() as i128),
                         Value::BytesView(view) => default_int(view.len as i128),
@@ -8092,6 +8201,11 @@ fn execute_instructions(
                         {
                             let len = arr.borrow().len();
                             ForEachIter::F64Array { arr, idx: 0, len }
+                        }
+                        Value::I64Array(arr) =>
+                        {
+                            let len = arr.borrow().len();
+                            ForEachIter::I64Array { arr, idx: 0, len }
                         }
                         Value::Map(map) =>
                         {
@@ -10753,6 +10867,7 @@ impl Interpreter
                     Value::String(s) => Ok(default_int(s.len() as i128)),
                     Value::Array(arr) => Ok(default_int(arr.borrow().len() as i128)),
                     Value::F64Array(arr) => Ok(default_int(arr.borrow().len() as i128)),
+                    Value::I64Array(arr) => Ok(default_int(arr.borrow().len() as i128)),
                     Value::Bytes(bytes) => Ok(default_int(bytes.len() as i128)),
                     Value::ByteBuf(buf) => Ok(default_int(buf.borrow().len() as i128)),
                     Value::BytesView(view) => Ok(default_int(view.len as i128)),
@@ -10818,6 +10933,7 @@ impl Interpreter
                     Value::Boolean(_) => "Boolean",
                     Value::Array(_) => "Array",
                     Value::F64Array(_) => "F64Array",
+                    Value::I64Array(_) => "I64Array",
                     Value::Bytes(_) => "Bytes",
                     Value::ByteBuf(_) => "ByteBuf",
                     Value::BytesView(_) => "BytesView",
@@ -12239,6 +12355,43 @@ impl Interpreter
                             });
                         }
                     }
+                    Value::I64Array(arr) =>
+                    {
+                        if let Some(i) = int_value_as_usize(&index_val)
+                        {
+                            let mut vec = arr.borrow_mut();
+                            if i < vec.len()
+                            {
+                                match &val
+                                {
+                                    Value::Integer { value, .. } => vec[i] = *value as i64,
+                                    Value::Unsigned { value, .. } => vec[i] = *value as i64,
+                                    _ =>
+                                    {
+                                        return Err(RuntimeError {
+                                            message: "I64Array assignment requires an integer"
+                                                .to_string(),
+                                            line,
+                                        });
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                return Err(RuntimeError {
+                                    message: "Array index out of bounds".to_string(),
+                                    line,
+                                });
+                            }
+                        }
+                        else
+                        {
+                            return Err(RuntimeError {
+                                message: err_index_requires_int().message,
+                                line,
+                            });
+                        }
+                    }
                     Value::Map(map) =>
                     {
                         let key = match index_val
@@ -12584,31 +12737,77 @@ impl Interpreter
             }
             ExprKind::Array(elements) =>
             {
+                // Empty array is always Array type
+                if elements.is_empty()
+                {
+                    return Ok(Value::Array(Rc::new(RefCell::new(Vec::new()))));
+                }
+
                 let mut vals = Vec::new();
+                let mut i64_vals: Vec<i64> = Vec::new();
                 let mut f64_vals: Vec<f64> = Vec::new();
+                let mut all_i64 = true;
                 let mut all_f64 = true;
+
                 for e in elements
                 {
                     let v = self.eval(e, slots)?;
+                    if all_i64
+                    {
+                        match &v
+                        {
+                            Value::Integer { value, .. } =>
+                            {
+                                i64_vals.push(*value as i64);
+                                if all_f64
+                                {
+                                    f64_vals.push(*value as f64);
+                                }
+                                continue;
+                            }
+                            Value::Unsigned { value, .. } =>
+                            {
+                                i64_vals.push(*value as i64);
+                                if all_f64
+                                {
+                                    f64_vals.push(*value as f64);
+                                }
+                                continue;
+                            }
+                            _ =>
+                            {
+                                all_i64 = false;
+                                // Convert i64_vals to general vals
+                                vals.extend(
+                                    i64_vals
+                                        .drain(..)
+                                        .map(|value| make_signed_int(value as i128, IntKind::I64)),
+                                );
+                            }
+                        }
+                    }
+
                     if all_f64
                     {
-                        match v
+                        match &v
                         {
-                            Value::Float { value, .. } => f64_vals.push(value),
-                            v =>
+                            Value::Float { value, .. } =>
+                            {
+                                f64_vals.push(*value);
+                                continue;
+                            }
+                            _ =>
                             {
                                 if let Some(num) = int_value_as_f64(&v)
                                 {
                                     f64_vals.push(num);
+                                    vals.push(v);
+                                    continue;
                                 }
                                 else
                                 {
                                     all_f64 = false;
-                                    vals.extend(
-                                        f64_vals
-                                            .drain(..)
-                                            .map(|value| make_float(value, FloatKind::F64)),
-                                    );
+                                    f64_vals.clear();
                                     vals.push(v);
                                 }
                             }
@@ -12619,7 +12818,12 @@ impl Interpreter
                         vals.push(v);
                     }
                 }
-                if all_f64
+
+                if all_i64
+                {
+                    Ok(Value::I64Array(Rc::new(RefCell::new(i64_vals))))
+                }
+                else if all_f64
                 {
                     Ok(Value::F64Array(Rc::new(RefCell::new(f64_vals))))
                 }
@@ -12941,6 +13145,28 @@ impl Interpreter
                             if i < vec.len()
                             {
                                 Ok(make_float(vec[i], FloatKind::F64))
+                            }
+                            else
+                            {
+                                Ok(Value::Nil)
+                            }
+                        }
+                        else
+                        {
+                            Err(RuntimeError {
+                                message: err_index_requires_int().message,
+                                line,
+                            })
+                        }
+                    }
+                    Value::I64Array(arr) =>
+                    {
+                        if let Some(i) = int_value_as_usize(&index_val)
+                        {
+                            let vec = arr.borrow();
+                            if i < vec.len()
+                            {
+                                Ok(make_signed_int(vec[i] as i128, IntKind::I64))
                             }
                             else
                             {
@@ -13616,6 +13842,20 @@ impl Interpreter
                             let item = {
                                 let vec = arr.borrow();
                                 make_float(vec[idx], FloatKind::F64)
+                            };
+                            self.env.borrow_mut().assign(*var, item);
+                            last_val = self.eval(body, slots)?;
+                        }
+                        Ok(last_val)
+                    }
+                    Value::I64Array(arr) =>
+                    {
+                        let len = arr.borrow().len();
+                        for idx in 0..len
+                        {
+                            let item = {
+                                let vec = arr.borrow();
+                                make_signed_int(vec[idx] as i128, IntKind::I64)
                             };
                             self.env.borrow_mut().assign(*var, item);
                             last_val = self.eval(body, slots)?;

@@ -54,6 +54,7 @@ pub enum Token
     Or,
     Pipe,
     End,
+    Return,
     True,
     False,
     Nil,
@@ -476,6 +477,7 @@ impl Lexer
             "false" => Token::False,
             "nil" => Token::Nil,
             "fn" => Token::Fn,
+            "return" => Token::Return,
             _ => Token::Identifier(ident),
         }
     }

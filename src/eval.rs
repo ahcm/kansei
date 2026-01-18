@@ -32,6 +32,48 @@ pub struct RuntimeError
     pub line: usize,
 }
 
+// Special marker for early return - stored in thread local
+thread_local! {
+    static EARLY_RETURN: std::cell::RefCell<Option<Value>> = const { std::cell::RefCell::new(None) };
+}
+
+const EARLY_RETURN_MARKER: &str = "\x00EARLY_RETURN\x00";
+
+fn set_early_return(value: Value)
+{
+    EARLY_RETURN.with(|r| *r.borrow_mut() = Some(value));
+}
+
+fn take_early_return() -> Option<Value>
+{
+    EARLY_RETURN.with(|r| r.borrow_mut().take())
+}
+
+fn is_early_return(err: &RuntimeError) -> bool
+{
+    err.message == EARLY_RETURN_MARKER
+}
+
+// Helper to handle eval result with early return support
+fn handle_eval_result(result: EvalResult) -> EvalResult
+{
+    match result
+    {
+        Ok(v) => Ok(v),
+        Err(err) if is_early_return(&err) =>
+        {
+            Ok(take_early_return().unwrap_or(Value::Nil))
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn make_early_return_error(value: Value) -> RuntimeError
+{
+    set_early_return(value);
+    RuntimeError { message: EARLY_RETURN_MARKER.to_string(), line: 0 }
+}
+
 pub type EvalResult = Result<Value, RuntimeError>;
 
 enum BlockCollectionTarget
@@ -3852,6 +3894,7 @@ fn find_compile_failure(expr: &Expr) -> Option<String>
         ExprKind::Block(stmts) => stmts.iter().find_map(find_compile_failure),
         ExprKind::Assignment { value, .. } => find_compile_failure(value),
         ExprKind::Yield(args) => args.iter().find_map(find_compile_failure),
+        ExprKind::Return(expr) => expr.as_ref().and_then(|e| find_compile_failure(e)),
         ExprKind::FormatString(parts) => parts.iter().find_map(|part| {
             if let crate::ast::FormatPart::Expr { expr, .. } = part
             {
@@ -4033,6 +4076,13 @@ fn collect_function_exprs(
             for arg in args
             {
                 collect_function_exprs(arg, out);
+            }
+        }
+        ExprKind::Return(expr) =>
+        {
+            if let Some(e) = expr
+            {
+                collect_function_exprs(e, out);
             }
         }
         ExprKind::Assignment { value, .. } =>
@@ -11807,11 +11857,11 @@ impl Interpreter
             {
                 let original_env = self.env.clone();
                 self.env = data.env.clone();
-                let result = self.eval(&data.body, &mut new_slots)?;
+                let result = handle_eval_result(self.eval(&data.body, &mut new_slots))?;
                 self.env = original_env;
                 return Ok(result);
             }
-            return self.eval(&data.body, &mut new_slots);
+            return handle_eval_result(self.eval(&data.body, &mut new_slots));
         }
 
         let block_entry = if let Some(closure) = block
@@ -11838,14 +11888,14 @@ impl Interpreter
             let new_env = self.get_env(Some(data.env.clone()), false);
             let original_env = self.env.clone();
             self.env = new_env.clone();
-            let result = self.eval(&data.body, &mut new_slots)?;
+            let result = handle_eval_result(self.eval(&data.body, &mut new_slots))?;
             self.env = original_env;
             self.recycle_env(new_env);
             result
         }
         else
         {
-            self.eval(&data.body, &mut new_slots)?
+            handle_eval_result(self.eval(&data.body, &mut new_slots))?
         };
         self.block_stack.pop();
         Ok(result)
@@ -12519,6 +12569,18 @@ impl Interpreter
                         line,
                     })
                 }
+            }
+            ExprKind::Return(expr) =>
+            {
+                let value = if let Some(e) = expr
+                {
+                    self.eval(e, slots)?
+                }
+                else
+                {
+                    Value::Nil
+                };
+                Err(make_early_return_error(value))
             }
             ExprKind::Array(elements) =>
             {

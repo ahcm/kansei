@@ -659,6 +659,26 @@ impl Parser
                 }
                 self.make_expr(ExprKind::Yield(args), line)
             }
+            Token::Return =>
+            {
+                self.eat();
+                // Check if there's an expression to return on the same line
+                let value = if self.current_token.line == line
+                    && self.current_token.token != Token::EOF
+                    && self.current_token.token != Token::End
+                    && self.current_token.token != Token::Else
+                    && self.current_token.token != Token::Elif
+                    && self.current_token.token != Token::RightBrace
+                    && self.current_token.token != Token::RightParen
+                {
+                    Some(Box::new(self.parse_expression()))
+                }
+                else
+                {
+                    None
+                };
+                self.make_expr(ExprKind::Return(value), line)
+            }
             Token::Ampersand =>
             {
                 self.eat();

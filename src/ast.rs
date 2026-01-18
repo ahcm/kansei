@@ -156,6 +156,7 @@ pub enum ExprKind
     },
 
     Yield(Vec<Expr>),
+    Return(Option<Box<Expr>>),
 
     If
     {

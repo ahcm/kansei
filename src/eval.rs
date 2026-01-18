@@ -1978,6 +1978,7 @@ fn builtin_from_symbol(name: SymbolId) -> Option<Builtin>
         "len" => Some(Builtin::Len),
         "read_file" => Some(Builtin::ReadFile),
         "write_file" => Some(Builtin::WriteFile),
+        "typeof" => Some(Builtin::Typeof),
         _ => None,
     }
 }
@@ -10734,6 +10735,67 @@ impl Interpreter
                     Err(_) => Ok(Value::Boolean(false)),
                 }
             }
+            Builtin::Typeof =>
+            {
+                let val = args.get(0).cloned().unwrap_or(Value::Nil);
+                let type_name = match &val
+                {
+                    Value::Integer { kind, .. } => match kind
+                    {
+                        IntKind::I8 => "Int8",
+                        IntKind::I16 => "Int16",
+                        IntKind::I32 => "Int32",
+                        IntKind::I64 => "Int64",
+                        IntKind::I128 => "Int128",
+                        _ => "Integer",
+                    },
+                    Value::Unsigned { kind, .. } => match kind
+                    {
+                        IntKind::U8 => "Uint8",
+                        IntKind::U16 => "Uint16",
+                        IntKind::U32 => "Uint32",
+                        IntKind::U64 => "Uint64",
+                        IntKind::U128 => "Uint128",
+                        _ => "Unsigned",
+                    },
+                    Value::Float { kind, .. } => match kind
+                    {
+                        FloatKind::F32 => "Float32",
+                        FloatKind::F64 => "Float64",
+                        FloatKind::F128 => "Float128",
+                    },
+                    Value::String(_) => "String",
+                    Value::Boolean(_) => "Boolean",
+                    Value::Array(_) => "Array",
+                    Value::F64Array(_) => "F64Array",
+                    Value::Bytes(_) => "Bytes",
+                    Value::ByteBuf(_) => "ByteBuf",
+                    Value::BytesView(_) => "BytesView",
+                    Value::StructType(ty) => return Ok(Value::String(intern::intern_owned(format!("StructType({})", ty.name)))),
+                    Value::StructInstance(inst) => return Ok(Value::String(inst.ty.name.clone())),
+                    Value::BoundMethod(_) => "BoundMethod",
+                    Value::Map(_) => "Map",
+                    Value::DataFrame(_) => "DataFrame",
+                    Value::Sqlite(_) => "Sqlite",
+                    Value::Mmap(_) => "Mmap",
+                    Value::MmapMut(_) => "MmapMut",
+                    #[cfg(feature = "lib-net")]
+                    Value::NetStream(_) => "NetStream",
+                    Value::Nil => "Nil",
+                    Value::Function(_) => "Function",
+                    Value::NativeFunction(_) => "NativeFunction",
+                    Value::HostFunction(_) => "HostFunction",
+                    Value::WasmFunction(_) => "WasmFunction",
+                    Value::Reference(r) =>
+                    {
+                        // Recursively get type of referenced value
+                        let inner = r.borrow().clone();
+                        return self.call_builtin(&Builtin::Typeof, &[inner]);
+                    }
+                    Value::Uninitialized => "Uninitialized",
+                };
+                Ok(Value::String(intern::intern(type_name)))
+            }
         }
     }
 
@@ -13048,6 +13110,11 @@ impl Interpreter
                                 }
                                 Err(_) => Ok(Value::Boolean(false)),
                             };
+                        }
+                        "typeof" =>
+                        {
+                            let val = self.eval(&args[0], slots)?;
+                            return self.call_builtin(&Builtin::Typeof, &[val]);
                         }
                         _ =>
                         {}

@@ -752,6 +752,7 @@ pub enum Builtin
     Len,
     ReadFile,
     WriteFile,
+    Typeof,
 }
 
 #[derive(Debug, Clone, PartialEq)]

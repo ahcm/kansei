@@ -3068,6 +3068,26 @@ fn compile_expr(
                 code.push(Instruction::Pop);
             }
         }
+        ExprKind::Slice { target, start, end } =>
+        {
+            if !compile_expr(target, code, consts, true)
+            {
+                return false;
+            }
+            if !compile_expr(start, code, consts, true)
+            {
+                return false;
+            }
+            if !compile_expr(end, code, consts, true)
+            {
+                return false;
+            }
+            code.push(Instruction::Slice);
+            if !want_value
+            {
+                code.push(Instruction::Pop);
+            }
+        }
         ExprKind::IndexAssignment {
             target,
             index,
@@ -3806,6 +3826,12 @@ fn find_compile_failure(expr: &Expr) -> Option<String>
         {
             find_compile_failure(target).or_else(|| find_compile_failure(index))
         }
+        ExprKind::Slice { target, start, end } =>
+        {
+            find_compile_failure(target)
+                .or_else(|| find_compile_failure(start))
+                .or_else(|| find_compile_failure(end))
+        }
         ExprKind::IndexAssignment {
             target,
             index,
@@ -3958,6 +3984,12 @@ fn collect_function_exprs(
         {
             collect_function_exprs(target, out);
             collect_function_exprs(index, out);
+        }
+        ExprKind::Slice { target, start, end } =>
+        {
+            collect_function_exprs(target, out);
+            collect_function_exprs(start, out);
+            collect_function_exprs(end, out);
         }
         ExprKind::IndexAssignment {
             target,
@@ -4620,6 +4652,14 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
             },
             line: expr.line,
         },
+        ExprKind::Slice { target, start, end } => Expr {
+            kind: ExprKind::Slice {
+                target: Box::new(substitute(target, args)),
+                start: Box::new(substitute(start, args)),
+                end: Box::new(substitute(end, args)),
+            },
+            line: expr.line,
+        },
         ExprKind::Yield(args_exprs) => Expr {
             kind: ExprKind::Yield(args_exprs.iter().map(|a| substitute(a, args)).collect()),
             line: expr.line,
@@ -4706,6 +4746,10 @@ fn expr_size(expr: &Expr) -> usize
                 .sum::<usize>()
         }
         ExprKind::Index { target, index } => 1 + expr_size(target) + expr_size(index),
+        ExprKind::Slice { target, start, end } =>
+        {
+            1 + expr_size(target) + expr_size(start) + expr_size(end)
+        }
         ExprKind::Yield(args) => 1 + args.iter().map(expr_size).sum::<usize>(),
         ExprKind::Block(stmts) => 1 + stmts.iter().map(expr_size).sum::<usize>(),
         ExprKind::FormatString(parts) =>
@@ -4771,6 +4815,10 @@ fn is_reg_simple(expr: &Expr) -> bool
             is_reg_simple(function) && args.iter().all(is_reg_simple)
         }
         ExprKind::Index { target, index } => is_reg_simple(target) && is_reg_simple(index),
+        ExprKind::Slice { target, start, end } =>
+        {
+            is_reg_simple(target) && is_reg_simple(start) && is_reg_simple(end)
+        }
         ExprKind::IndexAssignment {
             target,
             index,
@@ -8680,6 +8728,92 @@ fn execute_instructions(
                     };
                     frame.stack.push(result);
                 }
+                Instruction::Slice =>
+                {
+                    let end_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing end index for slice".to_string(),
+                        line: 0,
+                    })?;
+                    let start_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing start index for slice".to_string(),
+                        line: 0,
+                    })?;
+                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing target for slice".to_string(),
+                        line: 0,
+                    })?;
+
+                    let start_idx = int_value_as_usize(&start_val).ok_or_else(|| RuntimeError {
+                        message: "Slice start index must be an integer".to_string(),
+                        line: 0,
+                    })?;
+                    let end_idx = int_value_as_usize(&end_val).ok_or_else(|| RuntimeError {
+                        message: "Slice end index must be an integer".to_string(),
+                        line: 0,
+                    })?;
+
+                    let result = match target_val
+                    {
+                        Value::String(s) =>
+                        {
+                            let chars: Vec<char> = s.chars().collect();
+                            let len = chars.len();
+                            let start_clamped = start_idx.min(len);
+                            let end_clamped = end_idx.min(len);
+                            if start_clamped >= end_clamped
+                            {
+                                Value::String(intern::intern(""))
+                            }
+                            else
+                            {
+                                let slice: String =
+                                    chars[start_clamped..end_clamped].iter().collect();
+                                Value::String(intern::intern_owned(slice))
+                            }
+                        }
+                        Value::Array(arr) =>
+                        {
+                            let vec = arr.borrow();
+                            let len = vec.len();
+                            let start_clamped = start_idx.min(len);
+                            let end_clamped = end_idx.min(len);
+                            if start_clamped >= end_clamped
+                            {
+                                Value::Array(Rc::new(RefCell::new(Vec::new())))
+                            }
+                            else
+                            {
+                                let slice: Vec<Value> = vec[start_clamped..end_clamped].to_vec();
+                                Value::Array(Rc::new(RefCell::new(slice)))
+                            }
+                        }
+                        Value::F64Array(arr) =>
+                        {
+                            let vec = arr.borrow();
+                            let len = vec.len();
+                            let start_clamped = start_idx.min(len);
+                            let end_clamped = end_idx.min(len);
+                            if start_clamped >= end_clamped
+                            {
+                                Value::F64Array(Rc::new(RefCell::new(Vec::new())))
+                            }
+                            else
+                            {
+                                let slice: Vec<f64> = vec[start_clamped..end_clamped].to_vec();
+                                Value::F64Array(Rc::new(RefCell::new(slice)))
+                            }
+                        }
+                        _ =>
+                        {
+                            return Err(RuntimeError {
+                                message: "Slice is only supported for strings and arrays"
+                                    .to_string(),
+                                line: 0,
+                            })
+                        }
+                    };
+                    frame.stack.push(result);
+                }
                 Instruction::IndexCached(cache) =>
                 {
                     let index_val = frame.stack.pop().ok_or_else(|| RuntimeError {
@@ -9426,6 +9560,10 @@ fn is_simple(expr: &Expr) -> bool
         ExprKind::ArrayGenerator { generator, size } => is_simple(generator) && is_simple(size),
         ExprKind::Map(entries) => entries.iter().all(|(k, v)| is_simple(k) && is_simple(v)),
         ExprKind::Index { target, index } => is_simple(target) && is_simple(index),
+        ExprKind::Slice { target, start, end } =>
+        {
+            is_simple(target) && is_simple(start) && is_simple(end)
+        }
         ExprKind::Not(expr) => is_simple(expr),
         ExprKind::And { left, right } | ExprKind::AndBool { left, right } =>
         {
@@ -9584,6 +9722,12 @@ fn resolve(expr: &mut Expr, slot_map: &FxHashMap<SymbolId, usize>)
         {
             resolve(target, slot_map);
             resolve(index, slot_map);
+        }
+        ExprKind::Slice { target, start, end } =>
+        {
+            resolve(target, slot_map);
+            resolve(start, slot_map);
+            resolve(end, slot_map);
         }
         ExprKind::Not(expr) =>
         {
@@ -12712,6 +12856,77 @@ impl Interpreter
                     }
                     _ => Err(RuntimeError {
                         message: err_index_unsupported().message,
+                        line,
+                    }),
+                }
+            }
+            ExprKind::Slice { target, start, end } =>
+            {
+                let target_val = self.eval(target, slots)?;
+                let start_val = self.eval(start, slots)?;
+                let end_val = self.eval(end, slots)?;
+
+                let start_idx = int_value_as_usize(&start_val).ok_or_else(|| RuntimeError {
+                    message: "Slice start index must be an integer".to_string(),
+                    line,
+                })?;
+                let end_idx = int_value_as_usize(&end_val).ok_or_else(|| RuntimeError {
+                    message: "Slice end index must be an integer".to_string(),
+                    line,
+                })?;
+
+                match target_val
+                {
+                    Value::String(s) =>
+                    {
+                        let chars: Vec<char> = s.chars().collect();
+                        let len = chars.len();
+                        let start_clamped = start_idx.min(len);
+                        let end_clamped = end_idx.min(len);
+                        if start_clamped >= end_clamped
+                        {
+                            Ok(Value::String(intern::intern("")))
+                        }
+                        else
+                        {
+                            let slice: String = chars[start_clamped..end_clamped].iter().collect();
+                            Ok(Value::String(intern::intern_owned(slice)))
+                        }
+                    }
+                    Value::Array(arr) =>
+                    {
+                        let vec = arr.borrow();
+                        let len = vec.len();
+                        let start_clamped = start_idx.min(len);
+                        let end_clamped = end_idx.min(len);
+                        if start_clamped >= end_clamped
+                        {
+                            Ok(Value::Array(Rc::new(RefCell::new(Vec::new()))))
+                        }
+                        else
+                        {
+                            let slice: Vec<Value> = vec[start_clamped..end_clamped].to_vec();
+                            Ok(Value::Array(Rc::new(RefCell::new(slice))))
+                        }
+                    }
+                    Value::F64Array(arr) =>
+                    {
+                        let vec = arr.borrow();
+                        let len = vec.len();
+                        let start_clamped = start_idx.min(len);
+                        let end_clamped = end_idx.min(len);
+                        if start_clamped >= end_clamped
+                        {
+                            Ok(Value::F64Array(Rc::new(RefCell::new(Vec::new()))))
+                        }
+                        else
+                        {
+                            let slice: Vec<f64> = vec[start_clamped..end_clamped].to_vec();
+                            Ok(Value::F64Array(Rc::new(RefCell::new(slice))))
+                        }
+                    }
+                    _ => Err(RuntimeError {
+                        message: "Slice is only supported for strings and arrays".to_string(),
                         line,
                     }),
                 }

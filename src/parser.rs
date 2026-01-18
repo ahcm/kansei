@@ -270,15 +270,34 @@ impl Parser
             if self.current_token.token == Token::LeftBracket
             {
                 self.eat(); // [
-                let index = self.parse_expression();
-                self.expect(Token::RightBracket);
-                expr = self.make_expr(
-                    ExprKind::Index {
-                        target: Box::new(expr),
-                        index: Box::new(index),
-                    },
-                    line,
-                );
+                let first = self.parse_expression();
+                if self.current_token.token == Token::Comma
+                {
+                    // Slice syntax: target[start, end]
+                    self.eat(); // ,
+                    let second = self.parse_expression();
+                    self.expect(Token::RightBracket);
+                    expr = self.make_expr(
+                        ExprKind::Slice {
+                            target: Box::new(expr),
+                            start: Box::new(first),
+                            end: Box::new(second),
+                        },
+                        line,
+                    );
+                }
+                else
+                {
+                    // Regular index: target[index]
+                    self.expect(Token::RightBracket);
+                    expr = self.make_expr(
+                        ExprKind::Index {
+                            target: Box::new(expr),
+                            index: Box::new(first),
+                        },
+                        line,
+                    );
+                }
             }
             else if self.current_token.token == Token::Dot
                 || self.current_token.token == Token::ColonColon
@@ -519,18 +538,22 @@ impl Parser
                 self.eat();
                 self.make_expr(ExprKind::Boolean(false), line)
             }
+            Token::Nil =>
+            {
+                self.eat();
+                self.make_expr(ExprKind::Nil, line)
+            }
             Token::Identifier(name) =>
             {
                 let name = intern::intern_symbol_owned(name);
                 self.eat();
 
-                // Legacy built-in support
+                // Legacy built-in support (for builtins that don't require parentheses)
                 let name_str = intern::symbol_name(name);
                 if name_str.as_str() == "puts"
                     || name_str.as_str() == "print"
                     || name_str.as_str() == "write_file"
                     || name_str.as_str() == "read_file"
-                    || name_str.as_str() == "len"
                 {
                     let mut args = Vec::new();
                     args.push(self.parse_expression());

@@ -378,6 +378,7 @@ pub enum Instruction
         count: Option<usize>,
     },
     Index,
+    Slice,
     IndexCached(Rc<RefCell<IndexCache>>),
     MapIndexCached(Rc<RefCell<MapAccessCache>>),
     F64IndexCached(Rc<RefCell<IndexCache>>),

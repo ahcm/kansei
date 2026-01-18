@@ -56,6 +56,7 @@ pub enum Token
     End,
     True,
     False,
+    Nil,
     Comma,
     Fn,
     LeftParen,
@@ -473,6 +474,7 @@ impl Lexer
             "or" => Token::Or,
             "true" => Token::True,
             "false" => Token::False,
+            "nil" => Token::Nil,
             "fn" => Token::Fn,
             _ => Token::Identifier(ident),
         }

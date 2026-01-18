@@ -229,6 +229,12 @@ pub enum ExprKind
         target: Box<Expr>,
         index: Box<Expr>,
     },
+    Slice
+    {
+        target: Box<Expr>,
+        start: Box<Expr>,
+        end: Box<Expr>,
+    },
     Use(Vec<SymbolId>),
     Import
     {

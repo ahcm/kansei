@@ -120,6 +120,7 @@ pub struct Environment
     pub is_partial: bool, // If true, allow full recursive lookup (used for currying/params)
     pub version: u64,
     pub file_public: FxHashSet<SymbolId>,
+    pub function_public: FxHashSet<SymbolId>,
 }
 
 impl Environment
@@ -133,6 +134,7 @@ impl Environment
             is_partial: false,
             version: 0,
             file_public: FxHashSet::default(),
+            function_public: FxHashSet::default(),
         }
     }
 
@@ -144,6 +146,7 @@ impl Environment
         self.is_partial = is_partial;
         self.version = 0;
         self.file_public.clear();
+        self.function_public.clear();
     }
 
     pub fn get(&self, name: SymbolId) -> Option<Value>
@@ -152,13 +155,16 @@ impl Environment
         if idx < self.values.len()
         {
             let v = &self.values[idx];
-            match v
+            if !matches!(v, Value::Uninitialized)
             {
-                Value::Reference(r) => Some(r.borrow().clone()),
-                _ => Some(v.clone()),
+                return match v
+                {
+                    Value::Reference(r) => Some(r.borrow().clone()),
+                    _ => Some(v.clone()),
+                };
             }
         }
-        else if let Some(parent) = &self.parent
+        if let Some(parent) = &self.parent
         {
             if self.is_partial
             {
@@ -182,32 +188,35 @@ impl Environment
         if idx < self.values.len()
         {
             let v = &self.values[idx];
-            match v
+            if !matches!(v, Value::Uninitialized)
             {
-                Value::Reference(_) =>
+                match v
                 {
-                    // Dereference if it's a reference
-                    if let Value::Reference(r) = v
+                    Value::Reference(_) =>
                     {
-                        return Some(r.borrow().clone());
-                    }
-                    return Some(v.clone());
-                }
-                _ =>
-                {
-                    if self.file_public.contains(&name)
-                    {
+                        // Dereference if it's a reference
+                        if let Value::Reference(r) = v
+                        {
+                            return Some(r.borrow().clone());
+                        }
                         return Some(v.clone());
                     }
-                    if self.is_partial
+                    _ =>
                     {
-                        return Some(v.clone());
+                        if self.file_public.contains(&name) || self.function_public.contains(&name)
+                        {
+                            return Some(v.clone());
+                        }
+                        if self.is_partial
+                        {
+                            return Some(v.clone());
+                        }
+                        return None;
                     }
-                    return None;
                 }
             }
         }
-        else if let Some(parent) = &self.parent
+        if let Some(parent) = &self.parent
         {
             parent.borrow().get_recursive(name)
         }
@@ -251,6 +260,11 @@ impl Environment
     pub fn mark_public(&mut self, name: SymbolId)
     {
         self.file_public.insert(name);
+    }
+
+    pub fn mark_function_public(&mut self, name: SymbolId)
+    {
+        self.function_public.insert(name);
     }
 
     pub fn assign(&mut self, name: SymbolId, val: Value)

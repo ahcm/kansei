@@ -248,6 +248,7 @@ pub enum ExprKind
         names: Vec<SymbolId>,
     },
     FilePublic(Box<Expr>),
+    FunctionPublic(Box<Expr>),
 
     // A block of code (so an 'if' can run multiple lines)
     Block(Vec<Expr>),

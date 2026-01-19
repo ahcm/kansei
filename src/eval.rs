@@ -1747,6 +1747,10 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<SymbolId>)
         {
             collect_declarations(expr, decls);
         }
+        ExprKind::FunctionPublic(expr) =>
+        {
+            collect_declarations(expr, decls);
+        }
         ExprKind::Not(expr) =>
         {
             collect_declarations(expr, decls);
@@ -1880,6 +1884,10 @@ fn resolve_functions(expr: &mut Expr)
             resolve_functions(expr);
         }
         ExprKind::FilePublic(expr) =>
+        {
+            resolve_functions(expr.as_mut());
+        }
+        ExprKind::FunctionPublic(expr) =>
         {
             resolve_functions(expr.as_mut());
         }
@@ -2022,6 +2030,7 @@ fn uses_environment(expr: &Expr) -> bool
         ExprKind::Import { .. } => true,
         ExprKind::Export { .. } => true,
         ExprKind::FilePublic(_) => true,
+        ExprKind::FunctionPublic(_) => true,
         ExprKind::FormatString(parts) => parts.iter().any(|part| {
             if let crate::ast::FormatPart::Expr { expr, .. } = part
             {
@@ -3218,7 +3227,8 @@ fn compile_expr(
         | ExprKind::Load(_)
         | ExprKind::Import { .. }
         | ExprKind::Export { .. }
-        | ExprKind::FilePublic(_) =>
+        | ExprKind::FilePublic(_)
+        | ExprKind::FunctionPublic(_) =>
         {
             return false;
         }
@@ -3940,6 +3950,7 @@ fn find_compile_failure(expr: &Expr) -> Option<String>
             }
         }),
         ExprKind::FilePublic(expr) => find_compile_failure(expr),
+        ExprKind::FunctionPublic(expr) => find_compile_failure(expr),
         _ => None,
     }
 }
@@ -3988,6 +3999,10 @@ fn collect_function_exprs(
             }
         }
         ExprKind::FilePublic(expr) =>
+        {
+            collect_function_exprs(expr, out);
+        }
+        ExprKind::FunctionPublic(expr) =>
         {
             collect_function_exprs(expr, out);
         }
@@ -4762,6 +4777,10 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
             kind: ExprKind::FilePublic(Box::new(substitute(expr, args))),
             line: expr.line,
         },
+        ExprKind::FunctionPublic(expr) => Expr {
+            kind: ExprKind::FunctionPublic(Box::new(substitute(expr, args))),
+            line: expr.line,
+        },
         ExprKind::FormatString(parts) => Expr {
             kind: ExprKind::FormatString(
                 parts
@@ -4847,6 +4866,7 @@ fn expr_size(expr: &Expr) -> usize
         ExprKind::Yield(args) => 1 + args.iter().map(expr_size).sum::<usize>(),
         ExprKind::Block(stmts) => 1 + stmts.iter().map(expr_size).sum::<usize>(),
         ExprKind::FilePublic(expr) => 1 + expr_size(expr),
+        ExprKind::FunctionPublic(expr) => 1 + expr_size(expr),
         ExprKind::FormatString(parts) =>
         {
             1 + parts
@@ -4880,6 +4900,7 @@ fn is_reg_simple(expr: &Expr) -> bool
         | ExprKind::Import { .. }
         | ExprKind::Export { .. }
         | ExprKind::FilePublic(_)
+        | ExprKind::FunctionPublic(_)
         | ExprKind::StructDef { .. } => false,
         ExprKind::If { .. }
         | ExprKind::While { .. }
@@ -9703,6 +9724,8 @@ fn is_simple(expr: &Expr) -> bool
         | ExprKind::Load(_)
         | ExprKind::Import { .. }
         | ExprKind::Export { .. }
+        | ExprKind::FilePublic(_)
+        | ExprKind::FunctionPublic(_)
         | ExprKind::StructDef { .. } => false,
         ExprKind::Block(stmts) => stmts.iter().all(is_simple),
         ExprKind::FormatString(parts) => parts.iter().all(|part| {
@@ -9800,6 +9823,10 @@ fn resolve(expr: &mut Expr, slot_map: &FxHashMap<SymbolId, usize>)
             resolve(value, slot_map);
         }
         ExprKind::FilePublic(expr) =>
+        {
+            resolve(expr, slot_map);
+        }
+        ExprKind::FunctionPublic(expr) =>
         {
             resolve(expr, slot_map);
         }
@@ -10603,7 +10630,7 @@ impl Interpreter
         alias: Option<SymbolId>,
         line: usize,
         file_public: bool,
-    ) -> EvalResult
+    ) -> Result<Vec<SymbolId>, RuntimeError>
     {
         let file_path = self.resolve_module_file(path.as_str(), line)?;
         let metadata = fs::metadata(&file_path).map_err(|e| RuntimeError {
@@ -10649,7 +10676,7 @@ impl Interpreter
         }
         self.module_lookup_cache
             .remove(&Self::module_lookup_key(&namespace));
-        Ok(Value::Nil)
+        Ok(namespace)
     }
 
     fn load_module_from_file(
@@ -12214,6 +12241,135 @@ impl Interpreter
                     }
                     _ => Err(RuntimeError {
                         message: "@file can only be used with use/import/load, assignments, or function definitions"
+                            .to_string(),
+                        line,
+                    }),
+                }
+            }
+            ExprKind::FunctionPublic(expr) =>
+            {
+                match &expr.kind
+                {
+                    ExprKind::Use(path) =>
+                    {
+                        self.import_path(path, line)?;
+                        if let Some(root) = path.first()
+                        {
+                            self.env.borrow_mut().mark_function_public(*root);
+                        }
+                        Ok(Value::Nil)
+                    }
+                    ExprKind::Import { path, alias } =>
+                    {
+                        let namespace = self.import_module(path, *alias, line, false)?;
+                        if let Some(alias) = alias
+                        {
+                            self.env.borrow_mut().mark_function_public(*alias);
+                        }
+                        else if let Some(root) = namespace.first()
+                        {
+                            self.env.borrow_mut().mark_function_public(*root);
+                        }
+                        Ok(Value::Nil)
+                    }
+                    ExprKind::Load(path) =>
+                    {
+                        self.load_wasm_module(path, line)?;
+                        let wasm_sym = intern::intern_symbol("wasm");
+                        self.env.borrow_mut().mark_function_public(wasm_sym);
+                        Ok(Value::Nil)
+                    }
+                    ExprKind::Assignment { name, value, slot } =>
+                    {
+                        let val = self.eval(value, slots)?;
+                        if let Some(s) = slot
+                        {
+                            if let Some(slot_val) = slots.get_mut(*s)
+                            {
+                                *slot_val = val.clone();
+                            }
+                        }
+                        self.env.borrow_mut().set(*name, val.clone());
+                        self.env.borrow_mut().mark_function_public(*name);
+                        Ok(val)
+                    }
+                    ExprKind::FunctionDef {
+                        name,
+                        params,
+                        body,
+                        slots,
+                    } =>
+                    {
+                        let func_env = self.env.clone();
+                        let (resolved_body, slot_names) = if let Some(slot_names) = slots
+                        {
+                            (body.clone(), slot_names.clone())
+                        }
+                        else
+                        {
+                            let mut locals = HashSet::new();
+                            collect_declarations(body, &mut locals);
+                            let (slot_map, slot_names) = build_slot_map(params, locals);
+                            let mut resolved = body.clone();
+                            resolve(resolved.as_mut(), &slot_map);
+                            (resolved, Rc::new(slot_names))
+                        };
+                        let simple = is_simple(&resolved_body);
+                        let uses_env = uses_environment(&resolved_body);
+                        let reg_simple = is_reg_simple(&resolved_body);
+
+                        let mut code = Vec::new();
+                        let mut const_pool = Vec::new();
+                        let compiled = if should_compile(simple, uses_env, self.bytecode_mode)
+                        {
+                            let use_caches = self.bytecode_mode == BytecodeMode::Advanced;
+                            with_compile_use_caches(use_caches, || {
+                                compile_expr(&resolved_body, &mut code, &mut const_pool, true)
+                            })
+                        }
+                        else
+                        {
+                            false
+                        };
+
+                        let reg_code =
+                            if reg_simple && !uses_env && self.bytecode_mode != BytecodeMode::Off
+                            {
+                                compile_reg_function(&resolved_body).map(Rc::new)
+                            }
+                            else
+                            {
+                                None
+                            };
+                        let fast_reg_code = if reg_simple
+                            && !uses_env
+                            && self.bytecode_mode != BytecodeMode::Off
+                        {
+                            compile_fast_float_function(&resolved_body).map(Rc::new)
+                        }
+                        else
+                        {
+                            None
+                        };
+                        let func = Value::Function(Rc::new(crate::value::FunctionData {
+                            params: params.clone(),
+                            body: *resolved_body,
+                            declarations: slot_names,
+                            param_offset: 0,
+                            is_simple: simple,
+                            uses_env,
+                            code: if compiled { Some(Rc::new(code)) } else { None },
+                            reg_code,
+                            fast_reg_code,
+                            const_pool: Rc::new(const_pool),
+                            env: func_env,
+                        }));
+                        self.env.borrow_mut().define(*name, func.clone());
+                        self.env.borrow_mut().mark_function_public(*name);
+                        Ok(func)
+                    }
+                    _ => Err(RuntimeError {
+                        message: "@function can only be used with use/import/load, assignments, or function definitions"
                             .to_string(),
                         line,
                     }),

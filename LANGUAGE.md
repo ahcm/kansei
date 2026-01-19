@@ -95,6 +95,7 @@ home = program.env.HOME
 
 ## Modules, `use`, and `import`
 Kansei exposes native modules via the `std` namespace. The `use` keyword validates that a module path exists but does not create local bindings. Use assignment to alias.
+Use `@file` or `@function` with `use/import/load` when you want those bindings visible to nested functions.
 
 `std::lib` modules are feature-gated in the Rust build. By default, all std::lib modules are enabled. To disable a module, build without defaults and opt in to the ones you want:
 
@@ -126,13 +127,18 @@ root64 = Float64.sqrt(9)
 Float128 = std::Float128
 big = Float128.parse("1.2345678901234567")
 root128 = Float128.sqrt(9)
+
+use std::simd simd = std::simd
+simd.sum([1,2,3,4])  # -> 10
+
 ```
 
 The `::` operator accesses module members, similar to map dot access.
 
 ### Structs
 ```ruby
-struct Point {
+struct Point
+{
   x: Float64,
   y: Float64
 }
@@ -571,6 +577,32 @@ f()
 # x is still 10
 ```
 
+### Visibility Keywords (`@file`, `@function`)
+By default, functions and variables are only visible in the environment they are defined in. Nested functions do not see outer locals unless explicitly allowed.
+
+- `@file` marks a binding as visible to all functions in the file.
+- `@function` marks a binding as visible to all nested functions within the enclosing function scope.
+- At top level, `@function` behaves like `@file`.
+- `use`, `import`, and `load` can be annotated with `@file` or `@function` to expose their bindings.
+
+```ruby
+@file use std::simd # can be on the same line
+@file               # but does not have to be
+fn helper(x)
+  puts std::simd.sum(x)
+end
+
+fn outer()
+  @function
+  x = 3
+  @function
+  fn inner()
+    puts x
+  end
+  inner()
+end
+```
+
 ### Reference Capture (`&`)
 To modify an outer variable or pass a variable by reference, you must use the `&` operator in both the parameter definition and the call site (for functions) or capture list (for blocks).
 
@@ -590,7 +622,7 @@ Blocks passed to functions can also capture outer variables by reference.
 
 ```ruby
 sum = 0
-[1, 2, 3].each { |val, &sum|
+[1, 2, 3] each { |val, &sum|
   sum = sum + val
 }
 ```

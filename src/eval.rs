@@ -4,7 +4,7 @@ use crate::ast::{
 };
 use crate::intern;
 use crate::intern::{SymbolId, symbol_name};
-use crate::kansei_std::{build_file_module, build_io_module, build_lib_module};
+use crate::kansei_std::{build_file_module, build_io_module, build_lib_module, build_simd_module};
 use crate::value::{
     BinaryOpCache, BinaryOpCacheKind, BoundMethod, Builtin, CallSiteCache, Environment,
     FastRegFunction, FastRegInstruction, GlobalCache, IndexCache, Instruction, MapAccessCache,
@@ -1149,6 +1149,7 @@ fn build_std_module() -> Value
     std_map.insert(intern::intern("IO"), build_io_module());
     std_map.insert(intern::intern("File"), build_file_module());
     std_map.insert(intern::intern("lib"), build_lib_module());
+    std_map.insert(intern::intern("simd"), build_simd_module());
     Value::Map(Rc::new(RefCell::new(MapValue::new(std_map))))
 }
 
@@ -10303,6 +10304,13 @@ impl Interpreter
                         .insert(intern::intern("lib"), build_lib_module());
                     changed = true;
                 }
+                if !map_mut.data.contains_key(&intern::intern("simd"))
+                {
+                    map_mut
+                        .data
+                        .insert(intern::intern("simd"), build_simd_module());
+                    changed = true;
+                }
                 if changed
                 {
                     map_mut.version = map_mut.version.wrapping_add(1);
@@ -13748,6 +13756,160 @@ impl Interpreter
                         Op::NotEqual => Ok(Value::Boolean(true)),
                         _ => Err(RuntimeError {
                             message: format!("Invalid operation between String and {:?}", v2),
+                            line,
+                        }),
+                    },
+                    // Array concatenation cases
+                    (Value::Array(arr1), Value::Array(arr2)) => match op
+                    {
+                        Op::Add =>
+                        {
+                            let mut result = arr1.borrow().clone();
+                            result.extend(arr2.borrow().iter().cloned());
+                            Ok(Value::Array(Rc::new(RefCell::new(result))))
+                        }
+                        Op::Equal => Ok(Value::Boolean(*arr1.borrow() == *arr2.borrow())),
+                        Op::NotEqual => Ok(Value::Boolean(*arr1.borrow() != *arr2.borrow())),
+                        _ => Err(RuntimeError {
+                            message: "Invalid operation on arrays".to_string(),
+                            line,
+                        }),
+                    },
+                    (Value::Array(arr1), Value::I64Array(arr2)) => match op
+                    {
+                        Op::Add =>
+                        {
+                            let mut result = arr1.borrow().clone();
+                            for v in arr2.borrow().iter()
+                            {
+                                result.push(make_signed_int(*v as i128, IntKind::I64));
+                            }
+                            Ok(Value::Array(Rc::new(RefCell::new(result))))
+                        }
+                        Op::Equal => Ok(Value::Boolean(false)),
+                        Op::NotEqual => Ok(Value::Boolean(true)),
+                        _ => Err(RuntimeError {
+                            message: "Invalid operation on arrays".to_string(),
+                            line,
+                        }),
+                    },
+                    (Value::Array(arr1), Value::F64Array(arr2)) => match op
+                    {
+                        Op::Add =>
+                        {
+                            let mut result = arr1.borrow().clone();
+                            for v in arr2.borrow().iter()
+                            {
+                                result.push(make_float(*v, FloatKind::F64));
+                            }
+                            Ok(Value::Array(Rc::new(RefCell::new(result))))
+                        }
+                        Op::Equal => Ok(Value::Boolean(false)),
+                        Op::NotEqual => Ok(Value::Boolean(true)),
+                        _ => Err(RuntimeError {
+                            message: "Invalid operation on arrays".to_string(),
+                            line,
+                        }),
+                    },
+                    (Value::I64Array(arr1), Value::I64Array(arr2)) => match op
+                    {
+                        Op::Add =>
+                        {
+                            let mut result = arr1.borrow().clone();
+                            result.extend(arr2.borrow().iter().cloned());
+                            Ok(Value::I64Array(Rc::new(RefCell::new(result))))
+                        }
+                        Op::Equal => Ok(Value::Boolean(*arr1.borrow() == *arr2.borrow())),
+                        Op::NotEqual => Ok(Value::Boolean(*arr1.borrow() != *arr2.borrow())),
+                        _ => Err(RuntimeError {
+                            message: "Invalid operation on arrays".to_string(),
+                            line,
+                        }),
+                    },
+                    (Value::I64Array(arr1), Value::Array(arr2)) => match op
+                    {
+                        Op::Add =>
+                        {
+                            let mut result: Vec<Value> = arr1
+                                .borrow()
+                                .iter()
+                                .map(|v| make_signed_int(*v as i128, IntKind::I64))
+                                .collect();
+                            result.extend(arr2.borrow().iter().cloned());
+                            Ok(Value::Array(Rc::new(RefCell::new(result))))
+                        }
+                        Op::Equal => Ok(Value::Boolean(false)),
+                        Op::NotEqual => Ok(Value::Boolean(true)),
+                        _ => Err(RuntimeError {
+                            message: "Invalid operation on arrays".to_string(),
+                            line,
+                        }),
+                    },
+                    (Value::I64Array(arr1), Value::F64Array(arr2)) => match op
+                    {
+                        Op::Add =>
+                        {
+                            let mut result: Vec<f64> =
+                                arr1.borrow().iter().map(|v| *v as f64).collect();
+                            result.extend(arr2.borrow().iter().cloned());
+                            Ok(Value::F64Array(Rc::new(RefCell::new(result))))
+                        }
+                        Op::Equal => Ok(Value::Boolean(false)),
+                        Op::NotEqual => Ok(Value::Boolean(true)),
+                        _ => Err(RuntimeError {
+                            message: "Invalid operation on arrays".to_string(),
+                            line,
+                        }),
+                    },
+                    (Value::F64Array(arr1), Value::F64Array(arr2)) => match op
+                    {
+                        Op::Add =>
+                        {
+                            let mut result = arr1.borrow().clone();
+                            result.extend(arr2.borrow().iter().cloned());
+                            Ok(Value::F64Array(Rc::new(RefCell::new(result))))
+                        }
+                        Op::Equal => Ok(Value::Boolean(*arr1.borrow() == *arr2.borrow())),
+                        Op::NotEqual => Ok(Value::Boolean(*arr1.borrow() != *arr2.borrow())),
+                        _ => Err(RuntimeError {
+                            message: "Invalid operation on arrays".to_string(),
+                            line,
+                        }),
+                    },
+                    (Value::F64Array(arr1), Value::Array(arr2)) => match op
+                    {
+                        Op::Add =>
+                        {
+                            let mut result: Vec<Value> = arr1
+                                .borrow()
+                                .iter()
+                                .map(|v| make_float(*v, FloatKind::F64))
+                                .collect();
+                            result.extend(arr2.borrow().iter().cloned());
+                            Ok(Value::Array(Rc::new(RefCell::new(result))))
+                        }
+                        Op::Equal => Ok(Value::Boolean(false)),
+                        Op::NotEqual => Ok(Value::Boolean(true)),
+                        _ => Err(RuntimeError {
+                            message: "Invalid operation on arrays".to_string(),
+                            line,
+                        }),
+                    },
+                    (Value::F64Array(arr1), Value::I64Array(arr2)) => match op
+                    {
+                        Op::Add =>
+                        {
+                            let mut result = arr1.borrow().clone();
+                            for v in arr2.borrow().iter()
+                            {
+                                result.push(*v as f64);
+                            }
+                            Ok(Value::F64Array(Rc::new(RefCell::new(result))))
+                        }
+                        Op::Equal => Ok(Value::Boolean(false)),
+                        Op::NotEqual => Ok(Value::Boolean(true)),
+                        _ => Err(RuntimeError {
+                            message: "Invalid operation on arrays".to_string(),
                             line,
                         }),
                     },

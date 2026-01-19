@@ -101,22 +101,22 @@ fn native_simd_dot(args: &[Value]) -> Result<Value, String>
             {
                 return Err("simd.dot requires arrays of equal length".to_string());
             }
-            let (a_prefix, a_simd, a_suffix) = a_vec.as_simd::<SIMD_LANES>();
-            let (b_prefix, b_simd, b_suffix) = b_vec.as_simd::<SIMD_LANES>();
-
+            let len = a_vec.len();
+            let simd_len = len / SIMD_LANES * SIMD_LANES;
             let mut sum = Simd::<f64, SIMD_LANES>::splat(0.0);
-            for (va, vb) in a_simd.iter().zip(b_simd.iter())
+            let mut i = 0;
+            while i < simd_len
             {
-                sum += *va * *vb;
+                let va = Simd::<f64, SIMD_LANES>::from_slice(&a_vec[i..i + SIMD_LANES]);
+                let vb = Simd::<f64, SIMD_LANES>::from_slice(&b_vec[i..i + SIMD_LANES]);
+                sum += va * vb;
+                i += SIMD_LANES;
             }
             let mut result: f64 = sum.reduce_sum();
-            for (x, y) in a_prefix.iter().zip(b_prefix.iter())
+            while i < len
             {
-                result += x * y;
-            }
-            for (x, y) in a_suffix.iter().zip(b_suffix.iter())
-            {
-                result += x * y;
+                result += a_vec[i] * b_vec[i];
+                i += 1;
             }
             Ok(make_float(result, FloatKind::F64))
         }
@@ -128,22 +128,22 @@ fn native_simd_dot(args: &[Value]) -> Result<Value, String>
             {
                 return Err("simd.dot requires arrays of equal length".to_string());
             }
-            let (a_prefix, a_simd, a_suffix) = a_vec.as_simd::<SIMD_LANES>();
-            let (b_prefix, b_simd, b_suffix) = b_vec.as_simd::<SIMD_LANES>();
-
+            let len = a_vec.len();
+            let simd_len = len / SIMD_LANES * SIMD_LANES;
             let mut sum = Simd::<i64, SIMD_LANES>::splat(0);
-            for (va, vb) in a_simd.iter().zip(b_simd.iter())
+            let mut i = 0;
+            while i < simd_len
             {
-                sum += *va * *vb;
+                let va = Simd::<i64, SIMD_LANES>::from_slice(&a_vec[i..i + SIMD_LANES]);
+                let vb = Simd::<i64, SIMD_LANES>::from_slice(&b_vec[i..i + SIMD_LANES]);
+                sum += va * vb;
+                i += SIMD_LANES;
             }
             let mut result: i64 = sum.reduce_sum();
-            for (x, y) in a_prefix.iter().zip(b_prefix.iter())
+            while i < len
             {
-                result += x * y;
-            }
-            for (x, y) in a_suffix.iter().zip(b_suffix.iter())
-            {
-                result += x * y;
+                result += a_vec[i] * b_vec[i];
+                i += 1;
             }
             Ok(make_signed_int(result as i128, IntKind::I64))
         }

@@ -3,7 +3,7 @@ use crate::intern::SymbolId;
 use crate::wasm::WasmFunction;
 use memmap2::{Mmap, MmapMut};
 use rusqlite::Connection;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
@@ -119,6 +119,7 @@ pub struct Environment
     pub parent: Option<Rc<RefCell<Environment>>>,
     pub is_partial: bool, // If true, allow full recursive lookup (used for currying/params)
     pub version: u64,
+    pub file_public: FxHashSet<SymbolId>,
 }
 
 impl Environment
@@ -131,6 +132,7 @@ impl Environment
             parent,
             is_partial: false,
             version: 0,
+            file_public: FxHashSet::default(),
         }
     }
 
@@ -141,6 +143,7 @@ impl Environment
         self.parent = parent;
         self.is_partial = is_partial;
         self.version = 0;
+        self.file_public.clear();
     }
 
     pub fn get(&self, name: SymbolId) -> Option<Value>
@@ -181,7 +184,7 @@ impl Environment
             let v = &self.values[idx];
             match v
             {
-                Value::Function(_) | Value::Reference(_) =>
+                Value::Reference(_) =>
                 {
                     // Dereference if it's a reference
                     if let Value::Reference(r) = v
@@ -192,6 +195,10 @@ impl Environment
                 }
                 _ =>
                 {
+                    if self.file_public.contains(&name)
+                    {
+                        return Some(v.clone());
+                    }
                     if self.is_partial
                     {
                         return Some(v.clone());
@@ -221,6 +228,7 @@ impl Environment
         self.version = self.version.wrapping_add(1);
     }
 
+
     // Set variable in current scope. If it's a reference, update referee.
     pub fn set(&mut self, name: SymbolId, val: Value)
     {
@@ -238,6 +246,11 @@ impl Environment
             self.values[idx] = val;
         }
         self.version = self.version.wrapping_add(1);
+    }
+
+    pub fn mark_public(&mut self, name: SymbolId)
+    {
+        self.file_public.insert(name);
     }
 
     pub fn assign(&mut self, name: SymbolId, val: Value)

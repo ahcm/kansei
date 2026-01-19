@@ -71,6 +71,7 @@ pub enum Token
     Dot,
     Ampersand,
     Semicolon,
+    At,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -284,6 +285,11 @@ impl Lexer
                 {
                     self.position += 1;
                     Token::Semicolon
+                }
+                '@' =>
+                {
+                    self.position += 1;
+                    Token::At
                 }
                 _ =>
                 {

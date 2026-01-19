@@ -587,6 +587,7 @@ impl Parser
             Token::Use => self.parse_use(),
             Token::Import => self.parse_import(),
             Token::Load => self.parse_load(),
+            Token::At => self.parse_file_public(),
             Token::LeftBracket => self.parse_array(),
             Token::LeftBrace =>
             {
@@ -933,6 +934,22 @@ impl Parser
         }
 
         self.make_expr(ExprKind::Use(path), line)
+    }
+
+    fn parse_file_public(&mut self) -> Expr
+    {
+        let line = self.current_token.line;
+        self.eat(); // eat '@'
+        match &self.current_token.token
+        {
+            Token::Identifier(n) if n == "file" =>
+            {
+                self.eat();
+            }
+            _ => panic!("Expected 'file' after @ at line {}", self.current_token.line),
+        }
+        let expr = self.parse_assignment();
+        self.make_expr(ExprKind::FilePublic(Box::new(expr)), line)
     }
 
     fn parse_import(&mut self) -> Expr

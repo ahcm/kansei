@@ -134,6 +134,14 @@ fn native_value_from_sexpr(args: &[Value]) -> Result<Value, String>
     sexpr_to_value(&sexpr)
 }
 
+fn native_value_inspect(args: &[Value]) -> Result<Value, String>
+{
+    let arg = args
+        .get(0)
+        .ok_or_else(|| "value.inspect expects a value".to_string())?;
+    Ok(Value::String(intern::intern_owned(arg.inspect())))
+}
+
 pub fn build_kansei_module() -> Value
 {
     let mut ast_map = FxHashMap::default();
@@ -163,6 +171,10 @@ pub fn build_kansei_module() -> Value
     value_map.insert(
         intern::intern("from_sexpr"),
         Value::NativeFunction(native_value_from_sexpr),
+    );
+    value_map.insert(
+        intern::intern("inspect"),
+        Value::NativeFunction(native_value_inspect),
     );
 
     let mut root = FxHashMap::default();

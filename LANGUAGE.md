@@ -194,6 +194,7 @@ k> a = value::from_sexpr(a_s)
 
 - `std::kansei::value::to_sexpr(value)` -> S-Expr string
 - `std::kansei::value::from_sexpr(sexpr)` -> value
+- `std::kansei::value::inspect(value)` -> inspect string
 
 ### Structs
 ```ruby

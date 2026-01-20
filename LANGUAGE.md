@@ -144,6 +144,28 @@ simd.sum([1,2,3,4])  # -> 10
 
 The `::` operator accesses module members, similar to map dot access.
 
+### std::parallel
+`std::parallel` provides numeric-only, native-function parallel helpers backed by Rayon.
+These functions require a specialized numeric array and a native function. Regular Kansei
+functions and generic arrays are not supported.
+```ruby
+use std::parallel
+parallel = std::parallel
+
+fn add1(x) x + 1 end
+
+# Native function example (Kansei-defined functions are not supported here)
+use std::simd simd = std::simd
+
+# Assume native `simd.sum` is not used here; pass a native function instead.
+```
+
+Available functions:
+- `std::parallel::map(array, native_fn)` -> numeric array
+- `std::parallel::each(array, native_fn)` -> numeric array
+- `std::parallel::apply(array, native_fn)` -> original array
+- `std::parallel::loop(count, native_fn)` -> numeric array
+
 ### std::kansei
 
 Interpreter related modules.

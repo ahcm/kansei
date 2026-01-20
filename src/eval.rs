@@ -5,7 +5,8 @@ use crate::ast::{
 use crate::intern;
 use crate::intern::{SymbolId, symbol_name};
 use crate::kansei_std::{
-    build_file_module, build_io_module, build_kansei_module, build_lib_module, build_simd_module,
+    build_file_module, build_io_module, build_kansei_module, build_lib_module,
+    build_parallel_module, build_simd_module,
 };
 use crate::value::{
     BinaryOpCache, BinaryOpCacheKind, BoundMethod, Builtin, CallSiteCache, Environment,
@@ -1195,6 +1196,7 @@ fn build_std_module() -> Value
     std_map.insert(intern::intern("lib"), build_lib_module());
     std_map.insert(intern::intern("simd"), build_simd_module());
     std_map.insert(intern::intern("kansei"), build_kansei_module());
+    std_map.insert(intern::intern("parallel"), build_parallel_module());
     Value::Map(Rc::new(RefCell::new(MapValue::new(std_map))))
 }
 
@@ -11013,6 +11015,13 @@ impl Interpreter
                     map_mut
                         .data
                         .insert(intern::intern("kansei"), build_kansei_module());
+                    changed = true;
+                }
+                if !map_mut.data.contains_key(&intern::intern("parallel"))
+                {
+                    map_mut
+                        .data
+                        .insert(intern::intern("parallel"), build_parallel_module());
                     changed = true;
                 }
                 if changed

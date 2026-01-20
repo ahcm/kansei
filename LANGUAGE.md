@@ -461,9 +461,9 @@ value = json.read_json("{\"ok\":true}")
 
 Module search paths come from `KANSEI_MODULE_PATH` (colon-separated). If unset, Kansei searches in order:
 1) `<main-file-dir>/modules`
-2) `/usr/local/lib/kansai/modules`
-3) `/usr/lib/kansai/modules`
-4) `~/.local/lib/kansai/modules`
+2) `/usr/local/lib/kansei/modules`
+3) `/usr/lib/kansei/modules`
+4) `~/.local/lib/kansei/modules`
 
 Modules are cached and reloaded if the source file changes on disk.
 
@@ -685,9 +685,9 @@ Use `{{` and `}}` to include literal braces. Precision formatting uses `{expr:.N
 ## WASM Modules
 Use `load wasm::name` to load a WebAssembly module. Kansei searches `KANSEI_WASM_PATH` (colon-separated). If unset, it looks in:
 1) `<main-file-dir>/wasm`
-2) `/usr/local/lib/kansai/wasm`
-3) `/usr/lib/kansai/wasm`
-4) `~/.local/lib/kansai/wasm`
+2) `/usr/local/lib/kansei/wasm`
+3) `/usr/lib/kansei/wasm`
+4) `~/.local/lib/kansei/wasm`
 
 The module is exposed under the `wasm` namespace.
 

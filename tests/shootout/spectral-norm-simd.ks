@@ -69,8 +69,6 @@ fn main(n)
     eval_AtA_times_u_simd(n, v, u, A_rows, At_rows)
   end
 
-  simd = std::simd
-
   # Use SIMD for final dot products
   vBv = simd.dot(u, v)
   vv = simd.dot(v, v)

@@ -149,7 +149,7 @@ The `::` operator accesses module members, similar to map dot access.
 Interpreter related modules.
 
 ### std::kansei::ast
-`std::kansei` exposes AST and S-Expr helpers for tooling and metaprogramming.
+`std::kansei::ast` exposes AST and S-Expr helpers for tooling and metaprogramming.
 ```ruby
 use std::kansei
 ast = std::kansei::ast
@@ -167,6 +167,20 @@ Available functions:
 - `std::kansei::ast::from_sexpr(sexpr)` -> `Ast`
 - `std::kansei::ast::to_source(src_or_ast)` -> canonical source string
 - `std::kansei::ast::from_source(src)` -> `Ast`
+
+### std::kansei::value
+`std::kansei::value` exposes AST and S-Expr helpers for tooling and metaprogramming.
+```ruby
+use std::kansei value = std::kansei::value
+=> {"to_sexpr": <native function>", "from_sexpr": <native function>"}
+k> value::to_sexpr([1,2,3])
+=> "(i64array 1 2 3)"
+k> a_s = value::to_sexpr([1,2,3])
+=> "(i64array 1 2 3)"
+k> a = value::from_sexpr(a_s)
+=> [1, 2, 3]
+```
+
 - `std::kansei::value::to_sexpr(value)` -> S-Expr string
 - `std::kansei::value::from_sexpr(sexpr)` -> value
 

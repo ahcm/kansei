@@ -3,6 +3,7 @@ use crate::intern;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::sexpr::{expr_to_sexpr, parse_sexpr, sexpr_to_expr, sexpr_to_value, value_to_sexpr};
+use crate::source::expr_to_source;
 use crate::value::{MapValue, Value};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
@@ -46,6 +47,36 @@ fn native_ast_from_sexpr(args: &[Value]) -> Result<Value, String>
     Ok(Value::Ast(Rc::new(ast)))
 }
 
+fn native_ast_from_source(args: &[Value]) -> Result<Value, String>
+{
+    let arg = args
+        .get(0)
+        .ok_or_else(|| "ast.from_source expects a string".to_string())?;
+    let source = match arg
+    {
+        Value::String(s) => s.as_str(),
+        _ => return Err("ast.from_source expects a string".to_string()),
+    };
+    let ast = parse_ast(source)?;
+    Ok(Value::Ast(Rc::new(ast)))
+}
+
+fn native_ast_to_source(args: &[Value]) -> Result<Value, String>
+{
+    let arg = args.get(0).ok_or_else(|| "ast.to_source expects a value".to_string())?;
+    let source = match arg
+    {
+        Value::String(s) =>
+        {
+            let ast = parse_ast(s.as_str())?;
+            expr_to_source(&ast)
+        }
+        Value::Ast(ast) => expr_to_source(ast.as_ref()),
+        _ => return Err("ast.to_source expects a source string or Ast".to_string()),
+    };
+    Ok(Value::String(intern::intern_owned(source)))
+}
+
 fn native_value_to_sexpr(args: &[Value]) -> Result<Value, String>
 {
     let arg = args
@@ -76,6 +107,14 @@ pub fn build_kansei_module() -> Value
     ast_map.insert(
         intern::intern("from_sexpr"),
         Value::NativeFunction(native_ast_from_sexpr),
+    );
+    ast_map.insert(
+        intern::intern("from_source"),
+        Value::NativeFunction(native_ast_from_source),
+    );
+    ast_map.insert(
+        intern::intern("to_source"),
+        Value::NativeFunction(native_ast_to_source),
     );
 
     let mut value_map = FxHashMap::default();

@@ -7,6 +7,7 @@ mod intern;
 mod kansei_std;
 mod lexer;
 mod parser;
+mod source;
 mod sexpr;
 mod value;
 mod wasm;

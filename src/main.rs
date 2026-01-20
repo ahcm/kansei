@@ -50,6 +50,7 @@ fn main() -> rustyline::Result<()>
     let mut dump_bytecode = false;
     let mut bytecode_mode = eval::BytecodeMode::Simple;
     let mut script_path: Option<String> = None;
+    let mut evaluate_source: Option<String> = None;
     let mut script_args: Vec<String> = Vec::new();
 
     let mut idx = 1;
@@ -58,9 +59,25 @@ fn main() -> rustyline::Result<()>
         let mut handled = false;
         match args[idx].as_str()
         {
+            "-h" | "--help" =>
+            {
+                print_usage(&args[0]);
+                return Ok(());
+            }
             "--dump-ast" => dump_ast = true,
             "--dump-ast-sexpr" => dump_ast_sexpr = true,
             "--dump-bytecode" => dump_bytecode = true,
+            "-e" | "--evaluate" =>
+            {
+                if idx + 1 >= args.len()
+                {
+                    eprintln!("-e/--evaluate requires a value.");
+                    return Ok(());
+                }
+                idx += 1;
+                let src = args[idx].clone();
+                append_eval_source(&mut evaluate_source, src);
+            }
             "--bytecode" =>
             {
                 if idx + 1 >= args.len()
@@ -104,9 +121,32 @@ fn main() -> rustyline::Result<()>
                     };
                     handled = true;
                 }
+                if !handled
+                {
+                    if let Some(rest) = arg.strip_prefix("-e=")
+                    {
+                        append_eval_source(&mut evaluate_source, rest.to_string());
+                        handled = true;
+                    }
+                }
+                if !handled
+                {
+                    if let Some(rest) = arg.strip_prefix("--evaluate=")
+                    {
+                        append_eval_source(&mut evaluate_source, rest.to_string());
+                        handled = true;
+                    }
+                }
                 if !handled && script_path.is_none()
                 {
-                    script_path = Some(arg.to_string());
+                    if evaluate_source.is_none()
+                    {
+                        script_path = Some(arg.to_string());
+                    }
+                    else
+                    {
+                        script_args.push(arg.to_string());
+                    }
                 }
                 else if !handled
                 {
@@ -117,9 +157,16 @@ fn main() -> rustyline::Result<()>
         idx += 1;
     }
 
-    if script_path.is_none() && (dump_ast || dump_ast_sexpr || dump_bytecode)
+    if script_path.is_none()
+        && evaluate_source.is_none()
+        && (dump_ast || dump_ast_sexpr || dump_bytecode)
     {
-        eprintln!("Dump flags require a file path.");
+        eprintln!("Dump flags require a file path or -e/--evaluate.");
+        return Ok(());
+    }
+    if script_path.is_some() && evaluate_source.is_some()
+    {
+        eprintln!("Cannot use both -e/--evaluate and a script path.");
         return Ok(());
     }
 
@@ -176,6 +223,23 @@ fn main() -> rustyline::Result<()>
         interpreter.set_main_path(std::path::Path::new(&path));
         run_file(
             &path,
+            interpreter,
+            dump_ast,
+            dump_ast_sexpr,
+            dump_bytecode,
+            bytecode_mode,
+        );
+        Ok(())
+    }
+    else if let Some(source) = evaluate_source
+    {
+        if let Ok(dir) = env::current_dir()
+        {
+            interpreter.set_main_path(&dir);
+        }
+        run_source(
+            "<eval>",
+            source,
             interpreter,
             dump_ast,
             dump_ast_sexpr,
@@ -278,6 +342,110 @@ fn run_file(
             std::process::exit(1);
         }
     }
+}
+
+fn run_source(
+    label: &str,
+    source: String,
+    mut interpreter: eval::Interpreter,
+    dump_ast: bool,
+    dump_ast_sexpr: bool,
+    dump_bytecode: bool,
+    bytecode_mode: eval::BytecodeMode,
+)
+{
+    let parse_result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        let lexer = lexer::Lexer::new(&source);
+        let mut parser = parser::Parser::new(lexer);
+        parser.parse()
+    }));
+
+    match parse_result
+    {
+        Ok(ast) =>
+        {
+            let mut ast = ast;
+            eval::resolve_slots(&mut ast);
+            if dump_bytecode
+            {
+                println!("{}", eval::dump_bytecode(&ast, bytecode_mode));
+                return;
+            }
+            if dump_ast_sexpr
+            {
+                println!("{}", sexpr::expr_to_sexpr(&ast).to_string());
+                return;
+            }
+            if dump_ast
+            {
+                println!("{:#?}", ast);
+                return;
+            }
+            let eval_result =
+                panic::catch_unwind(panic::AssertUnwindSafe(|| interpreter.eval(&ast, &mut [])));
+
+            match eval_result
+            {
+                Ok(Ok(_)) =>
+                {}
+                Ok(Err(e)) =>
+                {
+                    eprintln!("Error at line {}: {}", e.line, e.message);
+                    std::process::exit(1);
+                }
+                Err(_) =>
+                {
+                    eprintln!("Unexpected Runtime Panic");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Err(e) =>
+        {
+            if let Some(s) = e.downcast_ref::<&str>()
+            {
+                eprintln!("Syntax Error in {}: {}", label, s);
+            }
+            else if let Some(s) = e.downcast_ref::<String>()
+            {
+                eprintln!("Syntax Error in {}: {}", label, s);
+            }
+            else
+            {
+                eprintln!("Syntax Error in {}", label);
+            }
+            std::process::exit(1);
+        }
+    }
+}
+
+fn append_eval_source(target: &mut Option<String>, src: String)
+{
+    match target
+    {
+        Some(existing) =>
+        {
+            existing.push('\n');
+            existing.push_str(&src);
+        }
+        None =>
+        {
+            *target = Some(src);
+        }
+    }
+}
+
+fn print_usage(bin: &str)
+{
+    println!(
+        "Usage: {bin} [options] [script] [args...]
+  -h, --help            Show this help
+  -e, --evaluate <src>  Evaluate a one-liner
+      --dump-ast        Dump AST
+      --dump-ast-sexpr  Dump AST as S-Expr
+      --dump-bytecode   Dump bytecode
+      --bytecode <mode> Bytecode mode: off|simple|advanced"
+    );
 }
 
 fn run_repl(mut interpreter: eval::Interpreter) -> rustyline::Result<()>

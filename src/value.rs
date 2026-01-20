@@ -819,7 +819,9 @@ pub enum Value
     String(Rc<String>),
     Boolean(bool),
     Array(Rc<RefCell<Vec<Value>>>),
+    F32Array(Rc<RefCell<Vec<f32>>>),
     F64Array(Rc<RefCell<Vec<f64>>>),
+    I32Array(Rc<RefCell<Vec<i32>>>),
     I64Array(Rc<RefCell<Vec<i64>>>),
     Bytes(Rc<Vec<u8>>),
     ByteBuf(Rc<RefCell<Vec<u8>>>),
@@ -908,7 +910,9 @@ impl PartialEq for Value
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Boolean(a), Value::Boolean(b)) => a == b,
             (Value::Array(a), Value::Array(b)) => a == b, // RefCell PartialEq compares inner values
+            (Value::F32Array(a), Value::F32Array(b)) => a == b,
             (Value::F64Array(a), Value::F64Array(b)) => a == b,
+            (Value::I32Array(a), Value::I32Array(b)) => a == b,
             (Value::I64Array(a), Value::I64Array(b)) => a == b,
             (Value::Bytes(a), Value::Bytes(b)) => a == b,
             (Value::ByteBuf(a), Value::ByteBuf(b)) =>
@@ -996,7 +1000,9 @@ impl fmt::Debug for Value
             Value::String(s) => write!(f, "String({:?})", s),
             Value::Boolean(b) => write!(f, "Boolean({})", b),
             Value::Array(a) => write!(f, "Array({:?})", a.borrow()),
+            Value::F32Array(a) => write!(f, "F32Array({:?})", a.borrow()),
             Value::F64Array(a) => write!(f, "F64Array({:?})", a.borrow()),
+            Value::I32Array(a) => write!(f, "I32Array({:?})", a.borrow()),
             Value::I64Array(a) => write!(f, "I64Array({:?})", a.borrow()),
             Value::Bytes(b) => write!(f, "Bytes({} bytes)", b.len()),
             Value::ByteBuf(b) => write!(f, "ByteBuf({} bytes)", b.borrow().len()),
@@ -1041,7 +1047,17 @@ impl Value
                 let elems: Vec<String> = arr.borrow().iter().map(|v| v.inspect()).collect();
                 format!("[{}]", elems.join(", "))
             }
+            Value::F32Array(arr) =>
+            {
+                let elems: Vec<String> = arr.borrow().iter().map(|v| v.to_string()).collect();
+                format!("[{}]", elems.join(", "))
+            }
             Value::F64Array(arr) =>
+            {
+                let elems: Vec<String> = arr.borrow().iter().map(|v| v.to_string()).collect();
+                format!("[{}]", elems.join(", "))
+            }
+            Value::I32Array(arr) =>
             {
                 let elems: Vec<String> = arr.borrow().iter().map(|v| v.to_string()).collect();
                 format!("[{}]", elems.join(", "))
@@ -1108,7 +1124,17 @@ impl fmt::Display for Value
                 let elems: Vec<String> = arr.borrow().iter().map(|v| v.inspect()).collect();
                 write!(f, "[{}]", elems.join(", "))
             }
+            Value::F32Array(arr) =>
+            {
+                let elems: Vec<String> = arr.borrow().iter().map(|v| v.to_string()).collect();
+                write!(f, "[{}]", elems.join(", "))
+            }
             Value::F64Array(arr) =>
+            {
+                let elems: Vec<String> = arr.borrow().iter().map(|v| v.to_string()).collect();
+                write!(f, "[{}]", elems.join(", "))
+            }
+            Value::I32Array(arr) =>
             {
                 let elems: Vec<String> = arr.borrow().iter().map(|v| v.to_string()).collect();
                 write!(f, "[{}]", elems.join(", "))

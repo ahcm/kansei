@@ -21,22 +21,22 @@ fn make_signed_int(value: i128, kind: IntKind) -> Value
 
 fn native_simd_add(args: &[Value]) -> Result<Value, String>
 {
-    simd_binary_op(args, |a, b| a + b, |a, b| a + b)
+    simd_binary_op(args, |a, b| a + b, |a, b| a + b, |a, b| a + b, |a, b| a + b)
 }
 
 fn native_simd_sub(args: &[Value]) -> Result<Value, String>
 {
-    simd_binary_op(args, |a, b| a - b, |a, b| a - b)
+    simd_binary_op(args, |a, b| a - b, |a, b| a - b, |a, b| a - b, |a, b| a - b)
 }
 
 fn native_simd_mul(args: &[Value]) -> Result<Value, String>
 {
-    simd_binary_op(args, |a, b| a * b, |a, b| a * b)
+    simd_binary_op(args, |a, b| a * b, |a, b| a * b, |a, b| a * b, |a, b| a * b)
 }
 
 fn native_simd_div(args: &[Value]) -> Result<Value, String>
 {
-    simd_binary_op(args, |a, b| a / b, |a, b| a / b)
+    simd_binary_op(args, |a, b| a / b, |a, b| a / b, |a, b| a / b, |a, b| a / b)
 }
 
 fn native_simd_sum(args: &[Value]) -> Result<Value, String>
@@ -81,7 +81,41 @@ fn native_simd_sum(args: &[Value]) -> Result<Value, String>
             }
             Ok(make_signed_int(result as i128, IntKind::I64))
         }
-        _ => Err("simd.sum requires F64Array or I64Array argument".to_string()),
+        Value::F32Array(arr) =>
+        {
+            let vec = arr.borrow();
+            let (prefix, simd, suffix) = vec.as_simd::<SIMD_LANES>();
+
+            let mut sum = Simd::<f32, SIMD_LANES>::splat(0.0);
+            for v in simd
+            {
+                sum += *v;
+            }
+            let mut result: f32 = sum.reduce_sum();
+            for x in prefix.iter().chain(suffix.iter())
+            {
+                result += x;
+            }
+            Ok(make_float(result as f64, FloatKind::F32))
+        }
+        Value::I32Array(arr) =>
+        {
+            let vec = arr.borrow();
+            let (prefix, simd, suffix) = vec.as_simd::<SIMD_LANES>();
+
+            let mut sum = Simd::<i32, SIMD_LANES>::splat(0);
+            for v in simd
+            {
+                sum += *v;
+            }
+            let mut result: i32 = sum.reduce_sum();
+            for x in prefix.iter().chain(suffix.iter())
+            {
+                result += x;
+            }
+            Ok(make_signed_int(result as i128, IntKind::I32))
+        }
+        _ => Err("simd.sum requires F64Array, F32Array, I64Array, or I32Array argument".to_string()),
     }
 }
 
@@ -147,14 +181,76 @@ fn native_simd_dot(args: &[Value]) -> Result<Value, String>
             }
             Ok(make_signed_int(result as i128, IntKind::I64))
         }
-        _ => Err("simd.dot requires F64Array or I64Array arguments".to_string()),
+        (Value::F32Array(a), Value::F32Array(b)) =>
+        {
+            let a_vec = a.borrow();
+            let b_vec = b.borrow();
+            if a_vec.len() != b_vec.len()
+            {
+                return Err("simd.dot requires arrays of equal length".to_string());
+            }
+            let len = a_vec.len();
+            let simd_len = len / SIMD_LANES * SIMD_LANES;
+            let mut sum = Simd::<f32, SIMD_LANES>::splat(0.0);
+            let mut i = 0;
+            while i < simd_len
+            {
+                let va = Simd::<f32, SIMD_LANES>::from_slice(&a_vec[i..i + SIMD_LANES]);
+                let vb = Simd::<f32, SIMD_LANES>::from_slice(&b_vec[i..i + SIMD_LANES]);
+                sum += va * vb;
+                i += SIMD_LANES;
+            }
+            let mut result: f32 = sum.reduce_sum();
+            while i < len
+            {
+                result += a_vec[i] * b_vec[i];
+                i += 1;
+            }
+            Ok(make_float(result as f64, FloatKind::F32))
+        }
+        (Value::I32Array(a), Value::I32Array(b)) =>
+        {
+            let a_vec = a.borrow();
+            let b_vec = b.borrow();
+            if a_vec.len() != b_vec.len()
+            {
+                return Err("simd.dot requires arrays of equal length".to_string());
+            }
+            let len = a_vec.len();
+            let simd_len = len / SIMD_LANES * SIMD_LANES;
+            let mut sum = Simd::<i32, SIMD_LANES>::splat(0);
+            let mut i = 0;
+            while i < simd_len
+            {
+                let va = Simd::<i32, SIMD_LANES>::from_slice(&a_vec[i..i + SIMD_LANES]);
+                let vb = Simd::<i32, SIMD_LANES>::from_slice(&b_vec[i..i + SIMD_LANES]);
+                sum += va * vb;
+                i += SIMD_LANES;
+            }
+            let mut result: i32 = sum.reduce_sum();
+            while i < len
+            {
+                result += a_vec[i] * b_vec[i];
+                i += 1;
+            }
+            Ok(make_signed_int(result as i128, IntKind::I32))
+        }
+        _ => Err("simd.dot requires matching F64Array, F32Array, I64Array, or I32Array arguments".to_string()),
     }
 }
 
-fn simd_binary_op<F64Op, I64Op>(args: &[Value], f64_op: F64Op, i64_op: I64Op) -> Result<Value, String>
+fn simd_binary_op<F64Op, I64Op, F32Op, I32Op>(
+    args: &[Value],
+    f64_op: F64Op,
+    i64_op: I64Op,
+    f32_op: F32Op,
+    i32_op: I32Op,
+) -> Result<Value, String>
 where
     F64Op: Fn(Simd<f64, SIMD_LANES>, Simd<f64, SIMD_LANES>) -> Simd<f64, SIMD_LANES>,
     I64Op: Fn(Simd<i64, SIMD_LANES>, Simd<i64, SIMD_LANES>) -> Simd<i64, SIMD_LANES>,
+    F32Op: Fn(Simd<f32, SIMD_LANES>, Simd<f32, SIMD_LANES>) -> Simd<f32, SIMD_LANES>,
+    I32Op: Fn(Simd<i32, SIMD_LANES>, Simd<i32, SIMD_LANES>) -> Simd<i32, SIMD_LANES>,
 {
     if args.len() != 2
     {
@@ -222,7 +318,64 @@ where
             }
             Ok(Value::I64Array(Rc::new(RefCell::new(result))))
         }
-        _ => Err("SIMD operations require F64Array or I64Array arguments".to_string()),
+        (Value::F32Array(a), Value::F32Array(b)) =>
+        {
+            let a_vec = a.borrow();
+            let b_vec = b.borrow();
+            if a_vec.len() != b_vec.len()
+            {
+                return Err("SIMD operations require arrays of equal length".to_string());
+            }
+            let mut result = Vec::with_capacity(a_vec.len());
+            let (a_prefix, a_simd, a_suffix) = a_vec.as_simd::<SIMD_LANES>();
+            let (b_prefix, b_simd, b_suffix) = b_vec.as_simd::<SIMD_LANES>();
+
+            for (x, y) in a_prefix.iter().zip(b_prefix.iter())
+            {
+                result.push(f32_op(Simd::splat(*x), Simd::splat(*y))[0]);
+            }
+            for (va, vb) in a_simd.iter().zip(b_simd.iter())
+            {
+                let r = f32_op(*va, *vb);
+                result.extend_from_slice(r.as_array());
+            }
+            for (x, y) in a_suffix.iter().zip(b_suffix.iter())
+            {
+                result.push(f32_op(Simd::splat(*x), Simd::splat(*y))[0]);
+            }
+            Ok(Value::F32Array(Rc::new(RefCell::new(result))))
+        }
+        (Value::I32Array(a), Value::I32Array(b)) =>
+        {
+            let a_vec = a.borrow();
+            let b_vec = b.borrow();
+            if a_vec.len() != b_vec.len()
+            {
+                return Err("SIMD operations require arrays of equal length".to_string());
+            }
+            let mut result = Vec::with_capacity(a_vec.len());
+            let (a_prefix, a_simd, a_suffix) = a_vec.as_simd::<SIMD_LANES>();
+            let (b_prefix, b_simd, b_suffix) = b_vec.as_simd::<SIMD_LANES>();
+
+            for (x, y) in a_prefix.iter().zip(b_prefix.iter())
+            {
+                result.push(i32_op(Simd::splat(*x), Simd::splat(*y))[0]);
+            }
+            for (va, vb) in a_simd.iter().zip(b_simd.iter())
+            {
+                let r = i32_op(*va, *vb);
+                result.extend_from_slice(r.as_array());
+            }
+            for (x, y) in a_suffix.iter().zip(b_suffix.iter())
+            {
+                result.push(i32_op(Simd::splat(*x), Simd::splat(*y))[0]);
+            }
+            Ok(Value::I32Array(Rc::new(RefCell::new(result))))
+        }
+        _ => Err(
+            "SIMD operations require matching F64Array, F32Array, I64Array, or I32Array arguments"
+                .to_string(),
+        ),
     }
 }
 

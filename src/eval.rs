@@ -79,7 +79,10 @@ pub type EvalResult = Result<Value, RuntimeError>;
 enum BlockCollectionTarget
 {
     Array(Rc<RefCell<Vec<Value>>>),
+    F32Array(Rc<RefCell<Vec<f32>>>),
     F64Array(Rc<RefCell<Vec<f64>>>),
+    I32Array(Rc<RefCell<Vec<i32>>>),
+    I64Array(Rc<RefCell<Vec<i64>>>),
     Map(Rc<RefCell<MapValue>>),
 }
 
@@ -230,7 +233,9 @@ enum ResolvedType
     ByteBuf,
     Array,
     Map,
+    F32Array,
     F64Array,
+    I32Array,
     I64Array,
     Struct(Rc<StructType>),
     Any,
@@ -251,7 +256,9 @@ impl PartialEq for ResolvedType
             (ResolvedType::ByteBuf, ResolvedType::ByteBuf) => true,
             (ResolvedType::Array, ResolvedType::Array) => true,
             (ResolvedType::Map, ResolvedType::Map) => true,
+            (ResolvedType::F32Array, ResolvedType::F32Array) => true,
             (ResolvedType::F64Array, ResolvedType::F64Array) => true,
+            (ResolvedType::I32Array, ResolvedType::I32Array) => true,
             (ResolvedType::I64Array, ResolvedType::I64Array) => true,
             (ResolvedType::Struct(a), ResolvedType::Struct(b)) => Rc::ptr_eq(a, b),
             (ResolvedType::Any, ResolvedType::Any) => true,
@@ -319,7 +326,9 @@ fn resolve_type_ref(
             "ByteBuf" => Some(ResolvedType::ByteBuf),
             "Array" => Some(ResolvedType::Array),
             "Map" => Some(ResolvedType::Map),
+            "F32Array" => Some(ResolvedType::F32Array),
             "F64Array" => Some(ResolvedType::F64Array),
+            "I32Array" => Some(ResolvedType::I32Array),
             "I64Array" => Some(ResolvedType::I64Array),
             "Any" => Some(ResolvedType::Any),
             _ => None,
@@ -382,7 +391,9 @@ fn resolved_type_name(resolved: &ResolvedType) -> String
         ResolvedType::ByteBuf => "ByteBuf".to_string(),
         ResolvedType::Array => "Array".to_string(),
         ResolvedType::Map => "Map".to_string(),
+        ResolvedType::F32Array => "F32Array".to_string(),
         ResolvedType::F64Array => "F64Array".to_string(),
+        ResolvedType::I32Array => "I32Array".to_string(),
         ResolvedType::I64Array => "I64Array".to_string(),
         ResolvedType::Struct(ty) => ty.name.as_str().to_string(),
         ResolvedType::Any => "Any".to_string(),
@@ -494,6 +505,20 @@ fn coerce_value_to_type(
                 })
             }
         }
+        ResolvedType::F32Array =>
+        {
+            if matches!(value, Value::F32Array(_))
+            {
+                Ok(value)
+            }
+            else
+            {
+                Err(RuntimeError {
+                    message: format!("{label} expects F32Array"),
+                    line,
+                })
+            }
+        }
         ResolvedType::F64Array =>
         {
             if matches!(value, Value::F64Array(_))
@@ -504,6 +529,20 @@ fn coerce_value_to_type(
             {
                 Err(RuntimeError {
                     message: format!("{label} expects F64Array"),
+                    line,
+                })
+            }
+        }
+        ResolvedType::I32Array =>
+        {
+            if matches!(value, Value::I32Array(_))
+            {
+                Ok(value)
+            }
+            else
+            {
+                Err(RuntimeError {
+                    message: format!("{label} expects I32Array"),
                     line,
                 })
             }
@@ -1171,10 +1210,20 @@ fn clone_value(value: &Value) -> Value
             let vals = arr.borrow().clone();
             Value::Array(Rc::new(RefCell::new(vals)))
         }
+        Value::F32Array(arr) =>
+        {
+            let vals = arr.borrow().clone();
+            Value::F32Array(Rc::new(RefCell::new(vals)))
+        }
         Value::F64Array(arr) =>
         {
             let vals = arr.borrow().clone();
             Value::F64Array(Rc::new(RefCell::new(vals)))
+        }
+        Value::I32Array(arr) =>
+        {
+            let vals = arr.borrow().clone();
+            Value::I32Array(Rc::new(RefCell::new(vals)))
         }
         Value::I64Array(arr) =>
         {
@@ -2440,31 +2489,77 @@ fn array_expr_is_f64(expr: &Expr) -> Option<bool>
     {
         ExprKind::Array(elements) =>
         {
-            let mut all_f64 = true;
+            if elements.is_empty()
+            {
+                return Some(false);
+            }
+            let mut all_numeric = true;
+            let mut all_f32 = true;
+            let mut all_i32 = true;
+            let mut any_float = false;
+            let mut any_int = false;
             for e in elements
             {
                 match &e.kind
                 {
-                    ExprKind::Float { .. }
-                    | ExprKind::Integer { .. }
-                    | ExprKind::Unsigned { .. } =>
-                    {}
+                    ExprKind::Float { kind, .. } =>
+                    {
+                        any_float = true;
+                        if *kind != FloatKind::F32
+                        {
+                            all_f32 = false;
+                        }
+                    }
+                    ExprKind::Integer { kind, .. } =>
+                    {
+                        any_int = true;
+                        if *kind != IntKind::I32
+                        {
+                            all_i32 = false;
+                        }
+                    }
+                    ExprKind::Unsigned { kind, .. } =>
+                    {
+                        any_int = true;
+                        if *kind != IntKind::U32
+                        {
+                            all_i32 = false;
+                        }
+                    }
                     _ =>
                     {
-                        all_f64 = false;
+                        all_numeric = false;
                         break;
                     }
                 }
             }
-            Some(all_f64)
+            if !all_numeric
+            {
+                return None;
+            }
+            if any_float
+            {
+                if any_int
+                {
+                    return Some(true);
+                }
+                return if all_f32 { None } else { Some(true) };
+            }
+            if all_i32
+            {
+                return None;
+            }
+            None
         }
         ExprKind::ArrayGenerator { generator, .. } => match &generator.kind
         {
-            ExprKind::Float { .. } | ExprKind::Integer { .. } | ExprKind::Unsigned { .. } =>
-            {
-                Some(true)
-            }
-            _ => Some(false),
+            ExprKind::Float {
+                kind: FloatKind::F64,
+                ..
+            } => Some(true),
+            ExprKind::Float { .. } => None,
+            ExprKind::Integer { .. } | ExprKind::Unsigned { .. } => None,
+            _ => None,
         },
         _ => None,
     }
@@ -5479,7 +5574,7 @@ fn resolve_method_value(
                 eval_map_index_cached(&map_ref, map_ptr, name, map_cache)
             }
         }
-        Value::Array(_) | Value::F64Array(_) | Value::I64Array(_) =>
+        Value::Array(_) | Value::F32Array(_) | Value::F64Array(_) | Value::I32Array(_) | Value::I64Array(_) =>
         {
             return Err(err_index_requires_int());
         }
@@ -5558,6 +5653,37 @@ fn eval_index_cached_value(
                 return Err(err_index_requires_int());
             }
         }
+        Value::F32Array(arr) =>
+        {
+            if let Some(i) = int_value_as_usize(&index_val)
+            {
+                let arr_ptr = Rc::as_ptr(&arr) as usize;
+                let mut cache_mut = cache.borrow_mut();
+                if cache_mut.array_ptr == Some(arr_ptr) && cache_mut.index_usize == Some(i)
+                {
+                    cache_mut.hits += 1;
+                }
+                else
+                {
+                    cache_mut.array_ptr = Some(arr_ptr);
+                    cache_mut.index_usize = Some(i);
+                    cache_mut.misses += 1;
+                }
+                let vec = arr.borrow();
+                if i < vec.len()
+                {
+                    make_float(vec[i] as f64, FloatKind::F32)
+                }
+                else
+                {
+                    Value::Nil
+                }
+            }
+            else
+            {
+                return Err(err_index_requires_int());
+            }
+        }
         Value::I64Array(arr) =>
         {
             if let Some(i) = int_value_as_usize(&index_val)
@@ -5578,6 +5704,37 @@ fn eval_index_cached_value(
                 if i < vec.len()
                 {
                     make_signed_int(vec[i] as i128, IntKind::I64)
+                }
+                else
+                {
+                    Value::Nil
+                }
+            }
+            else
+            {
+                return Err(err_index_requires_int());
+            }
+        }
+        Value::I32Array(arr) =>
+        {
+            if let Some(i) = int_value_as_usize(&index_val)
+            {
+                let arr_ptr = Rc::as_ptr(&arr) as usize;
+                let mut cache_mut = cache.borrow_mut();
+                if cache_mut.array_ptr == Some(arr_ptr) && cache_mut.index_usize == Some(i)
+                {
+                    cache_mut.hits += 1;
+                }
+                else
+                {
+                    cache_mut.array_ptr = Some(arr_ptr);
+                    cache_mut.index_usize = Some(i);
+                    cache_mut.misses += 1;
+                }
+                let vec = arr.borrow();
+                if i < vec.len()
+                {
+                    make_signed_int(vec[i] as i128, IntKind::I32)
                 }
                 else
                 {
@@ -5905,6 +6062,45 @@ fn eval_index_assign_value(
                 return Err(err_index_requires_int());
             }
         }
+        Value::F32Array(arr) =>
+        {
+            if let Some(i) = int_value_as_usize(&index_val)
+            {
+                let mut vec = arr.borrow_mut();
+                if i < vec.len()
+                {
+                    match &value
+                    {
+                        Value::Float { value, .. } => vec[i] = *value as f32,
+                        v =>
+                        {
+                            if let Some(num) = int_value_as_f64(v)
+                            {
+                                vec[i] = num as f32;
+                            }
+                            else
+                            {
+                                return Err(RuntimeError {
+                                    message: "F32Array assignment requires a number".to_string(),
+                                    line: 0,
+                                });
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    return Err(RuntimeError {
+                        message: "Array index out of bounds".to_string(),
+                        line: 0,
+                    });
+                }
+            }
+            else
+            {
+                return Err(err_index_requires_int());
+            }
+        }
         Value::I64Array(arr) =>
         {
             if let Some(i) = int_value_as_usize(&index_val)
@@ -5920,6 +6116,39 @@ fn eval_index_assign_value(
                         {
                             return Err(RuntimeError {
                                 message: "I64Array assignment requires an integer".to_string(),
+                                line: 0,
+                            });
+                        }
+                    }
+                }
+                else
+                {
+                    return Err(RuntimeError {
+                        message: "Array index out of bounds".to_string(),
+                        line: 0,
+                    });
+                }
+            }
+            else
+            {
+                return Err(err_index_requires_int());
+            }
+        }
+        Value::I32Array(arr) =>
+        {
+            if let Some(i) = int_value_as_usize(&index_val)
+            {
+                let mut vec = arr.borrow_mut();
+                if i < vec.len()
+                {
+                    match &value
+                    {
+                        Value::Integer { value, .. } => vec[i] = *value as i32,
+                        Value::Unsigned { value, .. } => vec[i] = *value as i32,
+                        _ =>
+                        {
+                            return Err(RuntimeError {
+                                message: "I32Array assignment requires an integer".to_string(),
                                 line: 0,
                             });
                         }
@@ -6482,7 +6711,10 @@ fn eval_map_index_cached_value(
                 map.borrow().data.get(&key).cloned().unwrap_or(Value::Nil)
             }
         }
-        Value::Array(_) | Value::F64Array(_) => return Err(err_index_requires_int()),
+        Value::Array(_) | Value::F32Array(_) | Value::F64Array(_) | Value::I32Array(_) | Value::I64Array(_) =>
+        {
+            return Err(err_index_requires_int());
+        }
         _ => return Err(err_index_unsupported()),
     };
     Ok(result)
@@ -6603,7 +6835,11 @@ fn execute_reg_instructions(
                                 map.borrow().data.get(&key).cloned().unwrap_or(Value::Nil)
                             }
                         }
-                        Value::Array(_) | Value::F64Array(_) =>
+                        Value::Array(_)
+                        | Value::F32Array(_)
+                        | Value::F64Array(_)
+                        | Value::I32Array(_)
+                        | Value::I64Array(_) =>
                         {
                             return Err(err_index_requires_int());
                         }
@@ -6807,7 +7043,9 @@ fn execute_reg_instructions(
                     {
                         Value::String(s) => default_int(s.len() as i128),
                         Value::Array(arr) => default_int(arr.borrow().len() as i128),
+                        Value::F32Array(arr) => default_int(arr.borrow().len() as i128),
                         Value::F64Array(arr) => default_int(arr.borrow().len() as i128),
+                        Value::I32Array(arr) => default_int(arr.borrow().len() as i128),
                         Value::I64Array(arr) => default_int(arr.borrow().len() as i128),
                         Value::Bytes(bytes) => default_int(bytes.len() as i128),
                         Value::ByteBuf(buf) => default_int(buf.borrow().len() as i128),
@@ -7082,9 +7320,21 @@ fn execute_instructions(
             idx: usize,
             len: usize,
         },
+        F32Array
+        {
+            arr: Rc<RefCell<Vec<f32>>>,
+            idx: usize,
+            len: usize,
+        },
         I64Array
         {
             arr: Rc<RefCell<Vec<i64>>>,
+            idx: usize,
+            len: usize,
+        },
+        I32Array
+        {
+            arr: Rc<RefCell<Vec<i32>>>,
             idx: usize,
             len: usize,
         },
@@ -7195,6 +7445,20 @@ fn execute_instructions(
                 *idx += 1;
                 val
             }
+            ForEachIter::F32Array { arr, idx, len } =>
+            {
+                if *idx >= *len
+                {
+                    return None;
+                }
+                let val = arr
+                    .borrow()
+                    .get(*idx)
+                    .cloned()
+                    .map(|v| make_float(v as f64, FloatKind::F32));
+                *idx += 1;
+                val
+            }
             ForEachIter::I64Array { arr, idx, len } =>
             {
                 if *idx >= *len
@@ -7206,6 +7470,20 @@ fn execute_instructions(
                     .get(*idx)
                     .cloned()
                     .map(|v| make_signed_int(v as i128, IntKind::I64));
+                *idx += 1;
+                val
+            }
+            ForEachIter::I32Array { arr, idx, len } =>
+            {
+                if *idx >= *len
+                {
+                    return None;
+                }
+                let val = arr
+                    .borrow()
+                    .get(*idx)
+                    .cloned()
+                    .map(|v| make_signed_int(v as i128, IntKind::I32));
                 *idx += 1;
                 val
             }
@@ -7982,7 +8260,9 @@ fn execute_instructions(
                     {
                         Value::String(s) => default_int(s.len() as i128),
                         Value::Array(arr) => default_int(arr.borrow().len() as i128),
+                        Value::F32Array(arr) => default_int(arr.borrow().len() as i128),
                         Value::F64Array(arr) => default_int(arr.borrow().len() as i128),
+                        Value::I32Array(arr) => default_int(arr.borrow().len() as i128),
                         Value::I64Array(arr) => default_int(arr.borrow().len() as i128),
                         Value::Bytes(bytes) => default_int(bytes.len() as i128),
                         Value::ByteBuf(buf) => default_int(buf.borrow().len() as i128),
@@ -8240,10 +8520,20 @@ fn execute_instructions(
                             let len = arr.borrow().len();
                             ForEachIter::Array { arr, idx: 0, len }
                         }
+                        Value::F32Array(arr) =>
+                        {
+                            let len = arr.borrow().len();
+                            ForEachIter::F32Array { arr, idx: 0, len }
+                        }
                         Value::F64Array(arr) =>
                         {
                             let len = arr.borrow().len();
                             ForEachIter::F64Array { arr, idx: 0, len }
+                        }
+                        Value::I32Array(arr) =>
+                        {
+                            let len = arr.borrow().len();
+                            ForEachIter::I32Array { arr, idx: 0, len }
                         }
                         Value::I64Array(arr) =>
                         {
@@ -8639,50 +8929,129 @@ fn execute_instructions(
                         });
                     }
                     let mut elems = Vec::with_capacity(count);
-                    let mut f64_vals: Vec<f64> = Vec::new();
-                    let mut all_f64 = true;
                     for _ in 0..count
                     {
-                        let v = frame.stack.pop().unwrap();
+                        elems.push(frame.stack.pop().unwrap());
+                    }
+                    elems.reverse();
+                    if elems.is_empty()
+                    {
+                        frame
+                            .stack
+                            .push(Value::Array(Rc::new(RefCell::new(Vec::new()))));
+                        continue;
+                    }
+                    let mut i32_vals: Vec<i32> = Vec::new();
+                    let mut i64_vals: Vec<i64> = Vec::new();
+                    let mut f32_vals: Vec<f32> = Vec::new();
+                    let mut f64_vals: Vec<f64> = Vec::new();
+                    let mut all_i32 = true;
+                    let mut all_i64 = true;
+                    let mut all_f32 = true;
+                    let mut all_f64 = true;
+                    for v in &elems
+                    {
+                        if all_i32
+                        {
+                            match v
+                            {
+                                Value::Integer {
+                                    value,
+                                    kind: IntKind::I32,
+                                } => i32_vals.push(*value as i32),
+                                Value::Unsigned {
+                                    value,
+                                    kind: IntKind::U32,
+                                } => i32_vals.push(*value as i32),
+                                _ => all_i32 = false,
+                            }
+                        }
+                        if all_f32
+                        {
+                            match v
+                            {
+                                Value::Float {
+                                    value,
+                                    kind: FloatKind::F32,
+                                } => f32_vals.push(*value as f32),
+                                _ => all_f32 = false,
+                            }
+                        }
+                        if all_i64
+                        {
+                            match v
+                            {
+                                Value::Integer { value, .. } =>
+                                {
+                                    i64_vals.push(*value as i64);
+                                    if all_f64
+                                    {
+                                        f64_vals.push(*value as f64);
+                                    }
+                                    continue;
+                                }
+                                Value::Unsigned { value, .. } =>
+                                {
+                                    i64_vals.push(*value as i64);
+                                    if all_f64
+                                    {
+                                        f64_vals.push(*value as f64);
+                                    }
+                                    continue;
+                                }
+                                _ =>
+                                {
+                                    all_i64 = false;
+                                }
+                            }
+                        }
                         if all_f64
                         {
                             match v
                             {
-                                Value::Float { value, .. } => f64_vals.push(value),
-                                v =>
+                                Value::Float { value, .. } =>
                                 {
-                                    if let Some(num) = int_value_as_f64(&v)
+                                    f64_vals.push(*value);
+                                    continue;
+                                }
+                                _ =>
+                                {
+                                    if let Some(num) = int_value_as_f64(v)
                                     {
                                         f64_vals.push(num);
+                                        continue;
                                     }
-                                    else
-                                    {
-                                        all_f64 = false;
-                                        elems.extend(
-                                            f64_vals
-                                                .drain(..)
-                                                .map(|value| make_float(value, FloatKind::F64)),
-                                        );
-                                        elems.push(v);
-                                    }
+                                    all_f64 = false;
                                 }
                             }
                         }
-                        else
-                        {
-                            elems.push(v);
-                        }
                     }
-                    if all_f64
+                    if all_i32
                     {
-                        f64_vals.reverse();
+                        frame
+                            .stack
+                            .push(Value::I32Array(Rc::new(RefCell::new(i32_vals))));
+                    }
+                    else if all_i64
+                    {
+                        frame
+                            .stack
+                            .push(Value::I64Array(Rc::new(RefCell::new(i64_vals))));
+                    }
+                    else if all_f32
+                    {
+                        frame
+                            .stack
+                            .push(Value::F32Array(Rc::new(RefCell::new(f32_vals))));
+                    }
+                    else if all_f64
+                    {
                         frame
                             .stack
                             .push(Value::F64Array(Rc::new(RefCell::new(f64_vals))));
                     }
                     else
                     {
-                        elems.reverse();
                         frame.stack.push(Value::Array(Rc::new(RefCell::new(elems))));
                     }
                 }
@@ -8757,6 +9126,63 @@ fn execute_instructions(
                                 if i < vec.len()
                                 {
                                     make_float(vec[i], FloatKind::F64)
+                                }
+                                else
+                                {
+                                    Value::Nil
+                                }
+                            }
+                            else
+                            {
+                                return Err(err_index_requires_int());
+                            }
+                        }
+                        Value::F32Array(arr) =>
+                        {
+                            if let Some(i) = int_value_as_usize(&index_val)
+                            {
+                                let vec = arr.borrow();
+                                if i < vec.len()
+                                {
+                                    make_float(vec[i] as f64, FloatKind::F32)
+                                }
+                                else
+                                {
+                                    Value::Nil
+                                }
+                            }
+                            else
+                            {
+                                return Err(err_index_requires_int());
+                            }
+                        }
+                        Value::I64Array(arr) =>
+                        {
+                            if let Some(i) = int_value_as_usize(&index_val)
+                            {
+                                let vec = arr.borrow();
+                                if i < vec.len()
+                                {
+                                    make_signed_int(vec[i] as i128, IntKind::I64)
+                                }
+                                else
+                                {
+                                    Value::Nil
+                                }
+                            }
+                            else
+                            {
+                                return Err(err_index_requires_int());
+                            }
+                        }
+                        Value::I32Array(arr) =>
+                        {
+                            if let Some(i) = int_value_as_usize(&index_val)
+                            {
+                                let vec = arr.borrow();
+                                if i < vec.len()
+                                {
+                                    make_signed_int(vec[i] as i128, IntKind::I32)
                                 }
                                 else
                                 {
@@ -9011,6 +9437,54 @@ fn execute_instructions(
                                 Value::F64Array(Rc::new(RefCell::new(slice)))
                             }
                         }
+                        Value::F32Array(arr) =>
+                        {
+                            let vec = arr.borrow();
+                            let len = vec.len();
+                            let start_clamped = start_idx.min(len);
+                            let end_clamped = end_idx.min(len);
+                            if start_clamped >= end_clamped
+                            {
+                                Value::F32Array(Rc::new(RefCell::new(Vec::new())))
+                            }
+                            else
+                            {
+                                let slice: Vec<f32> = vec[start_clamped..end_clamped].to_vec();
+                                Value::F32Array(Rc::new(RefCell::new(slice)))
+                            }
+                        }
+                        Value::I64Array(arr) =>
+                        {
+                            let vec = arr.borrow();
+                            let len = vec.len();
+                            let start_clamped = start_idx.min(len);
+                            let end_clamped = end_idx.min(len);
+                            if start_clamped >= end_clamped
+                            {
+                                Value::I64Array(Rc::new(RefCell::new(Vec::new())))
+                            }
+                            else
+                            {
+                                let slice: Vec<i64> = vec[start_clamped..end_clamped].to_vec();
+                                Value::I64Array(Rc::new(RefCell::new(slice)))
+                            }
+                        }
+                        Value::I32Array(arr) =>
+                        {
+                            let vec = arr.borrow();
+                            let len = vec.len();
+                            let start_clamped = start_idx.min(len);
+                            let end_clamped = end_idx.min(len);
+                            if start_clamped >= end_clamped
+                            {
+                                Value::I32Array(Rc::new(RefCell::new(Vec::new())))
+                            }
+                            else
+                            {
+                                let slice: Vec<i32> = vec[start_clamped..end_clamped].to_vec();
+                                Value::I32Array(Rc::new(RefCell::new(slice)))
+                            }
+                        }
                         _ =>
                         {
                             return Err(RuntimeError {
@@ -9186,30 +9660,115 @@ fn execute_instructions(
                                 line: 0,
                             });
                         }
-                        let mut vals: Vec<f64> = Vec::with_capacity(count);
+                        let mut raw_vals = Vec::with_capacity(count);
                         for _ in 0..count
                         {
-                            let val = frame.stack.pop().unwrap();
-                            let num = match val
+                            raw_vals.push(frame.stack.pop().unwrap());
+                        }
+                        raw_vals.reverse();
+                        let mut i32_vals: Vec<i32> = Vec::new();
+                        let mut i64_vals: Vec<i64> = Vec::new();
+                        let mut f32_vals: Vec<f32> = Vec::new();
+                        let mut f64_vals: Vec<f64> = Vec::new();
+                        let mut all_i32 = true;
+                        let mut all_i64 = true;
+                        let mut all_f32 = true;
+                        for val in &raw_vals
+                        {
+                            if all_i32
                             {
-                                Value::Float { value, .. } => value,
-                                Value::Integer { value, .. } => value as f64,
-                                Value::Unsigned { value, .. } => value as f64,
+                                match val
+                                {
+                                    Value::Integer {
+                                        value,
+                                        kind: IntKind::I32,
+                                    } => i32_vals.push(*value as i32),
+                                    Value::Unsigned {
+                                        value,
+                                        kind: IntKind::U32,
+                                    } => i32_vals.push(*value as i32),
+                                    _ => all_i32 = false,
+                                }
+                            }
+                            if all_f32
+                            {
+                                match val
+                                {
+                                    Value::Float {
+                                        value,
+                                        kind: FloatKind::F32,
+                                    } => f32_vals.push(*value as f32),
+                                    _ => all_f32 = false,
+                                }
+                            }
+                            if all_i64
+                            {
+                                match val
+                                {
+                                    Value::Integer { value, .. } =>
+                                    {
+                                        i64_vals.push(*value as i64);
+                                        f64_vals.push(*value as f64);
+                                        continue;
+                                    }
+                                    Value::Unsigned { value, .. } =>
+                                    {
+                                        i64_vals.push(*value as i64);
+                                        f64_vals.push(*value as f64);
+                                        continue;
+                                    }
+                                    _ =>
+                                    {
+                                        all_i64 = false;
+                                    }
+                                }
+                            }
+                            match val
+                            {
+                                Value::Float { value, .. } =>
+                                {
+                                    f64_vals.push(*value);
+                                    continue;
+                                }
                                 _ =>
                                 {
+                                    if let Some(num) = int_value_as_f64(val)
+                                    {
+                                        f64_vals.push(num);
+                                        continue;
+                                    }
                                     return Err(RuntimeError {
-                                        message: "F64Array literal requires numeric elements"
+                                        message: "Numeric array literal requires numeric elements"
                                             .to_string(),
                                         line: 0,
                                     });
                                 }
-                            };
-                            vals.push(num);
+                            }
                         }
-                        vals.reverse();
-                        frame
-                            .stack
-                            .push(Value::F64Array(Rc::new(RefCell::new(vals))));
+                        if all_i32
+                        {
+                            frame
+                                .stack
+                                .push(Value::I32Array(Rc::new(RefCell::new(i32_vals))));
+                        }
+                        else if all_i64
+                        {
+                            frame
+                                .stack
+                                .push(Value::I64Array(Rc::new(RefCell::new(i64_vals))));
+                        }
+                        else if all_f32
+                        {
+                            frame
+                                .stack
+                                .push(Value::F32Array(Rc::new(RefCell::new(f32_vals))));
+                        }
+                        else
+                        {
+                            frame
+                                .stack
+                                .push(Value::F64Array(Rc::new(RefCell::new(f64_vals))));
+                        }
                     }
                     else
                     {
@@ -9217,24 +9776,56 @@ fn execute_instructions(
                             message: "Missing generator for array".to_string(),
                             line: 0,
                         })?;
-                        let num = match gen_val
+                        match gen_val
                         {
-                            Value::Float { value, .. } => value,
-                            Value::Integer { value, .. } => value as f64,
-                            Value::Unsigned { value, .. } => value as f64,
+                            Value::Float {
+                                value,
+                                kind: FloatKind::F32,
+                            } =>
+                            {
+                                let vals = vec![value as f32; n];
+                                frame.stack.push(Value::F32Array(Rc::new(RefCell::new(vals))));
+                            }
+                            Value::Float { value, .. } =>
+                            {
+                                let vals = vec![value; n];
+                                frame.stack.push(Value::F64Array(Rc::new(RefCell::new(vals))));
+                            }
+                            Value::Integer {
+                                value,
+                                kind: IntKind::I32,
+                            } =>
+                            {
+                                let vals = vec![value as i32; n];
+                                frame.stack.push(Value::I32Array(Rc::new(RefCell::new(vals))));
+                            }
+                            Value::Unsigned {
+                                value,
+                                kind: IntKind::U32,
+                            } =>
+                            {
+                                let vals = vec![value as i32; n];
+                                frame.stack.push(Value::I32Array(Rc::new(RefCell::new(vals))));
+                            }
+                            Value::Integer { value, .. } =>
+                            {
+                                let vals = vec![value as i64; n];
+                                frame.stack.push(Value::I64Array(Rc::new(RefCell::new(vals))));
+                            }
+                            Value::Unsigned { value, .. } =>
+                            {
+                                let vals = vec![value as i64; n];
+                                frame.stack.push(Value::I64Array(Rc::new(RefCell::new(vals))));
+                            }
                             _ =>
                             {
                                 return Err(RuntimeError {
-                                    message: "F64Array generator requires numeric value"
+                                    message: "Numeric array generator requires numeric value"
                                         .to_string(),
                                     line: 0,
                                 });
                             }
                         };
-                        let vals = vec![num; n];
-                        frame
-                            .stack
-                            .push(Value::F64Array(Rc::new(RefCell::new(vals))));
                     }
                 }
                 Instruction::ArrayGen =>
@@ -9251,10 +9842,7 @@ fn execute_instructions(
                         message: "Array size must be a non-negative integer".to_string(),
                         line: 0,
                     })?;
-                    let mut vals: Vec<Value> = Vec::new();
-                    let mut f64_vals: Vec<f64> = Vec::new();
-                    let mut all_f64 = true;
-                    let mut fast_path = false;
+                    let mut vals: Vec<Value> = Vec::with_capacity(n);
                     if let Value::Function(data) = gen_val
                     {
                         for i in 0..n
@@ -9285,96 +9873,135 @@ fn execute_instructions(
                             {
                                 interpreter.eval(&data.body, &mut new_slots)?
                             };
-                            if all_f64
-                            {
-                                match result
-                                {
-                                    Value::Float { value, .. } => f64_vals.push(value),
-                                    Value::Integer { value, .. } => f64_vals.push(value as f64),
-                                    Value::Unsigned { value, .. } => f64_vals.push(value as f64),
-                                    _ =>
-                                    {
-                                        all_f64 = false;
-                                        vals.extend(
-                                            f64_vals
-                                                .drain(..)
-                                                .map(|value| make_float(value, FloatKind::F64)),
-                                        );
-                                        vals.push(result);
-                                    }
-                                }
-                            }
-                            else
-                            {
-                                vals.push(result);
-                            }
+                            vals.push(result);
                         }
                     }
                     else
                     {
-                        let num = match &gen_val
+                        for _ in 0..n
                         {
-                            Value::Float { value, .. } => Some(*value),
-                            Value::Integer { value, .. } => Some(*value as f64),
-                            Value::Unsigned { value, .. } => Some(*value as f64),
-                            _ => None,
-                        };
-                        if let Some(num) = num
-                        {
-                            let vals = vec![num; n];
-                            frame
-                                .stack
-                                .push(Value::F64Array(Rc::new(RefCell::new(vals))));
-                            fast_path = true;
+                            vals.push(gen_val.clone());
                         }
-                        else
+                    }
+                    if vals.is_empty()
+                    {
+                        frame
+                            .stack
+                            .push(Value::Array(Rc::new(RefCell::new(Vec::new()))));
+                        continue;
+                    }
+                    let mut i32_vals: Vec<i32> = Vec::new();
+                    let mut i64_vals: Vec<i64> = Vec::new();
+                    let mut f32_vals: Vec<f32> = Vec::new();
+                    let mut f64_vals: Vec<f64> = Vec::new();
+                    let mut all_i32 = true;
+                    let mut all_i64 = true;
+                    let mut all_f32 = true;
+                    let mut all_f64 = true;
+                    for v in &vals
+                    {
+                        if all_i32
                         {
-                            for _ in 0..n
+                            match v
                             {
-                                if all_f64
+                                Value::Integer {
+                                    value,
+                                    kind: IntKind::I32,
+                                } => i32_vals.push(*value as i32),
+                                Value::Unsigned {
+                                    value,
+                                    kind: IntKind::U32,
+                                } => i32_vals.push(*value as i32),
+                                _ => all_i32 = false,
+                            }
+                        }
+                        if all_f32
+                        {
+                            match v
+                            {
+                                Value::Float {
+                                    value,
+                                    kind: FloatKind::F32,
+                                } => f32_vals.push(*value as f32),
+                                _ => all_f32 = false,
+                            }
+                        }
+                        if all_i64
+                        {
+                            match v
+                            {
+                                Value::Integer { value, .. } =>
                                 {
-                                    match &gen_val
+                                    i64_vals.push(*value as i64);
+                                    if all_f64
                                     {
-                                        Value::Float { value, .. } => f64_vals.push(*value),
-                                        Value::Integer { value, .. } =>
-                                        {
-                                            f64_vals.push(*value as f64)
-                                        }
-                                        Value::Unsigned { value, .. } =>
-                                        {
-                                            f64_vals.push(*value as f64)
-                                        }
-                                        _ =>
-                                        {
-                                            all_f64 = false;
-                                            vals.extend(
-                                                f64_vals
-                                                    .drain(..)
-                                                    .map(|value| make_float(value, FloatKind::F64)),
-                                            );
-                                            vals.push(gen_val.clone());
-                                        }
+                                        f64_vals.push(*value as f64);
                                     }
+                                    continue;
                                 }
-                                else
+                                Value::Unsigned { value, .. } =>
                                 {
-                                    vals.push(gen_val.clone());
+                                    i64_vals.push(*value as i64);
+                                    if all_f64
+                                    {
+                                        f64_vals.push(*value as f64);
+                                    }
+                                    continue;
+                                }
+                                _ =>
+                                {
+                                    all_i64 = false;
+                                }
+                            }
+                        }
+                        if all_f64
+                        {
+                            match v
+                            {
+                                Value::Float { value, .. } =>
+                                {
+                                    f64_vals.push(*value);
+                                    continue;
+                                }
+                                _ =>
+                                {
+                                    if let Some(num) = int_value_as_f64(v)
+                                    {
+                                        f64_vals.push(num);
+                                        continue;
+                                    }
+                                    all_f64 = false;
                                 }
                             }
                         }
                     }
-                    if !fast_path
+                    if all_i32
                     {
-                        if all_f64
-                        {
-                            frame
-                                .stack
-                                .push(Value::F64Array(Rc::new(RefCell::new(f64_vals))));
-                        }
-                        else
-                        {
-                            frame.stack.push(Value::Array(Rc::new(RefCell::new(vals))));
-                        }
+                        frame
+                            .stack
+                            .push(Value::I32Array(Rc::new(RefCell::new(i32_vals))));
+                    }
+                    else if all_i64
+                    {
+                        frame
+                            .stack
+                            .push(Value::I64Array(Rc::new(RefCell::new(i64_vals))));
+                    }
+                    else if all_f32
+                    {
+                        frame
+                            .stack
+                            .push(Value::F32Array(Rc::new(RefCell::new(f32_vals))));
+                    }
+                    else if all_f64
+                    {
+                        frame
+                            .stack
+                            .push(Value::F64Array(Rc::new(RefCell::new(f64_vals))));
+                    }
+                    else
+                    {
+                        frame.stack.push(Value::Array(Rc::new(RefCell::new(vals))));
                     }
                 }
                 Instruction::F64Axpy {
@@ -10938,7 +11565,9 @@ impl Interpreter
                 {
                     Value::String(s) => Ok(default_int(s.len() as i128)),
                     Value::Array(arr) => Ok(default_int(arr.borrow().len() as i128)),
+                    Value::F32Array(arr) => Ok(default_int(arr.borrow().len() as i128)),
                     Value::F64Array(arr) => Ok(default_int(arr.borrow().len() as i128)),
+                    Value::I32Array(arr) => Ok(default_int(arr.borrow().len() as i128)),
                     Value::I64Array(arr) => Ok(default_int(arr.borrow().len() as i128)),
                     Value::Bytes(bytes) => Ok(default_int(bytes.len() as i128)),
                     Value::ByteBuf(buf) => Ok(default_int(buf.borrow().len() as i128)),
@@ -11004,7 +11633,9 @@ impl Interpreter
                     Value::String(_) => "String",
                     Value::Boolean(_) => "Boolean",
                     Value::Array(_) => "Array",
+                    Value::F32Array(_) => "F32Array",
                     Value::F64Array(_) => "F64Array",
+                    Value::I32Array(_) => "I32Array",
                     Value::I64Array(_) => "I64Array",
                     Value::Bytes(_) => "Bytes",
                     Value::ByteBuf(_) => "ByteBuf",
@@ -11232,6 +11863,16 @@ impl Interpreter
                 }
                 Value::Array(arr)
             }
+            BlockCollectionTarget::F32Array(arr) =>
+            {
+                let len = arr.borrow().len();
+                for idx in 0..len
+                {
+                    let val = make_float(arr.borrow()[idx] as f64, FloatKind::F32);
+                    visit(std::slice::from_ref(&val), Some(&val), use_filter)?;
+                }
+                Value::F32Array(arr)
+            }
             BlockCollectionTarget::F64Array(arr) =>
             {
                 let len = arr.borrow().len();
@@ -11241,6 +11882,26 @@ impl Interpreter
                     visit(std::slice::from_ref(&val), Some(&val), use_filter)?;
                 }
                 Value::F64Array(arr)
+            }
+            BlockCollectionTarget::I32Array(arr) =>
+            {
+                let len = arr.borrow().len();
+                for idx in 0..len
+                {
+                    let val = make_signed_int(arr.borrow()[idx] as i128, IntKind::I32);
+                    visit(std::slice::from_ref(&val), Some(&val), use_filter)?;
+                }
+                Value::I32Array(arr)
+            }
+            BlockCollectionTarget::I64Array(arr) =>
+            {
+                let len = arr.borrow().len();
+                for idx in 0..len
+                {
+                    let val = make_signed_int(arr.borrow()[idx] as i128, IntKind::I64);
+                    visit(std::slice::from_ref(&val), Some(&val), use_filter)?;
+                }
+                Value::I64Array(arr)
             }
             BlockCollectionTarget::Map(map) =>
             {
@@ -12681,6 +13342,49 @@ impl Interpreter
                             });
                         }
                     }
+                    Value::F32Array(arr) =>
+                    {
+                        if let Some(i) = int_value_as_usize(&index_val)
+                        {
+                            let mut vec = arr.borrow_mut();
+                            if i < vec.len()
+                            {
+                                match &val
+                                {
+                                    Value::Float { value, .. } => vec[i] = *value as f32,
+                                    v =>
+                                    {
+                                        if let Some(num) = int_value_as_f64(v)
+                                        {
+                                            vec[i] = num as f32;
+                                        }
+                                        else
+                                        {
+                                            return Err(RuntimeError {
+                                                message: "F32Array assignment requires a number"
+                                                    .to_string(),
+                                                line,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                return Err(RuntimeError {
+                                    message: "Array index out of bounds".to_string(),
+                                    line,
+                                });
+                            }
+                        }
+                        else
+                        {
+                            return Err(RuntimeError {
+                                message: err_index_requires_int().message,
+                                line,
+                            });
+                        }
+                    }
                     Value::I64Array(arr) =>
                     {
                         if let Some(i) = int_value_as_usize(&index_val)
@@ -12696,6 +13400,43 @@ impl Interpreter
                                     {
                                         return Err(RuntimeError {
                                             message: "I64Array assignment requires an integer"
+                                                .to_string(),
+                                            line,
+                                        });
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                return Err(RuntimeError {
+                                    message: "Array index out of bounds".to_string(),
+                                    line,
+                                });
+                            }
+                        }
+                        else
+                        {
+                            return Err(RuntimeError {
+                                message: err_index_requires_int().message,
+                                line,
+                            });
+                        }
+                    }
+                    Value::I32Array(arr) =>
+                    {
+                        if let Some(i) = int_value_as_usize(&index_val)
+                        {
+                            let mut vec = arr.borrow_mut();
+                            if i < vec.len()
+                            {
+                                match &val
+                                {
+                                    Value::Integer { value, .. } => vec[i] = *value as i32,
+                                    Value::Unsigned { value, .. } => vec[i] = *value as i32,
+                                    _ =>
+                                    {
+                                        return Err(RuntimeError {
+                                            message: "I32Array assignment requires an integer"
                                                 .to_string(),
                                             line,
                                         });
@@ -13070,14 +13811,61 @@ impl Interpreter
                 }
 
                 let mut vals = Vec::new();
+                let mut i32_vals: Vec<i32> = Vec::new();
                 let mut i64_vals: Vec<i64> = Vec::new();
+                let mut f32_vals: Vec<f32> = Vec::new();
                 let mut f64_vals: Vec<f64> = Vec::new();
+                let mut all_i32 = true;
                 let mut all_i64 = true;
+                let mut all_f32 = true;
                 let mut all_f64 = true;
 
                 for e in elements
                 {
                     let v = self.eval(e, slots)?;
+                    if all_i32
+                    {
+                        match &v
+                        {
+                            Value::Integer {
+                                value,
+                                kind: IntKind::I32,
+                            } =>
+                            {
+                                i32_vals.push(*value as i32);
+                            }
+                            Value::Unsigned {
+                                value,
+                                kind: IntKind::U32,
+                            } =>
+                            {
+                                i32_vals.push(*value as i32);
+                            }
+                            _ =>
+                            {
+                                all_i32 = false;
+                            }
+                        }
+                    }
+
+                    if all_f32
+                    {
+                        match &v
+                        {
+                            Value::Float {
+                                value,
+                                kind: FloatKind::F32,
+                            } =>
+                            {
+                                f32_vals.push(*value as f32);
+                            }
+                            _ =>
+                            {
+                                all_f32 = false;
+                            }
+                        }
+                    }
+
                     if all_i64
                     {
                         match &v
@@ -13145,9 +13933,17 @@ impl Interpreter
                     }
                 }
 
-                if all_i64
+                if all_i32
+                {
+                    Ok(Value::I32Array(Rc::new(RefCell::new(i32_vals))))
+                }
+                else if all_i64
                 {
                     Ok(Value::I64Array(Rc::new(RefCell::new(i64_vals))))
+                }
+                else if all_f32
+                {
+                    Ok(Value::F32Array(Rc::new(RefCell::new(f32_vals))))
                 }
                 else if all_f64
                 {
@@ -13258,9 +14054,7 @@ impl Interpreter
                     message: "Array size must be a non-negative integer".to_string(),
                     line,
                 })?;
-                let mut vals: Vec<Value> = Vec::new();
-                let mut f64_vals: Vec<f64> = Vec::new();
-                let mut all_f64 = true;
+                let mut vals: Vec<Value> = Vec::with_capacity(n);
                 if let Value::Function(data) = gen_val
                 {
                     for i in 0..n
@@ -13269,7 +14063,7 @@ impl Interpreter
                             Value::Uninitialized,
                             data.declarations.len(),
                         );
-                        if data.params.len() > 0
+                        if !data.params.is_empty()
                         {
                             new_slots[data.param_offset] = default_int(i as i128);
                         }
@@ -13292,82 +14086,133 @@ impl Interpreter
                         {
                             self.eval(&data.body, &mut new_slots)?
                         };
-                        if all_f64
-                        {
-                            match &result
-                            {
-                                Value::Float { value, .. } => f64_vals.push(*value),
-                                v =>
-                                {
-                                    if let Some(num) = int_value_as_f64(v)
-                                    {
-                                        f64_vals.push(num);
-                                    }
-                                    else
-                                    {
-                                        all_f64 = false;
-                                        vals.extend(
-                                            f64_vals
-                                                .drain(..)
-                                                .map(|value| make_float(value, FloatKind::F64)),
-                                        );
-                                        vals.push(result);
-                                    }
-                                }
-                            }
-                        }
-                        else
-                        {
-                            vals.push(result);
-                        }
+                        vals.push(result);
                     }
                 }
                 else
                 {
-                    let num = match &gen_val
-                    {
-                        Value::Float { value, .. } => Some(*value),
-                        Value::Integer { value, .. } => Some(*value as f64),
-                        Value::Unsigned { value, .. } => Some(*value as f64),
-                        _ => None,
-                    };
-                    if let Some(num) = num
-                    {
-                        return Ok(Value::F64Array(Rc::new(RefCell::new(vec![num; n]))));
-                    }
                     for _ in 0..n
                     {
-                        if all_f64
+                        vals.push(gen_val.clone());
+                    }
+                }
+                if vals.is_empty()
+                {
+                    return Ok(Value::Array(Rc::new(RefCell::new(Vec::new()))));
+                }
+                let mut i32_vals: Vec<i32> = Vec::new();
+                let mut i64_vals: Vec<i64> = Vec::new();
+                let mut f32_vals: Vec<f32> = Vec::new();
+                let mut f64_vals: Vec<f64> = Vec::new();
+                let mut all_i32 = true;
+                let mut all_i64 = true;
+                let mut all_f32 = true;
+                let mut all_f64 = true;
+                for v in &vals
+                {
+                    if all_i32
+                    {
+                        match v
                         {
-                            match &gen_val
+                            Value::Integer {
+                                value,
+                                kind: IntKind::I32,
+                            } =>
                             {
-                                Value::Float { value, .. } => f64_vals.push(*value),
-                                v =>
-                                {
-                                    if let Some(num) = int_value_as_f64(v)
-                                    {
-                                        f64_vals.push(num);
-                                    }
-                                    else
-                                    {
-                                        all_f64 = false;
-                                        vals.extend(
-                                            f64_vals
-                                                .drain(..)
-                                                .map(|value| make_float(value, FloatKind::F64)),
-                                        );
-                                        vals.push(gen_val.clone());
-                                    }
-                                }
+                                i32_vals.push(*value as i32);
+                            }
+                            Value::Unsigned {
+                                value,
+                                kind: IntKind::U32,
+                            } =>
+                            {
+                                i32_vals.push(*value as i32);
+                            }
+                            _ =>
+                            {
+                                all_i32 = false;
                             }
                         }
-                        else
+                    }
+                    if all_f32
+                    {
+                        match v
                         {
-                            vals.push(gen_val.clone());
+                            Value::Float {
+                                value,
+                                kind: FloatKind::F32,
+                            } =>
+                            {
+                                f32_vals.push(*value as f32);
+                            }
+                            _ =>
+                            {
+                                all_f32 = false;
+                            }
+                        }
+                    }
+                    if all_i64
+                    {
+                        match v
+                        {
+                            Value::Integer { value, .. } =>
+                            {
+                                i64_vals.push(*value as i64);
+                                if all_f64
+                                {
+                                    f64_vals.push(*value as f64);
+                                }
+                                continue;
+                            }
+                            Value::Unsigned { value, .. } =>
+                            {
+                                i64_vals.push(*value as i64);
+                                if all_f64
+                                {
+                                    f64_vals.push(*value as f64);
+                                }
+                                continue;
+                            }
+                            _ =>
+                            {
+                                all_i64 = false;
+                            }
+                        }
+                    }
+                    if all_f64
+                    {
+                        match v
+                        {
+                            Value::Float { value, .. } =>
+                            {
+                                f64_vals.push(*value);
+                                continue;
+                            }
+                            _ =>
+                            {
+                                if let Some(num) = int_value_as_f64(v)
+                                {
+                                    f64_vals.push(num);
+                                    continue;
+                                }
+                                all_f64 = false;
+                            }
                         }
                     }
                 }
-                if all_f64
+                if all_i32
+                {
+                    Ok(Value::I32Array(Rc::new(RefCell::new(i32_vals))))
+                }
+                else if all_i64
+                {
+                    Ok(Value::I64Array(Rc::new(RefCell::new(i64_vals))))
+                }
+                else if all_f32
+                {
+                    Ok(Value::F32Array(Rc::new(RefCell::new(f32_vals))))
+                }
+                else if all_f64
                 {
                     Ok(Value::F64Array(Rc::new(RefCell::new(f64_vals))))
                 }
@@ -13640,9 +14485,21 @@ impl Interpreter
                                         {
                                             Some(BlockCollectionTarget::Array(arr))
                                         }
+                                        Value::F32Array(arr) =>
+                                        {
+                                            Some(BlockCollectionTarget::F32Array(arr))
+                                        }
                                         Value::F64Array(arr) =>
                                         {
                                             Some(BlockCollectionTarget::F64Array(arr))
+                                        }
+                                        Value::I32Array(arr) =>
+                                        {
+                                            Some(BlockCollectionTarget::I32Array(arr))
+                                        }
+                                        Value::I64Array(arr) =>
+                                        {
+                                            Some(BlockCollectionTarget::I64Array(arr))
                                         }
                                         Value::Map(map) => Some(BlockCollectionTarget::Map(map)),
                                         _ => None,
@@ -14111,6 +14968,24 @@ impl Interpreter
                             line,
                         }),
                     },
+                    (Value::Array(arr1), Value::I32Array(arr2)) => match op
+                    {
+                        Op::Add =>
+                        {
+                            let mut result = arr1.borrow().clone();
+                            for v in arr2.borrow().iter()
+                            {
+                                result.push(make_signed_int(*v as i128, IntKind::I32));
+                            }
+                            Ok(Value::Array(Rc::new(RefCell::new(result))))
+                        }
+                        Op::Equal => Ok(Value::Boolean(false)),
+                        Op::NotEqual => Ok(Value::Boolean(true)),
+                        _ => Err(RuntimeError {
+                            message: "Invalid operation on arrays".to_string(),
+                            line,
+                        }),
+                    },
                     (Value::Array(arr1), Value::F64Array(arr2)) => match op
                     {
                         Op::Add =>
@@ -14129,6 +15004,24 @@ impl Interpreter
                             line,
                         }),
                     },
+                    (Value::Array(arr1), Value::F32Array(arr2)) => match op
+                    {
+                        Op::Add =>
+                        {
+                            let mut result = arr1.borrow().clone();
+                            for v in arr2.borrow().iter()
+                            {
+                                result.push(make_float(*v as f64, FloatKind::F32));
+                            }
+                            Ok(Value::Array(Rc::new(RefCell::new(result))))
+                        }
+                        Op::Equal => Ok(Value::Boolean(false)),
+                        Op::NotEqual => Ok(Value::Boolean(true)),
+                        _ => Err(RuntimeError {
+                            message: "Invalid operation on arrays".to_string(),
+                            line,
+                        }),
+                    },
                     (Value::I64Array(arr1), Value::I64Array(arr2)) => match op
                     {
                         Op::Add =>
@@ -14136,6 +15029,21 @@ impl Interpreter
                             let mut result = arr1.borrow().clone();
                             result.extend(arr2.borrow().iter().cloned());
                             Ok(Value::I64Array(Rc::new(RefCell::new(result))))
+                        }
+                        Op::Equal => Ok(Value::Boolean(*arr1.borrow() == *arr2.borrow())),
+                        Op::NotEqual => Ok(Value::Boolean(*arr1.borrow() != *arr2.borrow())),
+                        _ => Err(RuntimeError {
+                            message: "Invalid operation on arrays".to_string(),
+                            line,
+                        }),
+                    },
+                    (Value::I32Array(arr1), Value::I32Array(arr2)) => match op
+                    {
+                        Op::Add =>
+                        {
+                            let mut result = arr1.borrow().clone();
+                            result.extend(arr2.borrow().iter().cloned());
+                            Ok(Value::I32Array(Rc::new(RefCell::new(result))))
                         }
                         Op::Equal => Ok(Value::Boolean(*arr1.borrow() == *arr2.borrow())),
                         Op::NotEqual => Ok(Value::Boolean(*arr1.borrow() != *arr2.borrow())),
@@ -14163,6 +15071,25 @@ impl Interpreter
                             line,
                         }),
                     },
+                    (Value::I32Array(arr1), Value::Array(arr2)) => match op
+                    {
+                        Op::Add =>
+                        {
+                            let mut result: Vec<Value> = arr1
+                                .borrow()
+                                .iter()
+                                .map(|v| make_signed_int(*v as i128, IntKind::I32))
+                                .collect();
+                            result.extend(arr2.borrow().iter().cloned());
+                            Ok(Value::Array(Rc::new(RefCell::new(result))))
+                        }
+                        Op::Equal => Ok(Value::Boolean(false)),
+                        Op::NotEqual => Ok(Value::Boolean(true)),
+                        _ => Err(RuntimeError {
+                            message: "Invalid operation on arrays".to_string(),
+                            line,
+                        }),
+                    },
                     (Value::I64Array(arr1), Value::F64Array(arr2)) => match op
                     {
                         Op::Add =>
@@ -14179,6 +15106,22 @@ impl Interpreter
                             line,
                         }),
                     },
+                    (Value::I32Array(arr1), Value::F32Array(arr2)) => match op
+                    {
+                        Op::Add =>
+                        {
+                            let mut result: Vec<f32> =
+                                arr1.borrow().iter().map(|v| *v as f32).collect();
+                            result.extend(arr2.borrow().iter().cloned());
+                            Ok(Value::F32Array(Rc::new(RefCell::new(result))))
+                        }
+                        Op::Equal => Ok(Value::Boolean(false)),
+                        Op::NotEqual => Ok(Value::Boolean(true)),
+                        _ => Err(RuntimeError {
+                            message: "Invalid operation on arrays".to_string(),
+                            line,
+                        }),
+                    },
                     (Value::F64Array(arr1), Value::F64Array(arr2)) => match op
                     {
                         Op::Add =>
@@ -14186,6 +15129,21 @@ impl Interpreter
                             let mut result = arr1.borrow().clone();
                             result.extend(arr2.borrow().iter().cloned());
                             Ok(Value::F64Array(Rc::new(RefCell::new(result))))
+                        }
+                        Op::Equal => Ok(Value::Boolean(*arr1.borrow() == *arr2.borrow())),
+                        Op::NotEqual => Ok(Value::Boolean(*arr1.borrow() != *arr2.borrow())),
+                        _ => Err(RuntimeError {
+                            message: "Invalid operation on arrays".to_string(),
+                            line,
+                        }),
+                    },
+                    (Value::F32Array(arr1), Value::F32Array(arr2)) => match op
+                    {
+                        Op::Add =>
+                        {
+                            let mut result = arr1.borrow().clone();
+                            result.extend(arr2.borrow().iter().cloned());
+                            Ok(Value::F32Array(Rc::new(RefCell::new(result))))
                         }
                         Op::Equal => Ok(Value::Boolean(*arr1.borrow() == *arr2.borrow())),
                         Op::NotEqual => Ok(Value::Boolean(*arr1.borrow() != *arr2.borrow())),
@@ -14213,6 +15171,25 @@ impl Interpreter
                             line,
                         }),
                     },
+                    (Value::F32Array(arr1), Value::Array(arr2)) => match op
+                    {
+                        Op::Add =>
+                        {
+                            let mut result: Vec<Value> = arr1
+                                .borrow()
+                                .iter()
+                                .map(|v| make_float(*v as f64, FloatKind::F32))
+                                .collect();
+                            result.extend(arr2.borrow().iter().cloned());
+                            Ok(Value::Array(Rc::new(RefCell::new(result))))
+                        }
+                        Op::Equal => Ok(Value::Boolean(false)),
+                        Op::NotEqual => Ok(Value::Boolean(true)),
+                        _ => Err(RuntimeError {
+                            message: "Invalid operation on arrays".to_string(),
+                            line,
+                        }),
+                    },
                     (Value::F64Array(arr1), Value::I64Array(arr2)) => match op
                     {
                         Op::Add =>
@@ -14223,6 +15200,24 @@ impl Interpreter
                                 result.push(*v as f64);
                             }
                             Ok(Value::F64Array(Rc::new(RefCell::new(result))))
+                        }
+                        Op::Equal => Ok(Value::Boolean(false)),
+                        Op::NotEqual => Ok(Value::Boolean(true)),
+                        _ => Err(RuntimeError {
+                            message: "Invalid operation on arrays".to_string(),
+                            line,
+                        }),
+                    },
+                    (Value::F32Array(arr1), Value::I32Array(arr2)) => match op
+                    {
+                        Op::Add =>
+                        {
+                            let mut result = arr1.borrow().clone();
+                            for v in arr2.borrow().iter()
+                            {
+                                result.push(*v as f32);
+                            }
+                            Ok(Value::F32Array(Rc::new(RefCell::new(result))))
                         }
                         Op::Equal => Ok(Value::Boolean(false)),
                         Op::NotEqual => Ok(Value::Boolean(true)),
@@ -14328,6 +15323,20 @@ impl Interpreter
                         }
                         Ok(last_val)
                     }
+                    Value::F32Array(arr) =>
+                    {
+                        let len = arr.borrow().len();
+                        for idx in 0..len
+                        {
+                            let item = {
+                                let vec = arr.borrow();
+                                make_float(vec[idx] as f64, FloatKind::F32)
+                            };
+                            self.env.borrow_mut().assign(*var, item);
+                            last_val = self.eval(body, slots)?;
+                        }
+                        Ok(last_val)
+                    }
                     Value::I64Array(arr) =>
                     {
                         let len = arr.borrow().len();
@@ -14336,6 +15345,20 @@ impl Interpreter
                             let item = {
                                 let vec = arr.borrow();
                                 make_signed_int(vec[idx] as i128, IntKind::I64)
+                            };
+                            self.env.borrow_mut().assign(*var, item);
+                            last_val = self.eval(body, slots)?;
+                        }
+                        Ok(last_val)
+                    }
+                    Value::I32Array(arr) =>
+                    {
+                        let len = arr.borrow().len();
+                        for idx in 0..len
+                        {
+                            let item = {
+                                let vec = arr.borrow();
+                                make_signed_int(vec[idx] as i128, IntKind::I32)
                             };
                             self.env.borrow_mut().assign(*var, item);
                             last_val = self.eval(body, slots)?;

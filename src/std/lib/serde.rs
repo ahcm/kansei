@@ -85,6 +85,38 @@ pub(crate) fn value_to_json(value: &Value) -> JsonValue
                 .collect();
             JsonValue::Array(vals)
         }
+        Value::F32Array(arr) =>
+        {
+            let vals = arr
+                .borrow()
+                .iter()
+                .map(|v| {
+                    JsonValue::Number(
+                        serde_json::Number::from_f64(*v as f64)
+                            .unwrap_or_else(|| serde_json::Number::from(0)),
+                    )
+                })
+                .collect();
+            JsonValue::Array(vals)
+        }
+        Value::I32Array(arr) =>
+        {
+            let vals = arr
+                .borrow()
+                .iter()
+                .map(|v| JsonValue::Number(serde_json::Number::from(*v)))
+                .collect();
+            JsonValue::Array(vals)
+        }
+        Value::I64Array(arr) =>
+        {
+            let vals = arr
+                .borrow()
+                .iter()
+                .map(|v| JsonValue::Number(serde_json::Number::from(*v)))
+                .collect();
+            JsonValue::Array(vals)
+        }
         Value::Map(map) =>
         {
             let mut out = serde_json::Map::new();

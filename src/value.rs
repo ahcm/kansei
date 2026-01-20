@@ -830,6 +830,7 @@ pub enum Value
     StructInstance(Rc<StructInstance>),
     BoundMethod(Rc<BoundMethod>),
     Map(Rc<RefCell<MapValue>>),
+    Ast(Rc<Expr>),
     DataFrame(Rc<RefCell<polars::prelude::DataFrame>>),
     Sqlite(Rc<RefCell<Connection>>),
     Mmap(Rc<Mmap>),
@@ -971,6 +972,7 @@ impl PartialEq for Value
                 }
                 true
             }
+            (Value::Ast(a), Value::Ast(b)) => a == b,
             (Value::DataFrame(a), Value::DataFrame(b)) => Rc::ptr_eq(a, b),
             (Value::Sqlite(a), Value::Sqlite(b)) => Rc::ptr_eq(a, b),
             (Value::Mmap(a), Value::Mmap(b)) => Rc::ptr_eq(a, b),
@@ -1011,6 +1013,7 @@ impl fmt::Debug for Value
             Value::StructInstance(inst) => write!(f, "StructInstance({})", inst.ty.name),
             Value::BoundMethod(_) => write!(f, "BoundMethod(...)"),
             Value::Map(m) => write!(f, "Map({:?})", m.borrow().data),
+            Value::Ast(_) => write!(f, "Ast(...)"),
             Value::DataFrame(df) =>
             {
                 write!(f, "DataFrame({}x{})", df.borrow().height(), df.borrow().width())
@@ -1083,6 +1086,7 @@ impl Value
                     .collect();
                 format!("{{{}}}", entries.join(", "))
             }
+            Value::Ast(_) => "<ast>".to_string(),
             Value::DataFrame(df) =>
             {
                 let df_ref = df.borrow();
@@ -1160,6 +1164,7 @@ impl fmt::Display for Value
                     .collect();
                 write!(f, "{{{}}}", entries.join(", "))
             }
+            Value::Ast(_) => write!(f, "<ast>"),
             Value::DataFrame(df) =>
             {
                 let df_ref = df.borrow();

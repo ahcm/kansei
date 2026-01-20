@@ -7,6 +7,7 @@ mod intern;
 mod kansei_std;
 mod lexer;
 mod parser;
+mod sexpr;
 mod value;
 mod wasm;
 
@@ -44,6 +45,7 @@ fn main() -> rustyline::Result<()>
 {
     let args: Vec<String> = env::args().collect();
     let mut dump_ast = false;
+    let mut dump_ast_sexpr = false;
     let mut dump_bytecode = false;
     let mut bytecode_mode = eval::BytecodeMode::Simple;
     let mut script_path: Option<String> = None;
@@ -56,6 +58,7 @@ fn main() -> rustyline::Result<()>
         match args[idx].as_str()
         {
             "--dump-ast" => dump_ast = true,
+            "--dump-ast-sexpr" => dump_ast_sexpr = true,
             "--dump-bytecode" => dump_bytecode = true,
             "--bytecode" =>
             {
@@ -113,7 +116,7 @@ fn main() -> rustyline::Result<()>
         idx += 1;
     }
 
-    if script_path.is_none() && (dump_ast || dump_bytecode)
+    if script_path.is_none() && (dump_ast || dump_ast_sexpr || dump_bytecode)
     {
         eprintln!("Dump flags require a file path.");
         return Ok(());
@@ -170,7 +173,14 @@ fn main() -> rustyline::Result<()>
     if let Some(path) = script_path
     {
         interpreter.set_main_path(std::path::Path::new(&path));
-        run_file(&path, interpreter, dump_ast, dump_bytecode, bytecode_mode);
+        run_file(
+            &path,
+            interpreter,
+            dump_ast,
+            dump_ast_sexpr,
+            dump_bytecode,
+            bytecode_mode,
+        );
         Ok(())
     }
     else
@@ -187,6 +197,7 @@ fn run_file(
     path: &str,
     mut interpreter: eval::Interpreter,
     dump_ast: bool,
+    dump_ast_sexpr: bool,
     dump_bytecode: bool,
     bytecode_mode: eval::BytecodeMode,
 )
@@ -217,6 +228,11 @@ fn run_file(
             if dump_bytecode
             {
                 println!("{}", eval::dump_bytecode(&ast, bytecode_mode));
+                return;
+            }
+            if dump_ast_sexpr
+            {
+                println!("{}", sexpr::expr_to_sexpr(&ast).to_string());
                 return;
             }
             if dump_ast

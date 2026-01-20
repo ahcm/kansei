@@ -4,7 +4,9 @@ use crate::ast::{
 };
 use crate::intern;
 use crate::intern::{SymbolId, symbol_name};
-use crate::kansei_std::{build_file_module, build_io_module, build_lib_module, build_simd_module};
+use crate::kansei_std::{
+    build_file_module, build_io_module, build_kansei_module, build_lib_module, build_simd_module,
+};
 use crate::value::{
     BinaryOpCache, BinaryOpCacheKind, BoundMethod, Builtin, CallSiteCache, Environment,
     FastRegFunction, FastRegInstruction, GlobalCache, IndexCache, Instruction, MapAccessCache,
@@ -1189,6 +1191,7 @@ fn build_std_module() -> Value
     std_map.insert(intern::intern("File"), build_file_module());
     std_map.insert(intern::intern("lib"), build_lib_module());
     std_map.insert(intern::intern("simd"), build_simd_module());
+    std_map.insert(intern::intern("kansei"), build_kansei_module());
     Value::Map(Rc::new(RefCell::new(MapValue::new(std_map))))
 }
 
@@ -1252,6 +1255,7 @@ fn clone_value(value: &Value) -> Value
             let map_ref = map.borrow();
             Value::Map(Rc::new(RefCell::new(MapValue::new(map_ref.data.clone()))))
         }
+        Value::Ast(ast) => Value::Ast(ast.clone()),
         Value::DataFrame(df) => Value::DataFrame(df.clone()),
         Value::Sqlite(conn) => Value::Sqlite(conn.clone()),
         Value::Mmap(mmap) => Value::Mmap(mmap.clone()),
@@ -10990,6 +10994,13 @@ impl Interpreter
                         .insert(intern::intern("simd"), build_simd_module());
                     changed = true;
                 }
+                if !map_mut.data.contains_key(&intern::intern("kansei"))
+                {
+                    map_mut
+                        .data
+                        .insert(intern::intern("kansei"), build_kansei_module());
+                    changed = true;
+                }
                 if changed
                 {
                     map_mut.version = map_mut.version.wrapping_add(1);
@@ -11644,6 +11655,7 @@ impl Interpreter
                     Value::StructInstance(inst) => return Ok(Value::String(inst.ty.name.clone())),
                     Value::BoundMethod(_) => "BoundMethod",
                     Value::Map(_) => "Map",
+                    Value::Ast(_) => "Ast",
                     Value::DataFrame(_) => "DataFrame",
                     Value::Sqlite(_) => "Sqlite",
                     Value::Mmap(_) => "Mmap",

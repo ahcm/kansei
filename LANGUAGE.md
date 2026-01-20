@@ -144,6 +144,32 @@ simd.sum([1,2,3,4])  # -> 10
 
 The `::` operator accesses module members, similar to map dot access.
 
+### std::kansei
+
+Interpreter related modules.
+
+### std::kansei::ast
+`std::kansei` exposes AST and S-Expr helpers for tooling and metaprogramming.
+```ruby
+use std::kansei
+ast = std::kansei::ast
+
+sexpr = ast.to_sexpr("a = 1 + 2")
+ast = ast.from_sexpr(sexpr)
+source = kansei.ast.to_source(ast)
+
+value_sexpr = kansei.value.to_sexpr([1i32, 2i32])
+value = kansei.value.from_sexpr(value_sexpr)
+```
+
+Available functions:
+- `std::kansei::ast::to_sexpr(src_or_ast)` -> S-Expr string
+- `std::kansei::ast::from_sexpr(sexpr)` -> `Ast`
+- `std::kansei::ast::to_source(src_or_ast)` -> canonical source string
+- `std::kansei::ast::from_source(src)` -> `Ast`
+- `std::kansei::value::to_sexpr(value)` -> S-Expr string
+- `std::kansei::value::from_sexpr(sexpr)` -> value
+
 ### Structs
 ```ruby
 struct Point

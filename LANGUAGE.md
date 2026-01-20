@@ -171,6 +171,14 @@ Available functions:
 
 `eval_in` evaluates the AST in a fresh environment populated from `env_map`. Pass `&program` to expose the program object, or `nil` to omit it.
 
+```ruby
+use std::kansei ast = std::kansei::ast
+
+env = { "x": 3 }
+ast.eval_in("x + 2", env, nil)    # -> 5
+ast.eval_in("program.name", env, &program)
+```
+
 ### std::kansei::value
 `std::kansei::value` exposes AST and S-Expr helpers for tooling and metaprogramming.
 ```ruby

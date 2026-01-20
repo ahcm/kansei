@@ -34,12 +34,12 @@ pub mod regex;
 pub mod serde;
 #[cfg(feature = "lib-sqlite")]
 pub mod sqlite;
-#[cfg(feature = "lib-tui")]
-pub mod tui;
 #[cfg(feature = "lib-tests")]
 pub mod tests;
 #[cfg(feature = "lib-toml")]
 pub mod toml;
+#[cfg(feature = "lib-tui")]
+pub mod tui;
 #[cfg(feature = "lib-uuid")]
 pub mod uuid;
 #[cfg(feature = "lib-yaml")]

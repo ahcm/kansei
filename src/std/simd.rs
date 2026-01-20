@@ -115,7 +115,10 @@ fn native_simd_sum(args: &[Value]) -> Result<Value, String>
             }
             Ok(make_signed_int(result as i128, IntKind::I32))
         }
-        _ => Err("simd.sum requires F64Array, F32Array, I64Array, or I32Array argument".to_string()),
+        _ =>
+        {
+            Err("simd.sum requires F64Array, F32Array, I64Array, or I32Array argument".to_string())
+        }
     }
 }
 
@@ -235,7 +238,8 @@ fn native_simd_dot(args: &[Value]) -> Result<Value, String>
             }
             Ok(make_signed_int(result as i128, IntKind::I32))
         }
-        _ => Err("simd.dot requires matching F64Array, F32Array, I64Array, or I32Array arguments".to_string()),
+        _ => Err("simd.dot requires matching F64Array, F32Array, I64Array, or I32Array arguments"
+            .to_string()),
     }
 }
 

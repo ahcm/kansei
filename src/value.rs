@@ -4,13 +4,13 @@ use crate::wasm::WasmFunction;
 use memmap2::{Mmap, MmapMut};
 use rusqlite::Connection;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::cell::RefCell;
-use std::fmt;
-use std::rc::Rc;
-#[cfg(feature = "lib-net")]
-use std::net::TcpStream;
 #[cfg(feature = "lib-net")]
 use rustls::{ClientConnection, StreamOwned};
+use std::cell::RefCell;
+use std::fmt;
+#[cfg(feature = "lib-net")]
+use std::net::TcpStream;
+use std::rc::Rc;
 
 use smallvec::SmallVec;
 
@@ -236,7 +236,6 @@ impl Environment
         self.values[idx] = val;
         self.version = self.version.wrapping_add(1);
     }
-
 
     // Set variable in current scope. If it's a reference, update referee.
     pub fn set(&mut self, name: SymbolId, val: Value)

@@ -180,7 +180,8 @@ pub fn build_file_module() -> Value
     file_map.insert(intern::intern("append"), Value::NativeFunction(native_file_append));
     file_map.insert(intern::intern("read_bytes"), Value::NativeFunction(native_file_read_bytes));
     file_map.insert(intern::intern("write_bytes"), Value::NativeFunction(native_file_write_bytes));
-    file_map.insert(intern::intern("append_bytes"), Value::NativeFunction(native_file_append_bytes));
+    file_map
+        .insert(intern::intern("append_bytes"), Value::NativeFunction(native_file_append_bytes));
     file_map.insert(intern::intern("exists"), Value::NativeFunction(native_file_exists));
     file_map.insert(intern::intern("remove"), Value::NativeFunction(native_file_remove));
     file_map.insert(intern::intern("mkdirs"), Value::NativeFunction(native_file_mkdirs));

@@ -3,12 +3,14 @@ use crate::eval::Interpreter;
 use crate::intern;
 use crate::value::{HostFunction, MapValue, Value};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
-use crossterm::{execute, cursor};
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
+use crossterm::{cursor, execute};
+use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
-use ratatui::Terminal;
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::io::{self};
@@ -107,7 +109,9 @@ fn ui_paragraph(_interp: &mut Interpreter, args: &[Value]) -> Result<Value, Stri
         Some(v) => Some(v.to_string()),
     };
     TUI_COMMANDS.with(|commands| {
-        commands.borrow_mut().push(TuiCommand::Paragraph { rect, text, title });
+        commands
+            .borrow_mut()
+            .push(TuiCommand::Paragraph { rect, text, title });
     });
     Ok(Value::Nil)
 }
@@ -115,13 +119,12 @@ fn ui_paragraph(_interp: &mut Interpreter, args: &[Value]) -> Result<Value, Stri
 fn ui_list(_interp: &mut Interpreter, args: &[Value]) -> Result<Value, String>
 {
     let rect = rect_from_args(args, 0, "Tui.list")?;
-    let items_val = args.get(4).ok_or_else(|| "Tui.list expects items".to_string())?;
+    let items_val = args
+        .get(4)
+        .ok_or_else(|| "Tui.list expects items".to_string())?;
     let items = match items_val
     {
-        Value::Array(arr) =>
-        {
-            arr.borrow().iter().map(|v| v.to_string()).collect()
-        }
+        Value::Array(arr) => arr.borrow().iter().map(|v| v.to_string()).collect(),
         _ => return Err("Tui.list expects an array".to_string()),
     };
     let title = match args.get(5)
@@ -130,7 +133,9 @@ fn ui_list(_interp: &mut Interpreter, args: &[Value]) -> Result<Value, String>
         Some(v) => Some(v.to_string()),
     };
     TUI_COMMANDS.with(|commands| {
-        commands.borrow_mut().push(TuiCommand::List { rect, items, title });
+        commands
+            .borrow_mut()
+            .push(TuiCommand::List { rect, items, title });
     });
     Ok(Value::Nil)
 }
@@ -140,10 +145,7 @@ fn make_ui_map() -> Value
     let mut map = FxHashMap::default();
     map.insert(intern::intern("clear"), Value::HostFunction(ui_clear as HostFunction));
     map.insert(intern::intern("size"), Value::HostFunction(ui_size as HostFunction));
-    map.insert(
-        intern::intern("paragraph"),
-        Value::HostFunction(ui_paragraph as HostFunction),
-    );
+    map.insert(intern::intern("paragraph"), Value::HostFunction(ui_paragraph as HostFunction));
     map.insert(intern::intern("list"), Value::HostFunction(ui_list as HostFunction));
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
 }
@@ -195,10 +197,7 @@ fn key_event_map(event: KeyEvent) -> Value
         }
         _ => "Other",
     };
-    map.insert(
-        intern::intern("code"),
-        Value::String(intern::intern_owned(code_str.to_string())),
-    );
+    map.insert(intern::intern("code"), Value::String(intern::intern_owned(code_str.to_string())));
     map.insert(intern::intern("modifiers"), modifiers_map(event.modifiers));
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
 }
@@ -258,7 +257,8 @@ fn event_value(event: Event) -> Value
                 },
             );
         }
-        _ => {}
+        _ =>
+        {}
     }
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
 }
@@ -291,14 +291,15 @@ fn tui_run(interp: &mut Interpreter, args: &[Value]) -> Result<Value, String>
                 (String::from("Kansei"), int_arg(args, 0, "Tui.run")? as u64, args[1].clone())
             }
         }
-        _ =>
-        {
-            (
-                args.get(0).map(|v| v.to_string()).unwrap_or_else(|| "Kansei".to_string()),
-                int_arg(args, 1, "Tui.run")? as u64,
-                args.get(2).cloned().ok_or_else(|| "Tui.run expects a callback".to_string())?,
-            )
-        }
+        _ => (
+            args.get(0)
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "Kansei".to_string()),
+            int_arg(args, 1, "Tui.run")? as u64,
+            args.get(2)
+                .cloned()
+                .ok_or_else(|| "Tui.run expects a callback".to_string())?,
+        ),
     };
 
     let mut stdout = io::stdout();
@@ -320,7 +321,9 @@ fn tui_run(interp: &mut Interpreter, args: &[Value]) -> Result<Value, String>
         TUI_SIZE.with(|s| *s.borrow_mut() = (size.width, size.height));
         TUI_COMMANDS.with(|commands| commands.borrow_mut().clear());
 
-        let timeout = tick.checked_sub(last_tick.elapsed()).unwrap_or(Duration::from_secs(0));
+        let timeout = tick
+            .checked_sub(last_tick.elapsed())
+            .unwrap_or(Duration::from_secs(0));
         let mut event_val = Value::Nil;
         if event::poll(timeout).map_err(|e| e.to_string())?
         {
@@ -334,10 +337,8 @@ fn tui_run(interp: &mut Interpreter, args: &[Value]) -> Result<Value, String>
             last_tick = Instant::now();
         }
 
-        let result = interp.call_value_from_host(
-            callback.clone(),
-            vec![ui_value.clone(), event_val],
-        )?;
+        let result =
+            interp.call_value_from_host(callback.clone(), vec![ui_value.clone(), event_val])?;
         if matches!(result, Value::Boolean(false))
         {
             break;

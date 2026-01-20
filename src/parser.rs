@@ -952,10 +952,10 @@ impl Parser
                 self.eat();
                 false
             }
-            _ => panic!(
-                "Expected 'file' or 'function' after @ at line {}",
-                self.current_token.line
-            ),
+            _ =>
+            {
+                panic!("Expected 'file' or 'function' after @ at line {}", self.current_token.line)
+            }
         };
         let expr = self.parse_assignment();
         if is_file

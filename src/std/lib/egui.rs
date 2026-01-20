@@ -1,7 +1,7 @@
+use super::LibMap;
 use crate::eval::Interpreter;
 use crate::intern;
 use crate::value::{HostFunction, MapValue, Value};
-use super::LibMap;
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -21,7 +21,9 @@ where
 {
     EGUI_UI.with(|cell| {
         let mut slot = cell.borrow_mut();
-        let ui_ptr = slot.take().ok_or_else(|| format!("{name} requires an active UI"))?;
+        let ui_ptr = slot
+            .take()
+            .ok_or_else(|| format!("{name} requires an active UI"))?;
         let result = unsafe { f(&mut *ui_ptr) };
         *slot = Some(ui_ptr);
         result
@@ -56,7 +58,8 @@ fn set_ref_value(target: &Value, value: Value, name: &str) -> Result<(), String>
 {
     match target
     {
-        Value::Reference(r) => {
+        Value::Reference(r) =>
+        {
             *r.borrow_mut() = value;
             Ok(())
         }
@@ -104,7 +107,9 @@ fn egui_ui_button(_interp: &mut Interpreter, args: &[Value]) -> Result<Value, St
 fn egui_ui_checkbox(_interp: &mut Interpreter, args: &[Value]) -> Result<Value, String>
 {
     let label = to_string_arg(args, 0, "egui.ui.checkbox")?;
-    let value = args.get(1).ok_or_else(|| "egui.ui.checkbox expects a reference".to_string())?;
+    let value = args
+        .get(1)
+        .ok_or_else(|| "egui.ui.checkbox expects a reference".to_string())?;
     let mut checked = match value
     {
         Value::Reference(r) => match &*r.borrow()
@@ -115,7 +120,8 @@ fn egui_ui_checkbox(_interp: &mut Interpreter, args: &[Value]) -> Result<Value, 
         _ => return Err("egui.ui.checkbox expects a reference".to_string()),
     };
 
-    let changed = with_egui_ui("egui.ui.checkbox", |ui| Ok(ui.checkbox(&mut checked, label).changed()))?;
+    let changed =
+        with_egui_ui("egui.ui.checkbox", |ui| Ok(ui.checkbox(&mut checked, label).changed()))?;
     if changed
     {
         set_ref_value(value, Value::Boolean(checked), "egui.ui.checkbox")?;
@@ -126,7 +132,9 @@ fn egui_ui_checkbox(_interp: &mut Interpreter, args: &[Value]) -> Result<Value, 
 #[cfg(feature = "lib-egui")]
 fn egui_ui_slider(_interp: &mut Interpreter, args: &[Value]) -> Result<Value, String>
 {
-    let value = args.get(0).ok_or_else(|| "egui.ui.slider expects a reference".to_string())?;
+    let value = args
+        .get(0)
+        .ok_or_else(|| "egui.ui.slider expects a reference".to_string())?;
     let mut current = match value
     {
         Value::Reference(r) => match &*r.borrow()
@@ -140,7 +148,10 @@ fn egui_ui_slider(_interp: &mut Interpreter, args: &[Value]) -> Result<Value, St
     };
     let min = to_f64_arg(args, 1, "egui.ui.slider")?;
     let max = to_f64_arg(args, 2, "egui.ui.slider")?;
-    let label = args.get(3).map(|_| to_string_arg(args, 3, "egui.ui.slider")).transpose()?;
+    let label = args
+        .get(3)
+        .map(|_| to_string_arg(args, 3, "egui.ui.slider"))
+        .transpose()?;
 
     let changed = with_egui_ui("egui.ui.slider", |ui| {
         let mut slider = egui::Slider::new(&mut current, min..=max);
@@ -152,7 +163,14 @@ fn egui_ui_slider(_interp: &mut Interpreter, args: &[Value]) -> Result<Value, St
     })?;
     if changed
     {
-        set_ref_value(value, Value::Float { value: current, kind: crate::ast::FloatKind::F64 }, "egui.ui.slider")?;
+        set_ref_value(
+            value,
+            Value::Float {
+                value: current,
+                kind: crate::ast::FloatKind::F64,
+            },
+            "egui.ui.slider",
+        )?;
     }
     Ok(Value::Boolean(changed))
 }
@@ -160,7 +178,9 @@ fn egui_ui_slider(_interp: &mut Interpreter, args: &[Value]) -> Result<Value, St
 #[cfg(feature = "lib-egui")]
 fn egui_ui_text_input(_interp: &mut Interpreter, args: &[Value]) -> Result<Value, String>
 {
-    let value = args.get(0).ok_or_else(|| "egui.ui.text_input expects a reference".to_string())?;
+    let value = args
+        .get(0)
+        .ok_or_else(|| "egui.ui.text_input expects a reference".to_string())?;
     let mut text = match value
     {
         Value::Reference(r) => match &*r.borrow()
@@ -170,7 +190,8 @@ fn egui_ui_text_input(_interp: &mut Interpreter, args: &[Value]) -> Result<Value
         },
         _ => return Err("egui.ui.text_input expects a reference".to_string()),
     };
-    let changed = with_egui_ui("egui.ui.text_input", |ui| Ok(ui.text_edit_singleline(&mut text).changed()))?;
+    let changed =
+        with_egui_ui("egui.ui.text_input", |ui| Ok(ui.text_edit_singleline(&mut text).changed()))?;
     if changed
     {
         set_ref_value(value, Value::String(intern::intern_owned(text)), "egui.ui.text_input")?;
@@ -181,19 +202,40 @@ fn egui_ui_text_input(_interp: &mut Interpreter, args: &[Value]) -> Result<Value
 #[cfg(feature = "lib-egui")]
 fn egui_run(interp: &mut Interpreter, args: &[Value]) -> Result<Value, String>
 {
-    let title = args.get(0).map(|v| v.to_string()).unwrap_or_else(|| "Kansei".to_string());
-    let width = args.get(1).map(|v| v.to_string().parse::<f32>().ok()).flatten().unwrap_or(640.0);
-    let height = args.get(2).map(|v| v.to_string().parse::<f32>().ok()).flatten().unwrap_or(480.0);
-    let callback = args.get(3).cloned().ok_or_else(|| "egui.run expects a callback".to_string())?;
+    let title = args
+        .get(0)
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "Kansei".to_string());
+    let width = args
+        .get(1)
+        .map(|v| v.to_string().parse::<f32>().ok())
+        .flatten()
+        .unwrap_or(640.0);
+    let height = args
+        .get(2)
+        .map(|v| v.to_string().parse::<f32>().ok())
+        .flatten()
+        .unwrap_or(480.0);
+    let callback = args
+        .get(3)
+        .cloned()
+        .ok_or_else(|| "egui.run expects a callback".to_string())?;
 
     let mut ui_map = FxHashMap::default();
     ui_map.insert(intern::intern("label"), Value::HostFunction(egui_ui_label as HostFunction));
     ui_map.insert(intern::intern("heading"), Value::HostFunction(egui_ui_heading as HostFunction));
-    ui_map.insert(intern::intern("separator"), Value::HostFunction(egui_ui_separator as HostFunction));
+    ui_map.insert(
+        intern::intern("separator"),
+        Value::HostFunction(egui_ui_separator as HostFunction),
+    );
     ui_map.insert(intern::intern("button"), Value::HostFunction(egui_ui_button as HostFunction));
-    ui_map.insert(intern::intern("checkbox"), Value::HostFunction(egui_ui_checkbox as HostFunction));
+    ui_map
+        .insert(intern::intern("checkbox"), Value::HostFunction(egui_ui_checkbox as HostFunction));
     ui_map.insert(intern::intern("slider"), Value::HostFunction(egui_ui_slider as HostFunction));
-    ui_map.insert(intern::intern("text_input"), Value::HostFunction(egui_ui_text_input as HostFunction));
+    ui_map.insert(
+        intern::intern("text_input"),
+        Value::HostFunction(egui_ui_text_input as HostFunction),
+    );
     let ui_value = Value::Map(Rc::new(RefCell::new(MapValue::new(ui_map))));
 
     let interp_ptr: *mut Interpreter = interp as *mut _;
@@ -210,12 +252,8 @@ fn egui_run(interp: &mut Interpreter, args: &[Value]) -> Result<Value, String>
         ..Default::default()
     };
 
-    eframe::run_native(
-        "Kansei",
-        options,
-        Box::new(|_cc| Box::new(app)),
-    )
-    .map_err(|e| format!("egui.run failed: {e}"))?;
+    eframe::run_native("Kansei", options, Box::new(|_cc| Box::new(app)))
+        .map_err(|e| format!("egui.run failed: {e}"))?;
 
     Ok(Value::Nil)
 }
@@ -278,6 +316,4 @@ pub fn build_egui_module() -> Value
 }
 
 #[cfg(not(feature = "lib-egui"))]
-pub fn register(_map: &mut LibMap)
-{
-}
+pub fn register(_map: &mut LibMap) {}

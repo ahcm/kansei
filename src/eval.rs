@@ -13,7 +13,9 @@ use crate::value::{
     MapAccessCacheEntry, MapValue, RangeEnd, RegBinOp, RegFunction, RegInstruction, StructType,
     Value,
 };
-use crate::wasm::{WasmBackend, WasmFunction, WasmModule, WasmValue, WasmValueType, parse_wasm_backend};
+use crate::wasm::{
+    WasmBackend, WasmFunction, WasmModule, WasmValue, WasmValueType, parse_wasm_backend,
+};
 use rustc_hash::FxHashMap;
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
@@ -62,10 +64,7 @@ fn handle_eval_result(result: EvalResult) -> EvalResult
     match result
     {
         Ok(v) => Ok(v),
-        Err(err) if is_early_return(&err) =>
-        {
-            Ok(take_early_return().unwrap_or(Value::Nil))
-        }
+        Err(err) if is_early_return(&err) => Ok(take_early_return().unwrap_or(Value::Nil)),
         Err(err) => Err(err),
     }
 }
@@ -73,7 +72,10 @@ fn handle_eval_result(result: EvalResult) -> EvalResult
 fn make_early_return_error(value: Value) -> RuntimeError
 {
     set_early_return(value);
-    RuntimeError { message: EARLY_RETURN_MARKER.to_string(), line: 0 }
+    RuntimeError {
+        message: EARLY_RETURN_MARKER.to_string(),
+        line: 0,
+    }
 }
 
 pub type EvalResult = Result<Value, RuntimeError>;
@@ -840,7 +842,8 @@ fn parse_format_spec(spec: &str, line: usize) -> Result<FormatSpec, RuntimeError
     })
 }
 
-fn split_format_expr(input: &str, line: usize) -> Result<(String, Option<FormatSpec>), RuntimeError>
+fn split_format_expr(input: &str, line: usize)
+-> Result<(String, Option<FormatSpec>), RuntimeError>
 {
     let mut depth_paren = 0usize;
     let mut depth_brack = 0usize;
@@ -958,7 +961,7 @@ fn parse_format_parts(content: &str, line: usize) -> Result<Vec<FormatPart>, Run
                     return Err(RuntimeError {
                         message: "Invalid format string expression".to_string(),
                         line,
-                    })
+                    });
                 }
             };
             parts.push(FormatPart::Expr {
@@ -2073,10 +2076,7 @@ fn uses_environment(expr: &Expr) -> bool
         ExprKind::And { left, right }
         | ExprKind::AndBool { left, right }
         | ExprKind::Or { left, right }
-        | ExprKind::OrBool { left, right } =>
-        {
-            uses_environment(left) || uses_environment(right)
-        }
+        | ExprKind::OrBool { left, right } => uses_environment(left) || uses_environment(right),
         ExprKind::Clone(expr) => uses_environment(expr),
         ExprKind::Use(_) => true,
         ExprKind::Load(_) => true,
@@ -2397,10 +2397,7 @@ fn is_pure_expr(expr: &Expr) -> bool
         ExprKind::And { left, right }
         | ExprKind::AndBool { left, right }
         | ExprKind::Or { left, right }
-        | ExprKind::OrBool { left, right } =>
-        {
-            is_pure_expr(left) && is_pure_expr(right)
-        }
+        | ExprKind::OrBool { left, right } => is_pure_expr(left) && is_pure_expr(right),
         ExprKind::BinaryOp { left, right, .. } => is_pure_expr(left) && is_pure_expr(right),
         _ => false,
     }
@@ -2918,14 +2915,14 @@ fn compile_expr(
                     let block_ref = Rc::new(block.as_ref().unwrap().clone());
                     match args.len()
                     {
-                        0 => code.push(Instruction::CallValueWithBlockCached0(
-                            call_cache,
-                            block_ref,
-                        )),
-                        1 => code.push(Instruction::CallValueWithBlockCached1(
-                            call_cache,
-                            block_ref,
-                        )),
+                        0 =>
+                        {
+                            code.push(Instruction::CallValueWithBlockCached0(call_cache, block_ref))
+                        }
+                        1 =>
+                        {
+                            code.push(Instruction::CallValueWithBlockCached1(call_cache, block_ref))
+                        }
                         _ => code.push(Instruction::CallValueWithBlockCached(
                             call_cache,
                             block_ref,
@@ -4012,12 +4009,9 @@ fn find_compile_failure(expr: &Expr) -> Option<String>
         {
             find_compile_failure(target).or_else(|| find_compile_failure(index))
         }
-        ExprKind::Slice { target, start, end } =>
-        {
-            find_compile_failure(target)
-                .or_else(|| find_compile_failure(start))
-                .or_else(|| find_compile_failure(end))
-        }
+        ExprKind::Slice { target, start, end } => find_compile_failure(target)
+            .or_else(|| find_compile_failure(start))
+            .or_else(|| find_compile_failure(end)),
         ExprKind::IndexAssignment {
             target,
             index,
@@ -4433,14 +4427,8 @@ fn format_bytecode_instruction(inst: &Instruction) -> String
         {
             "CallValueWithBlockCached1(<cache>, <block>)".to_string()
         }
-        Instruction::CallValueCached0(_) =>
-        {
-            "CallValueCached0(<cache>)".to_string()
-        }
-        Instruction::CallValueCached1(_) =>
-        {
-            "CallValueCached1(<cache>)".to_string()
-        }
+        Instruction::CallValueCached0(_) => "CallValueCached0(<cache>)".to_string(),
+        Instruction::CallValueCached1(_) => "CallValueCached1(<cache>)".to_string(),
         Instruction::CallMethodWithBlockCached(name, _, _, _, argc) =>
         {
             format!(
@@ -4450,17 +4438,11 @@ fn format_bytecode_instruction(inst: &Instruction) -> String
         }
         Instruction::CallMethodWithBlockCached0(name, _, _, _) =>
         {
-            format!(
-                "CallMethodWithBlockCached0({:?}, <map_cache>, <call_cache>, <block>)",
-                name
-            )
+            format!("CallMethodWithBlockCached0({:?}, <map_cache>, <call_cache>, <block>)", name)
         }
         Instruction::CallMethodWithBlockCached1(name, _, _, _) =>
         {
-            format!(
-                "CallMethodWithBlockCached1({:?}, <map_cache>, <call_cache>, <block>)",
-                name
-            )
+            format!("CallMethodWithBlockCached1({:?}, <map_cache>, <call_cache>, <block>)", name)
         }
         Instruction::CallMethodCached0(name, _, _) =>
         {
@@ -4917,10 +4899,7 @@ fn expr_size(expr: &Expr) -> usize
         ExprKind::And { left, right }
         | ExprKind::AndBool { left, right }
         | ExprKind::Or { left, right }
-        | ExprKind::OrBool { left, right } =>
-        {
-            1 + expr_size(left) + expr_size(right)
-        }
+        | ExprKind::OrBool { left, right } => 1 + expr_size(left) + expr_size(right),
         ExprKind::Assignment { value, .. } => 1 + expr_size(value),
         ExprKind::IndexAssignment {
             target,
@@ -5578,7 +5557,11 @@ fn resolve_method_value(
                 eval_map_index_cached(&map_ref, map_ptr, name, map_cache)
             }
         }
-        Value::Array(_) | Value::F32Array(_) | Value::F64Array(_) | Value::I32Array(_) | Value::I64Array(_) =>
+        Value::Array(_)
+        | Value::F32Array(_)
+        | Value::F64Array(_)
+        | Value::I32Array(_)
+        | Value::I64Array(_) =>
         {
             return Err(err_index_requires_int());
         }
@@ -6715,7 +6698,11 @@ fn eval_map_index_cached_value(
                 map.borrow().data.get(&key).cloned().unwrap_or(Value::Nil)
             }
         }
-        Value::Array(_) | Value::F32Array(_) | Value::F64Array(_) | Value::I32Array(_) | Value::I64Array(_) =>
+        Value::Array(_)
+        | Value::F32Array(_)
+        | Value::F64Array(_)
+        | Value::I32Array(_)
+        | Value::I64Array(_) =>
         {
             return Err(err_index_requires_int());
         }
@@ -7413,10 +7400,7 @@ fn execute_instructions(
     {
         match (existing, val)
         {
-            (Value::Reference(old_ref), Value::Reference(new_ref)) =>
-            {
-                Rc::ptr_eq(old_ref, new_ref)
-            }
+            (Value::Reference(old_ref), Value::Reference(new_ref)) => Rc::ptr_eq(old_ref, new_ref),
             _ => false,
         }
     }
@@ -8048,8 +8032,13 @@ fn execute_instructions(
                     frame.ip = *target;
                     continue;
                 }
-                Instruction::Add | Instruction::Sub | Instruction::Mul | Instruction::Div
-                | Instruction::Eq | Instruction::Gt | Instruction::Lt =>
+                Instruction::Add
+                | Instruction::Sub
+                | Instruction::Mul
+                | Instruction::Div
+                | Instruction::Eq
+                | Instruction::Gt
+                | Instruction::Lt =>
                 {
                     let r = frame.stack.pop().unwrap();
                     let l = frame.stack.pop().unwrap();
@@ -8089,7 +8078,8 @@ fn execute_instructions(
                     frame.ip += 1;
                     continue;
                 }
-                _ => {}
+                _ =>
+                {}
             }
 
             let inst = frame.code[frame.ip].clone();
@@ -8383,8 +8373,13 @@ fn execute_instructions(
                         line: 0,
                     })?;
                     let args = smallvec::SmallVec::<[Value; 8]>::new();
-                    let result =
-                        eval_call_value_cached_with_block(interpreter, func_val, args, &cache, &block)?;
+                    let result = eval_call_value_cached_with_block(
+                        interpreter,
+                        func_val,
+                        args,
+                        &cache,
+                        &block,
+                    )?;
                     frame.stack.push(result);
                 }
                 Instruction::CallValueWithBlockCached1(cache, block) =>
@@ -8399,8 +8394,13 @@ fn execute_instructions(
                     })?;
                     let mut args = smallvec::SmallVec::<[Value; 8]>::new();
                     args.push(arg);
-                    let result =
-                        eval_call_value_cached_with_block(interpreter, func_val, args, &cache, &block)?;
+                    let result = eval_call_value_cached_with_block(
+                        interpreter,
+                        func_val,
+                        args,
+                        &cache,
+                        &block,
+                    )?;
                     frame.stack.push(result);
                 }
                 Instruction::CallGlobalCached(name, global_cache, call_cache, argc) =>
@@ -8458,12 +8458,12 @@ fn execute_instructions(
                     let result = eval_call_value_cached(interpreter, func_val, args, &call_cache)?;
                     frame.stack.push(result);
                 }
-            Instruction::CallMethodWithBlockCached(
-                name,
-                map_cache,
-                call_cache,
-                block,
-                argc,
+                Instruction::CallMethodWithBlockCached(
+                    name,
+                    map_cache,
+                    call_cache,
+                    block,
+                    argc,
                 ) =>
                 {
                     let args = pop_args_from_stack(&mut frame.stack, argc)?;
@@ -8476,41 +8476,41 @@ fn execute_instructions(
                         &call_cache,
                         &block,
                     )?;
-                frame.stack.push(result);
-            }
-            Instruction::CallMethodWithBlockCached0(name, map_cache, call_cache, block) =>
-            {
-                let func_val =
-                    pop_method_target_and_resolve(&mut frame.stack, &name, &map_cache)?;
-                let args = smallvec::SmallVec::<[Value; 8]>::new();
-                let result = eval_call_value_cached_with_block(
-                    interpreter,
-                    func_val,
-                    args,
-                    &call_cache,
-                    &block,
-                )?;
-                frame.stack.push(result);
-            }
-            Instruction::CallMethodWithBlockCached1(name, map_cache, call_cache, block) =>
-            {
-                let arg = frame.stack.pop().ok_or_else(|| RuntimeError {
-                    message: "Missing argument for call".to_string(),
-                    line: 0,
-                })?;
-                let func_val =
-                    pop_method_target_and_resolve(&mut frame.stack, &name, &map_cache)?;
-                let mut args = smallvec::SmallVec::<[Value; 8]>::new();
-                args.push(arg);
-                let result = eval_call_value_cached_with_block(
-                    interpreter,
-                    func_val,
-                    args,
-                    &call_cache,
-                    &block,
-                )?;
-                frame.stack.push(result);
-            }
+                    frame.stack.push(result);
+                }
+                Instruction::CallMethodWithBlockCached0(name, map_cache, call_cache, block) =>
+                {
+                    let func_val =
+                        pop_method_target_and_resolve(&mut frame.stack, &name, &map_cache)?;
+                    let args = smallvec::SmallVec::<[Value; 8]>::new();
+                    let result = eval_call_value_cached_with_block(
+                        interpreter,
+                        func_val,
+                        args,
+                        &call_cache,
+                        &block,
+                    )?;
+                    frame.stack.push(result);
+                }
+                Instruction::CallMethodWithBlockCached1(name, map_cache, call_cache, block) =>
+                {
+                    let arg = frame.stack.pop().ok_or_else(|| RuntimeError {
+                        message: "Missing argument for call".to_string(),
+                        line: 0,
+                    })?;
+                    let func_val =
+                        pop_method_target_and_resolve(&mut frame.stack, &name, &map_cache)?;
+                    let mut args = smallvec::SmallVec::<[Value; 8]>::new();
+                    args.push(arg);
+                    let result = eval_call_value_cached_with_block(
+                        interpreter,
+                        func_val,
+                        args,
+                        &call_cache,
+                        &block,
+                    )?;
+                    frame.stack.push(result);
+                }
                 Instruction::ForEach { var_slot, body } =>
                 {
                     let iter_val = frame.stack.pop().ok_or_else(|| RuntimeError {
@@ -8903,17 +8903,17 @@ fn execute_instructions(
                         {
                             *slot = make_float(current, kind);
                         }
-                            frame.pending = Some(Pending::ForRangeFloat(ForRangeFloatState {
-                                index_slot,
-                                end,
-                                end_cached,
-                                fast_until,
-                                step: step_f,
-                                kind,
-                                body: body.clone(),
-                                current,
-                                last: Value::Nil,
-                            }));
+                        frame.pending = Some(Pending::ForRangeFloat(ForRangeFloatState {
+                            index_slot,
+                            end,
+                            end_cached,
+                            fast_until,
+                            step: step_f,
+                            kind,
+                            body: body.clone(),
+                            current,
+                            last: Value::Nil,
+                        }));
                         next_frame = Some(Frame {
                             code: body.clone(),
                             hot_cache: build_hot_cache(&body),
@@ -9495,7 +9495,7 @@ fn execute_instructions(
                                 message: "Slice is only supported for strings and arrays"
                                     .to_string(),
                                 line: 0,
-                            })
+                            });
                         }
                     };
                     frame.stack.push(result);
@@ -9788,12 +9788,16 @@ fn execute_instructions(
                             } =>
                             {
                                 let vals = vec![value as f32; n];
-                                frame.stack.push(Value::F32Array(Rc::new(RefCell::new(vals))));
+                                frame
+                                    .stack
+                                    .push(Value::F32Array(Rc::new(RefCell::new(vals))));
                             }
                             Value::Float { value, .. } =>
                             {
                                 let vals = vec![value; n];
-                                frame.stack.push(Value::F64Array(Rc::new(RefCell::new(vals))));
+                                frame
+                                    .stack
+                                    .push(Value::F64Array(Rc::new(RefCell::new(vals))));
                             }
                             Value::Integer {
                                 value,
@@ -9801,7 +9805,9 @@ fn execute_instructions(
                             } =>
                             {
                                 let vals = vec![value as i32; n];
-                                frame.stack.push(Value::I32Array(Rc::new(RefCell::new(vals))));
+                                frame
+                                    .stack
+                                    .push(Value::I32Array(Rc::new(RefCell::new(vals))));
                             }
                             Value::Unsigned {
                                 value,
@@ -9809,17 +9815,23 @@ fn execute_instructions(
                             } =>
                             {
                                 let vals = vec![value as i32; n];
-                                frame.stack.push(Value::I32Array(Rc::new(RefCell::new(vals))));
+                                frame
+                                    .stack
+                                    .push(Value::I32Array(Rc::new(RefCell::new(vals))));
                             }
                             Value::Integer { value, .. } =>
                             {
                                 let vals = vec![value as i64; n];
-                                frame.stack.push(Value::I64Array(Rc::new(RefCell::new(vals))));
+                                frame
+                                    .stack
+                                    .push(Value::I64Array(Rc::new(RefCell::new(vals))));
                             }
                             Value::Unsigned { value, .. } =>
                             {
                                 let vals = vec![value as i64; n];
-                                frame.stack.push(Value::I64Array(Rc::new(RefCell::new(vals))));
+                                frame
+                                    .stack
+                                    .push(Value::I64Array(Rc::new(RefCell::new(vals))));
                             }
                             _ =>
                             {
@@ -10794,7 +10806,9 @@ impl Interpreter
 
     fn take_stack(&mut self) -> Vec<Value>
     {
-        self.stack_pool.pop().unwrap_or_else(|| Vec::with_capacity(8))
+        self.stack_pool
+            .pop()
+            .unwrap_or_else(|| Vec::with_capacity(8))
     }
 
     fn recycle_stack(&mut self, mut stack: Vec<Value>)
@@ -11651,7 +11665,13 @@ impl Interpreter
                     Value::Bytes(_) => "Bytes",
                     Value::ByteBuf(_) => "ByteBuf",
                     Value::BytesView(_) => "BytesView",
-                    Value::StructType(ty) => return Ok(Value::String(intern::intern_owned(format!("StructType({})", ty.name)))),
+                    Value::StructType(ty) =>
+                    {
+                        return Ok(Value::String(intern::intern_owned(format!(
+                            "StructType({})",
+                            ty.name
+                        ))));
+                    }
                     Value::StructInstance(inst) => return Ok(Value::String(inst.ty.name.clone())),
                     Value::BoundMethod(_) => "BoundMethod",
                     Value::Map(_) => "Map",
@@ -12503,11 +12523,7 @@ impl Interpreter
                         line,
                     });
                 }
-                Some((
-                    String::from_utf8_lossy(&memory[start..end]).to_string(),
-                    str_ptr,
-                    str_len,
-                ))
+                Some((String::from_utf8_lossy(&memory[start..end]).to_string(), str_ptr, str_len))
             };
             if let Some(add) = module.wbindgen_add_to_stack_pointer.clone()
             {
@@ -12570,8 +12586,7 @@ impl Interpreter
         let wasm_result = wasm_results.get(0).cloned().unwrap_or(WasmValue::I32(0));
         match (results[0], wasm_result)
         {
-            (WasmValueType::I32, WasmValue::I32(v)) =>
-                Ok(make_signed_int(v as i128, IntKind::I32)),
+            (WasmValueType::I32, WasmValue::I32(v)) => Ok(make_signed_int(v as i128, IntKind::I32)),
             (WasmValueType::I64, WasmValue::I64(v)) =>
             {
                 if module.memory.is_some() && func.name.ends_with("_str")
@@ -12600,9 +12615,10 @@ impl Interpreter
                 }
             }
             (WasmValueType::F32, WasmValue::F32(value)) =>
-                Ok(make_float(value as f64, FloatKind::F32)),
-            (WasmValueType::F64, WasmValue::F64(value)) =>
-                Ok(make_float(value, FloatKind::F64)),
+            {
+                Ok(make_float(value as f64, FloatKind::F32))
+            }
+            (WasmValueType::F64, WasmValue::F64(value)) => Ok(make_float(value, FloatKind::F64)),
             _ => Ok(Value::Nil),
         }
     }

@@ -435,13 +435,13 @@ fn format_part_to_sexpr(part: &FormatPart) -> SExpr
 {
     match part
     {
-        FormatPart::Literal(text) => list("Literal", vec![SExpr::String(text.as_str().to_string())]),
+        FormatPart::Literal(text) =>
+        {
+            list("Literal", vec![SExpr::String(text.as_str().to_string())])
+        }
         FormatPart::Expr { expr, spec } =>
         {
-            list(
-                "ExprPart",
-                vec![expr_to_sexpr(expr), format_spec_to_sexpr(spec)],
-            )
+            list("ExprPart", vec![expr_to_sexpr(expr), format_spec_to_sexpr(spec)])
         }
     }
 }
@@ -592,43 +592,48 @@ pub fn expr_to_sexpr(expr: &Expr) -> SExpr
     let line_atom = atom(expr.line.to_string());
     match &expr.kind
     {
-        ExprKind::Integer { value, kind } =>
-        {
-            list(
-                "Integer",
-                vec![line_atom, atom(format!("{:?}", kind)), atom(value.to_string())],
-            )
-        }
-        ExprKind::Unsigned { value, kind } =>
-        {
-            list(
-                "Unsigned",
-                vec![line_atom, atom(format!("{:?}", kind)), atom(value.to_string())],
-            )
-        }
-        ExprKind::Float { value, kind } =>
-        {
-            list(
-                "Float",
-                vec![line_atom, atom(format!("{:?}", kind)), atom(value.to_string())],
-            )
-        }
+        ExprKind::Integer { value, kind } => list(
+            "Integer",
+            vec![
+                line_atom,
+                atom(format!("{:?}", kind)),
+                atom(value.to_string()),
+            ],
+        ),
+        ExprKind::Unsigned { value, kind } => list(
+            "Unsigned",
+            vec![
+                line_atom,
+                atom(format!("{:?}", kind)),
+                atom(value.to_string()),
+            ],
+        ),
+        ExprKind::Float { value, kind } => list(
+            "Float",
+            vec![
+                line_atom,
+                atom(format!("{:?}", kind)),
+                atom(value.to_string()),
+            ],
+        ),
         ExprKind::Identifier { name, slot } =>
         {
-            let slot_expr = slot.map(|s| atom(s.to_string())).unwrap_or_else(|| atom("nil"));
+            let slot_expr = slot
+                .map(|s| atom(s.to_string()))
+                .unwrap_or_else(|| atom("nil"));
             list("Identifier", vec![line_atom, symbol_to_atom(*name), slot_expr])
         }
-        ExprKind::Reference(name) =>
-        {
-            list("Reference", vec![line_atom, symbol_to_atom(*name)])
-        }
+        ExprKind::Reference(name) => list("Reference", vec![line_atom, symbol_to_atom(*name)]),
         ExprKind::String(s) =>
         {
             list("String", vec![line_atom, SExpr::String(s.as_str().to_string())])
         }
         ExprKind::Boolean(b) => list("Boolean", vec![line_atom, atom(b.to_string())]),
         ExprKind::Nil => list("Nil", vec![line_atom]),
-        ExprKind::Shell(cmd) => list("Shell", vec![line_atom, SExpr::String(cmd.as_str().to_string())]),
+        ExprKind::Shell(cmd) =>
+        {
+            list("Shell", vec![line_atom, SExpr::String(cmd.as_str().to_string())])
+        }
         ExprKind::Clone(expr) => list("Clone", vec![line_atom, expr_to_sexpr(expr)]),
         ExprKind::Not(expr) => list("Not", vec![line_atom, expr_to_sexpr(expr)]),
         ExprKind::And { left, right } =>
@@ -647,33 +652,43 @@ pub fn expr_to_sexpr(expr: &Expr) -> SExpr
         {
             list("OrBool", vec![line_atom, expr_to_sexpr(left), expr_to_sexpr(right)])
         }
-        ExprKind::BinaryOp { left, op, right } =>
-        {
-            list(
-                "BinaryOp",
-                vec![line_atom, op_to_atom(op), expr_to_sexpr(left), expr_to_sexpr(right)],
-            )
-        }
+        ExprKind::BinaryOp { left, op, right } => list(
+            "BinaryOp",
+            vec![
+                line_atom,
+                op_to_atom(op),
+                expr_to_sexpr(left),
+                expr_to_sexpr(right),
+            ],
+        ),
         ExprKind::Assignment { name, value, slot } =>
         {
-            let slot_expr = slot.map(|s| atom(s.to_string())).unwrap_or_else(|| atom("nil"));
+            let slot_expr = slot
+                .map(|s| atom(s.to_string()))
+                .unwrap_or_else(|| atom("nil"));
             list(
                 "Assignment",
-                vec![line_atom, symbol_to_atom(*name), expr_to_sexpr(value), slot_expr],
-            )
-        }
-        ExprKind::IndexAssignment { target, index, value } =>
-        {
-            list(
-                "IndexAssignment",
                 vec![
                     line_atom,
-                    expr_to_sexpr(target),
-                    expr_to_sexpr(index),
+                    symbol_to_atom(*name),
                     expr_to_sexpr(value),
+                    slot_expr,
                 ],
             )
         }
+        ExprKind::IndexAssignment {
+            target,
+            index,
+            value,
+        } => list(
+            "IndexAssignment",
+            vec![
+                line_atom,
+                expr_to_sexpr(target),
+                expr_to_sexpr(index),
+                expr_to_sexpr(value),
+            ],
+        ),
         ExprKind::Call {
             function,
             args,
@@ -782,7 +797,12 @@ pub fn expr_to_sexpr(expr: &Expr) -> SExpr
                 ],
             )
         }
-        ExprKind::FunctionDef { name, params, body, slots } =>
+        ExprKind::FunctionDef {
+            name,
+            params,
+            body,
+            slots,
+        } =>
         {
             let params_list = SExpr::List(params.iter().map(param_to_sexpr).collect());
             let slots_expr = slots
@@ -837,7 +857,11 @@ pub fn expr_to_sexpr(expr: &Expr) -> SExpr
                 ],
             )
         }
-        ExprKind::AnonymousFunction { params, body, slots } =>
+        ExprKind::AnonymousFunction {
+            params,
+            body,
+            slots,
+        } =>
         {
             let params_list = SExpr::List(params.iter().map(param_to_sexpr).collect());
             let slots_expr = slots
@@ -850,15 +874,7 @@ pub fn expr_to_sexpr(expr: &Expr) -> SExpr
                     SExpr::List(items)
                 })
                 .unwrap_or_else(|| atom("nil"));
-            list(
-                "AnonymousFunction",
-                vec![
-                    line_atom,
-                    params_list,
-                    expr_to_sexpr(body),
-                    slots_expr,
-                ],
-            )
+            list("AnonymousFunction", vec![line_atom, params_list, expr_to_sexpr(body), slots_expr])
         }
         ExprKind::Array(elements) =>
         {
@@ -899,10 +915,7 @@ pub fn expr_to_sexpr(expr: &Expr) -> SExpr
         }
         ExprKind::ArrayGenerator { generator, size } =>
         {
-            list(
-                "ArrayGenerator",
-                vec![line_atom, expr_to_sexpr(generator), expr_to_sexpr(size)],
-            )
+            list("ArrayGenerator", vec![line_atom, expr_to_sexpr(generator), expr_to_sexpr(size)])
         }
         ExprKind::Map(entries) =>
         {
@@ -915,27 +928,18 @@ pub fn expr_to_sexpr(expr: &Expr) -> SExpr
         }
         ExprKind::Index { target, index } =>
         {
-            list(
-                "Index",
-                vec![line_atom, expr_to_sexpr(target), expr_to_sexpr(index)],
-            )
+            list("Index", vec![line_atom, expr_to_sexpr(target), expr_to_sexpr(index)])
         }
-        ExprKind::Slice { target, start, end } =>
-        {
-            list(
-                "Slice",
-                vec![
-                    line_atom,
-                    expr_to_sexpr(target),
-                    expr_to_sexpr(start),
-                    expr_to_sexpr(end),
-                ],
-            )
-        }
-        ExprKind::Use(path) =>
-        {
-            list("Use", vec![line_atom, path_to_sexpr(path)])
-        }
+        ExprKind::Slice { target, start, end } => list(
+            "Slice",
+            vec![
+                line_atom,
+                expr_to_sexpr(target),
+                expr_to_sexpr(start),
+                expr_to_sexpr(end),
+            ],
+        ),
+        ExprKind::Use(path) => list("Use", vec![line_atom, path_to_sexpr(path)]),
         ExprKind::Import { path, alias } =>
         {
             let alias_expr = alias.map(symbol_to_atom).unwrap_or_else(|| atom("nil"));
@@ -957,15 +961,9 @@ pub fn expr_to_sexpr(expr: &Expr) -> SExpr
             {
                 name_items.push(symbol_to_atom(*name));
             }
-            list(
-                "Export",
-                vec![line_atom, namespace_expr, SExpr::List(name_items)],
-            )
+            list("Export", vec![line_atom, namespace_expr, SExpr::List(name_items)])
         }
-        ExprKind::FilePublic(expr) =>
-        {
-            list("FilePublic", vec![line_atom, expr_to_sexpr(expr)])
-        }
+        ExprKind::FilePublic(expr) => list("FilePublic", vec![line_atom, expr_to_sexpr(expr)]),
         ExprKind::FunctionPublic(expr) =>
         {
             list("FunctionPublic", vec![line_atom, expr_to_sexpr(expr)])
@@ -980,10 +978,7 @@ pub fn expr_to_sexpr(expr: &Expr) -> SExpr
             let part_list = SExpr::List(parts.iter().map(format_part_to_sexpr).collect());
             list("FormatString", vec![line_atom, part_list])
         }
-        ExprKind::Load(path) =>
-        {
-            list("Load", vec![line_atom, path_to_sexpr(path)])
-        }
+        ExprKind::Load(path) => list("Load", vec![line_atom, path_to_sexpr(path)]),
     }
 }
 
@@ -1653,10 +1648,7 @@ pub fn value_to_sexpr(value: &Value) -> Result<SExpr, String>
         }
         Value::Float { value, kind } =>
         {
-            Ok(list(
-                "float",
-                vec![atom(format!("{:?}", kind)), atom(value.to_string())],
-            ))
+            Ok(list("float", vec![atom(format!("{:?}", kind)), atom(value.to_string())]))
         }
         Value::String(s) => Ok(SExpr::String(s.as_str().to_string())),
         Value::Array(arr) =>
@@ -1763,7 +1755,10 @@ pub fn value_to_sexpr(value: &Value) -> Result<SExpr, String>
             {
                 entries.push(list(
                     "entry",
-                    vec![SExpr::String(key.as_str().to_string()), value_to_sexpr(value)?],
+                    vec![
+                        SExpr::String(key.as_str().to_string()),
+                        value_to_sexpr(value)?,
+                    ],
                 ));
             }
             Ok(SExpr::List(entries))

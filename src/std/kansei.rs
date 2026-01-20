@@ -19,7 +19,9 @@ fn parse_ast(source: &str) -> Result<Expr, String>
 
 fn native_ast_to_sexpr(args: &[Value]) -> Result<Value, String>
 {
-    let arg = args.get(0).ok_or_else(|| "ast.to_sexpr expects a value".to_string())?;
+    let arg = args
+        .get(0)
+        .ok_or_else(|| "ast.to_sexpr expects a value".to_string())?;
     let sexpr = match arg
     {
         Value::String(s) =>
@@ -84,8 +86,10 @@ fn native_ast_eval_in(interpreter: &mut Interpreter, args: &[Value]) -> Result<V
     {
         match val
         {
-            Value::Nil => {}
-            Value::Reference(_) => {}
+            Value::Nil =>
+            {}
+            Value::Reference(_) =>
+            {}
             _ => return Err("ast.eval_in expects &program or nil as third argument".to_string()),
         }
     }
@@ -97,7 +101,9 @@ fn native_ast_eval_in(interpreter: &mut Interpreter, args: &[Value]) -> Result<V
 
 fn native_ast_to_source(args: &[Value]) -> Result<Value, String>
 {
-    let arg = args.get(0).ok_or_else(|| "ast.to_source expects a value".to_string())?;
+    let arg = args
+        .get(0)
+        .ok_or_else(|| "ast.to_source expects a value".to_string())?;
     let source = match arg
     {
         Value::String(s) =>
@@ -146,42 +152,19 @@ pub fn build_kansei_module() -> Value
 {
     let mut ast_map = FxHashMap::default();
     ast_map.insert(intern::intern("to_sexpr"), Value::NativeFunction(native_ast_to_sexpr));
-    ast_map.insert(
-        intern::intern("from_sexpr"),
-        Value::NativeFunction(native_ast_from_sexpr),
-    );
-    ast_map.insert(
-        intern::intern("from_source"),
-        Value::NativeFunction(native_ast_from_source),
-    );
-    ast_map.insert(
-        intern::intern("to_source"),
-        Value::NativeFunction(native_ast_to_source),
-    );
-    ast_map.insert(
-        intern::intern("eval_in"),
-        Value::HostFunction(native_ast_eval_in as HostFunction),
-    );
+    ast_map.insert(intern::intern("from_sexpr"), Value::NativeFunction(native_ast_from_sexpr));
+    ast_map.insert(intern::intern("from_source"), Value::NativeFunction(native_ast_from_source));
+    ast_map.insert(intern::intern("to_source"), Value::NativeFunction(native_ast_to_source));
+    ast_map
+        .insert(intern::intern("eval_in"), Value::HostFunction(native_ast_eval_in as HostFunction));
 
     let mut value_map = FxHashMap::default();
-    value_map.insert(
-        intern::intern("to_sexpr"),
-        Value::NativeFunction(native_value_to_sexpr),
-    );
-    value_map.insert(
-        intern::intern("from_sexpr"),
-        Value::NativeFunction(native_value_from_sexpr),
-    );
-    value_map.insert(
-        intern::intern("inspect"),
-        Value::NativeFunction(native_value_inspect),
-    );
+    value_map.insert(intern::intern("to_sexpr"), Value::NativeFunction(native_value_to_sexpr));
+    value_map.insert(intern::intern("from_sexpr"), Value::NativeFunction(native_value_from_sexpr));
+    value_map.insert(intern::intern("inspect"), Value::NativeFunction(native_value_inspect));
 
     let mut root = FxHashMap::default();
-    root.insert(
-        intern::intern("ast"),
-        Value::Map(Rc::new(RefCell::new(MapValue::new(ast_map)))),
-    );
+    root.insert(intern::intern("ast"), Value::Map(Rc::new(RefCell::new(MapValue::new(ast_map)))));
     root.insert(
         intern::intern("value"),
         Value::Map(Rc::new(RefCell::new(MapValue::new(value_map)))),

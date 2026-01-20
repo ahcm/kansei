@@ -1,6 +1,6 @@
+use super::LibMap;
 use crate::ast::IntKind;
 use crate::intern;
-use super::LibMap;
 use crate::value::{MapValue, Value};
 use polars::prelude::*;
 use rustc_hash::FxHashMap;

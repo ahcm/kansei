@@ -3,12 +3,12 @@ use std::cell::RefCell;
 use std::fs;
 use std::path::Path;
 use std::rc::Rc;
+use wasmi::core::ValueType as WasmiValueType;
 use wasmi::{
     Engine as WasmiEngine, ExternType as WasmiExternType, Func as WasmiFunc,
     FuncType as WasmiFuncType, Instance as WasmiInstance, Linker as WasmiLinker,
     Memory as WasmiMemory, Module as WasmiModule, Store as WasmiStore, Value as WasmiValue,
 };
-use wasmi::core::ValueType as WasmiValueType;
 
 #[cfg(feature = "wasmtime")]
 use wasmtime::{
@@ -375,10 +375,13 @@ impl WasmModule
         {
             (WasmBackend::Wasmi, WasmFuncHandle::Wasmi(func)) =>
             {
-                let mut wasm_results: Vec<WasmiValue> =
-                    vec![WasmiValue::I32(0); results.len()];
-                let wasm_args: Vec<WasmiValue> = args.iter().cloned().map(wasmi_value_from).collect();
-                let backend = self.wasmi.as_mut().ok_or_else(|| "Missing wasmi store".to_string())?;
+                let mut wasm_results: Vec<WasmiValue> = vec![WasmiValue::I32(0); results.len()];
+                let wasm_args: Vec<WasmiValue> =
+                    args.iter().cloned().map(wasmi_value_from).collect();
+                let backend = self
+                    .wasmi
+                    .as_mut()
+                    .ok_or_else(|| "Missing wasmi store".to_string())?;
                 func.call(&mut backend.store, &wasm_args, &mut wasm_results)
                     .map_err(|e| format!("{}", e))?;
                 for (slot, value) in results.iter_mut().zip(wasm_results)
@@ -390,8 +393,7 @@ impl WasmModule
             #[cfg(feature = "wasmtime")]
             (WasmBackend::Wasmtime, WasmFuncHandle::Wasmtime(func)) =>
             {
-                let mut wasm_results: Vec<WasmtimeVal> =
-                    vec![WasmtimeVal::I32(0); results.len()];
+                let mut wasm_results: Vec<WasmtimeVal> = vec![WasmtimeVal::I32(0); results.len()];
                 let wasm_args: Vec<WasmtimeVal> =
                     args.iter().cloned().map(wasmtime_value_from).collect();
                 let backend = self
@@ -425,7 +427,9 @@ impl WasmModule
             if let WasmiExternType::Func(func_type) = import.ty()
             {
                 let func =
-                    WasmiFunc::new(&mut store, func_type.clone(), |_caller, _params, _results| Ok(()));
+                    WasmiFunc::new(&mut store, func_type.clone(), |_caller, _params, _results| {
+                        Ok(())
+                    });
                 linker
                     .define(import.module(), import.name(), func)
                     .map_err(|e| {

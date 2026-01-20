@@ -1,5 +1,5 @@
-use crate::intern;
 use super::LibMap;
+use crate::intern;
 use crate::value::{MapValue, Value};
 use memmap2::{Mmap, MmapMut};
 use rustc_hash::FxHashMap;

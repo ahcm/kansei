@@ -7,8 +7,8 @@ mod intern;
 mod kansei_std;
 mod lexer;
 mod parser;
-mod source;
 mod sexpr;
+mod source;
 mod value;
 mod wasm;
 
@@ -21,8 +21,8 @@ use std::env;
 use std::fs;
 use std::panic;
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::process;
+use std::rc::Rc;
 
 fn native_program_exit(args: &[value::Value]) -> Result<value::Value, String>
 {
@@ -208,10 +208,7 @@ fn main() -> rustyline::Result<()>
                 .collect(),
         ))),
     );
-    program_map.insert(
-        intern::intern("exit"),
-        value::Value::NativeFunction(native_program_exit),
-    );
+    program_map.insert(intern::intern("exit"), value::Value::NativeFunction(native_program_exit));
 
     interpreter.define_global(
         intern::intern_symbol("program"),
@@ -221,14 +218,7 @@ fn main() -> rustyline::Result<()>
     if let Some(path) = script_path
     {
         interpreter.set_main_path(std::path::Path::new(&path));
-        run_file(
-            &path,
-            interpreter,
-            dump_ast,
-            dump_ast_sexpr,
-            dump_bytecode,
-            bytecode_mode,
-        );
+        run_file(&path, interpreter, dump_ast, dump_ast_sexpr, dump_bytecode, bytecode_mode);
         Ok(())
     }
     else if let Some(source) = evaluate_source

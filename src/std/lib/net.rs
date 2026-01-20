@@ -1,7 +1,7 @@
 use super::LibMap;
 use crate::ast::TypeRef;
 use crate::intern;
-use crate::value::{MapValue, StructField, StructInstance, StructType, Value, NetStream};
+use crate::value::{MapValue, NetStream, StructField, StructInstance, StructType, Value};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::io::{Read, Write};
@@ -10,8 +10,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use rustls::{ClientConfig, ClientConnection, StreamOwned};
 use rustls::pki_types::ServerName;
+use rustls::{ClientConfig, ClientConnection, StreamOwned};
 use webpki_roots::TLS_SERVER_ROOTS;
 
 thread_local! {
@@ -66,10 +66,7 @@ fn bytes_arg(args: &[Value], idx: usize, name: &str) -> Result<Vec<u8>, String>
             let end = view.offset.saturating_add(view.len);
             match &view.source
             {
-                crate::value::BytesViewSource::Mmap(mmap) =>
-                {
-                    Ok(mmap[view.offset..end].to_vec())
-                }
+                crate::value::BytesViewSource::Mmap(mmap) => Ok(mmap[view.offset..end].to_vec()),
                 crate::value::BytesViewSource::MmapMut(mmap) =>
                 {
                     let data = mmap.borrow();
@@ -174,7 +171,8 @@ fn net_connect(args: &[Value]) -> Result<Value, String>
 fn net_read(args: &[Value]) -> Result<Value, String>
 {
     let stream = stream_from_value(
-        args.get(0).ok_or_else(|| "NetStream.read expects a receiver".to_string())?,
+        args.get(0)
+            .ok_or_else(|| "NetStream.read expects a receiver".to_string())?,
         "NetStream.read",
     )?;
     let n = int_arg(args, 1, "NetStream.read")?;
@@ -194,7 +192,8 @@ fn net_read(args: &[Value]) -> Result<Value, String>
 fn net_read_line(args: &[Value]) -> Result<Value, String>
 {
     let stream = stream_from_value(
-        args.get(0).ok_or_else(|| "NetStream.read_line expects a receiver".to_string())?,
+        args.get(0)
+            .ok_or_else(|| "NetStream.read_line expects a receiver".to_string())?,
         "NetStream.read_line",
     )?;
     let max = match args.get(1)
@@ -226,7 +225,8 @@ fn net_read_line(args: &[Value]) -> Result<Value, String>
 fn net_write(args: &[Value]) -> Result<Value, String>
 {
     let stream = stream_from_value(
-        args.get(0).ok_or_else(|| "NetStream.write expects a receiver".to_string())?,
+        args.get(0)
+            .ok_or_else(|| "NetStream.write expects a receiver".to_string())?,
         "NetStream.write",
     )?;
     let data = bytes_arg(args, 1, "NetStream.write")?;
@@ -243,7 +243,8 @@ fn net_write(args: &[Value]) -> Result<Value, String>
 fn net_flush(args: &[Value]) -> Result<Value, String>
 {
     let stream = stream_from_value(
-        args.get(0).ok_or_else(|| "NetStream.flush expects a receiver".to_string())?,
+        args.get(0)
+            .ok_or_else(|| "NetStream.flush expects a receiver".to_string())?,
         "NetStream.flush",
     )?;
     with_stream_mut(&stream, |s| {
@@ -256,7 +257,8 @@ fn net_flush(args: &[Value]) -> Result<Value, String>
 fn net_close(args: &[Value]) -> Result<Value, String>
 {
     let stream = stream_from_value(
-        args.get(0).ok_or_else(|| "NetStream.close expects a receiver".to_string())?,
+        args.get(0)
+            .ok_or_else(|| "NetStream.close expects a receiver".to_string())?,
         "NetStream.close",
     )?;
     with_tcp_mut(&stream, |s| {
@@ -269,7 +271,8 @@ fn net_close(args: &[Value]) -> Result<Value, String>
 fn net_set_timeout(args: &[Value]) -> Result<Value, String>
 {
     let stream = stream_from_value(
-        args.get(0).ok_or_else(|| "NetStream.set_timeout expects a receiver".to_string())?,
+        args.get(0)
+            .ok_or_else(|| "NetStream.set_timeout expects a receiver".to_string())?,
         "NetStream.set_timeout",
     )?;
     let read_ms = match args.get(1)
@@ -304,10 +307,7 @@ pub fn build_net_module() -> Value
     methods.insert(intern::intern("write"), Value::NativeFunction(net_write));
     methods.insert(intern::intern("flush"), Value::NativeFunction(net_flush));
     methods.insert(intern::intern("close"), Value::NativeFunction(net_close));
-    methods.insert(
-        intern::intern("set_timeout"),
-        Value::NativeFunction(net_set_timeout),
-    );
+    methods.insert(intern::intern("set_timeout"), Value::NativeFunction(net_set_timeout));
 
     let ty = Rc::new(StructType {
         name: intern::intern("NetStream"),

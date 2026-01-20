@@ -1,5 +1,5 @@
-use base64::engine::general_purpose::STANDARD as BASE64_STD;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STD;
 use image::ImageEncoder;
 use plotters::coord::Shift;
 use plotters::prelude::*;
@@ -280,9 +280,11 @@ fn draw_scatter_chart<B: DrawingBackend>(
     for (idx, points) in series.iter().enumerate()
     {
         let color = colors.get(idx).cloned().unwrap_or(RGBColor(30, 136, 229));
-        chart.draw_series(points.iter().map(|(x, y)| {
-            Circle::new((*x, *y), 3, ShapeStyle::from(&color).filled())
-        }))?;
+        chart.draw_series(
+            points
+                .iter()
+                .map(|(x, y)| Circle::new((*x, *y), 3, ShapeStyle::from(&color).filled())),
+        )?;
     }
     root.present()?;
     Ok(())
@@ -336,7 +338,10 @@ fn draw_bar_chart<B: DrawingBackend>(
     let bar_width = group_width / series.len() as f64;
     for (series_idx, points) in series.iter().enumerate()
     {
-        let color = colors.get(series_idx).cloned().unwrap_or(RGBColor(30, 136, 229));
+        let color = colors
+            .get(series_idx)
+            .cloned()
+            .unwrap_or(RGBColor(30, 136, 229));
         chart.draw_series(points.iter().map(|(x, y)| {
             let offset = (series_idx as f64 * bar_width) - (group_width / 2.0);
             let x0 = x + offset;
@@ -350,18 +355,20 @@ fn draw_bar_chart<B: DrawingBackend>(
     Ok(())
 }
 
-type SvgDrawFn = for<'a> fn(
-    DrawingArea<SVGBackend<'a>, Shift>,
-    &'a [Vec<(f64, f64)>],
-    &'a [RGBColor],
-    f64,
-    f64,
-    f64,
-    f64,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-) -> Result<(), DrawingAreaErrorKind<<SVGBackend<'a> as DrawingBackend>::ErrorType>>;
+type SvgDrawFn =
+    for<'a> fn(
+        DrawingArea<SVGBackend<'a>, Shift>,
+        &'a [Vec<(f64, f64)>],
+        &'a [RGBColor],
+        f64,
+        f64,
+        f64,
+        f64,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )
+        -> Result<(), DrawingAreaErrorKind<<SVGBackend<'a> as DrawingBackend>::ErrorType>>;
 
 type PngDrawFn = for<'a> fn(
     DrawingArea<BitMapBackend<'a>, Shift>,
@@ -374,7 +381,10 @@ type PngDrawFn = for<'a> fn(
     Option<String>,
     Option<String>,
     Option<String>,
-) -> Result<(), DrawingAreaErrorKind<<BitMapBackend<'a> as DrawingBackend>::ErrorType>>;
+) -> Result<
+    (),
+    DrawingAreaErrorKind<<BitMapBackend<'a> as DrawingBackend>::ErrorType>,
+>;
 
 fn build_chart_svg(
     series: Vec<Vec<(f64, f64)>>,
@@ -394,18 +404,8 @@ fn build_chart_svg(
     let mut svg = String::new();
     let backend = SVGBackend::with_string(&mut svg, (width, height));
     let root = backend.into_drawing_area();
-    let result = (draw)(
-        root,
-        &series,
-        &colors,
-        min_x,
-        max_x,
-        min_y,
-        max_y,
-        title,
-        x_label,
-        y_label,
-    );
+    let result =
+        (draw)(root, &series, &colors, min_x, max_x, min_y, max_y, title, x_label, y_label);
     if result.is_err()
     {
         return 0;
@@ -426,9 +426,7 @@ fn draw_line_chart_svg<'a>(
     y_label: Option<String>,
 ) -> Result<(), DrawingAreaErrorKind<<SVGBackend<'a> as DrawingBackend>::ErrorType>>
 {
-    draw_line_chart(
-        root, series, colors, min_x, max_x, min_y, max_y, title, x_label, y_label,
-    )
+    draw_line_chart(root, series, colors, min_x, max_x, min_y, max_y, title, x_label, y_label)
 }
 
 fn draw_line_chart_png<'a>(
@@ -444,9 +442,7 @@ fn draw_line_chart_png<'a>(
     y_label: Option<String>,
 ) -> Result<(), DrawingAreaErrorKind<<BitMapBackend<'a> as DrawingBackend>::ErrorType>>
 {
-    draw_line_chart(
-        root, series, colors, min_x, max_x, min_y, max_y, title, x_label, y_label,
-    )
+    draw_line_chart(root, series, colors, min_x, max_x, min_y, max_y, title, x_label, y_label)
 }
 
 fn draw_scatter_chart_svg<'a>(
@@ -462,9 +458,7 @@ fn draw_scatter_chart_svg<'a>(
     y_label: Option<String>,
 ) -> Result<(), DrawingAreaErrorKind<<SVGBackend<'a> as DrawingBackend>::ErrorType>>
 {
-    draw_scatter_chart(
-        root, series, colors, min_x, max_x, min_y, max_y, title, x_label, y_label,
-    )
+    draw_scatter_chart(root, series, colors, min_x, max_x, min_y, max_y, title, x_label, y_label)
 }
 
 fn draw_scatter_chart_png<'a>(
@@ -480,9 +474,7 @@ fn draw_scatter_chart_png<'a>(
     y_label: Option<String>,
 ) -> Result<(), DrawingAreaErrorKind<<BitMapBackend<'a> as DrawingBackend>::ErrorType>>
 {
-    draw_scatter_chart(
-        root, series, colors, min_x, max_x, min_y, max_y, title, x_label, y_label,
-    )
+    draw_scatter_chart(root, series, colors, min_x, max_x, min_y, max_y, title, x_label, y_label)
 }
 
 fn draw_bar_chart_svg<'a>(
@@ -498,9 +490,7 @@ fn draw_bar_chart_svg<'a>(
     y_label: Option<String>,
 ) -> Result<(), DrawingAreaErrorKind<<SVGBackend<'a> as DrawingBackend>::ErrorType>>
 {
-    draw_bar_chart(
-        root, series, colors, min_x, max_x, min_y, max_y, title, x_label, y_label,
-    )
+    draw_bar_chart(root, series, colors, min_x, max_x, min_y, max_y, title, x_label, y_label)
 }
 
 fn draw_bar_chart_png<'a>(
@@ -516,9 +506,7 @@ fn draw_bar_chart_png<'a>(
     y_label: Option<String>,
 ) -> Result<(), DrawingAreaErrorKind<<BitMapBackend<'a> as DrawingBackend>::ErrorType>>
 {
-    draw_bar_chart(
-        root, series, colors, min_x, max_x, min_y, max_y, title, x_label, y_label,
-    )
+    draw_bar_chart(root, series, colors, min_x, max_x, min_y, max_y, title, x_label, y_label)
 }
 
 fn build_chart_png(
@@ -539,18 +527,8 @@ fn build_chart_png(
     let mut buffer = vec![0u8; (width as usize) * (height as usize) * 3];
     let backend = BitMapBackend::with_buffer(&mut buffer, (width, height));
     let root = backend.into_drawing_area();
-    let result = (draw)(
-        root,
-        &series,
-        &colors,
-        min_x,
-        max_x,
-        min_y,
-        max_y,
-        title,
-        x_label,
-        y_label,
-    );
+    let result =
+        (draw)(root, &series, &colors, min_x, max_x, min_y, max_y, title, x_label, y_label);
     if result.is_err()
     {
         return 0;
@@ -559,12 +537,7 @@ fn build_chart_png(
     {
         let encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
         if encoder
-            .write_image(
-                &buffer,
-                width,
-                height,
-                image::ColorType::Rgb8.into(),
-            )
+            .write_image(&buffer, width, height, image::ColorType::Rgb8.into())
             .is_err()
         {
             return 0;

@@ -1,4 +1,6 @@
-use crate::ast::{Closure, Expr, ExprKind, FloatKind, FormatPart, IntKind, Op, Param, ParamType, TypeRef};
+use crate::ast::{
+    Closure, Expr, ExprKind, FloatKind, FormatPart, IntKind, Op, Param, ParamType, TypeRef,
+};
 use crate::intern;
 
 const INDENT: &str = "  ";
@@ -30,7 +32,9 @@ fn format_stmt(expr: &Expr, indent: usize) -> String
             }
             out
         }
-        ExprKind::FunctionDef { name, params, body, .. } =>
+        ExprKind::FunctionDef {
+            name, params, body, ..
+        } =>
         {
             let mut out = String::new();
             out.push_str(&indent_str(indent));
@@ -127,7 +131,12 @@ fn format_stmt(expr: &Expr, indent: usize) -> String
             out.push_str("end");
             out
         }
-        ExprKind::For { var, iterable, body, .. } =>
+        ExprKind::For {
+            var,
+            iterable,
+            body,
+            ..
+        } =>
         {
             let mut out = String::new();
             out.push_str(&indent_str(indent));
@@ -142,7 +151,9 @@ fn format_stmt(expr: &Expr, indent: usize) -> String
             out.push_str("end");
             out
         }
-        ExprKind::Loop { count, var, body, .. } =>
+        ExprKind::Loop {
+            count, var, body, ..
+        } =>
         {
             let mut out = String::new();
             out.push_str(&indent_str(indent));
@@ -304,13 +315,13 @@ fn format_expr(expr: &Expr, indent: usize) -> String
         }
         ExprKind::Assignment { name, value, .. } =>
         {
-            format!(
-                "{} = {}",
-                intern::symbol_name(*name).as_str(),
-                format_expr(value, indent)
-            )
+            format!("{} = {}", intern::symbol_name(*name).as_str(), format_expr(value, indent))
         }
-        ExprKind::IndexAssignment { target, index, value } =>
+        ExprKind::IndexAssignment {
+            target,
+            index,
+            value,
+        } =>
         {
             format!(
                 "{}[{}] = {}",
@@ -377,10 +388,7 @@ fn format_expr(expr: &Expr, indent: usize) -> String
         | ExprKind::MethodDef { .. }
         | ExprKind::AnonymousFunction { .. }
         | ExprKind::StructDef { .. }
-        | ExprKind::Block(_) =>
-        {
-            format_stmt(expr, indent)
-        }
+        | ExprKind::Block(_) => format_stmt(expr, indent),
         ExprKind::Array(elements) =>
         {
             format!(
@@ -420,11 +428,7 @@ fn format_expr(expr: &Expr, indent: usize) -> String
         }
         ExprKind::ArrayGenerator { generator, size } =>
         {
-            format!(
-                "[{}; {}]",
-                format_expr(generator, indent),
-                format_expr(size, indent)
-            )
+            format!("[{}; {}]", format_expr(generator, indent), format_expr(size, indent))
         }
         ExprKind::Map(entries) =>
         {
@@ -465,10 +469,7 @@ fn format_expr(expr: &Expr, indent: usize) -> String
         | ExprKind::Export { .. }
         | ExprKind::Load(_)
         | ExprKind::FilePublic(_)
-        | ExprKind::FunctionPublic(_) =>
-        {
-            format_stmt(expr, indent)
-        }
+        | ExprKind::FunctionPublic(_) => format_stmt(expr, indent),
         ExprKind::FormatString(parts) => format_format_string(parts, indent),
     }
 }

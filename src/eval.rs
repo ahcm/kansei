@@ -15482,4 +15482,37 @@ impl Interpreter
             }
         }
     }
+
+    pub fn eval_ast_in(
+        &mut self,
+        mut ast: Expr,
+        env_map: Rc<RefCell<MapValue>>,
+        program: Option<Value>,
+    ) -> EvalResult
+    {
+        resolve_slots(&mut ast);
+        let new_env = self.get_env(None, false);
+        {
+            let map_ref = env_map.borrow();
+            for (key, value) in map_ref.data.iter()
+            {
+                let name = intern::intern_symbol(key.as_str());
+                new_env.borrow_mut().define(name, value.clone());
+            }
+        }
+        if let Some(Value::Reference(reference)) = program
+        {
+            let program_sym = intern::intern_symbol("program");
+            new_env
+                .borrow_mut()
+                .define(program_sym, Value::Reference(reference));
+        }
+
+        let original_env = self.env.clone();
+        self.env = new_env.clone();
+        let result = self.eval(&ast, &mut []);
+        self.env = original_env;
+        self.recycle_env(new_env);
+        result
+    }
 }

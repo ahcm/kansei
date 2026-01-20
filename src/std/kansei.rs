@@ -1,5 +1,5 @@
 use crate::ast::Expr;
-use crate::eval::{resolve_slots, Interpreter};
+use crate::eval::Interpreter;
 use crate::intern;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
@@ -68,7 +68,7 @@ fn native_ast_eval_in(interpreter: &mut Interpreter, args: &[Value]) -> Result<V
     {
         return Err("ast.eval_in expects ast, env_map, and optional program".to_string());
     }
-    let mut ast = match args.get(0)
+    let ast = match args.get(0)
     {
         Some(Value::Ast(ast)) => (*ast.as_ref()).clone(),
         Some(Value::String(s)) => parse_ast(s.as_str())?,
@@ -90,30 +90,9 @@ fn native_ast_eval_in(interpreter: &mut Interpreter, args: &[Value]) -> Result<V
         }
     }
 
-    resolve_slots(&mut ast);
-    let new_env = interpreter.get_env(None, false);
-    {
-        let map_ref = env_map.borrow();
-        for (key, value) in map_ref.data.iter()
-        {
-            let name = intern::intern_symbol(key.as_str());
-            new_env.borrow_mut().define(name, value.clone());
-        }
-    }
-    if let Some(Value::Reference(reference)) = program_val
-    {
-        let program_sym = intern::intern_symbol("program");
-        new_env
-            .borrow_mut()
-            .define(program_sym, Value::Reference(reference.clone()));
-    }
-
-    let original_env = interpreter.env.clone();
-    interpreter.env = new_env.clone();
-    let result = interpreter.eval(&ast, &mut []);
-    interpreter.env = original_env;
-    interpreter.recycle_env(new_env);
-    result.map_err(|err| err.message)
+    interpreter
+        .eval_ast_in(ast, env_map, program_val.cloned())
+        .map_err(|err| err.message)
 }
 
 fn native_ast_to_source(args: &[Value]) -> Result<Value, String>

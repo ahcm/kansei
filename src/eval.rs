@@ -14330,6 +14330,28 @@ impl Interpreter
                             })
                         }
                     }
+                    Value::F32Array(arr) =>
+                    {
+                        if let Some(i) = int_value_as_usize(&index_val)
+                        {
+                            let vec = arr.borrow();
+                            if i < vec.len()
+                            {
+                                Ok(make_float(vec[i] as f64, FloatKind::F32))
+                            }
+                            else
+                            {
+                                Ok(Value::Nil)
+                            }
+                        }
+                        else
+                        {
+                            Err(RuntimeError {
+                                message: err_index_requires_int().message,
+                                line,
+                            })
+                        }
+                    }
                     Value::I64Array(arr) =>
                     {
                         if let Some(i) = int_value_as_usize(&index_val)
@@ -14338,6 +14360,28 @@ impl Interpreter
                             if i < vec.len()
                             {
                                 Ok(make_signed_int(vec[i] as i128, IntKind::I64))
+                            }
+                            else
+                            {
+                                Ok(Value::Nil)
+                            }
+                        }
+                        else
+                        {
+                            Err(RuntimeError {
+                                message: err_index_requires_int().message,
+                                line,
+                            })
+                        }
+                    }
+                    Value::I32Array(arr) =>
+                    {
+                        if let Some(i) = int_value_as_usize(&index_val)
+                        {
+                            let vec = arr.borrow();
+                            if i < vec.len()
+                            {
+                                Ok(make_signed_int(vec[i] as i128, IntKind::I32))
                             }
                             else
                             {

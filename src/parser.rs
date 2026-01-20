@@ -306,10 +306,20 @@ impl Parser
                 let name = match &self.current_token.token
                 {
                     Token::Identifier(n) => intern::intern_owned(n.clone()),
-                    _ => panic!(
-                        "Expected property name after dot at line {}",
-                        self.current_token.line
-                    ),
+                    token =>
+                    {
+                        if let Some(keyword) = token.keyword_as_identifier()
+                        {
+                            intern::intern_owned(keyword.to_string())
+                        }
+                        else
+                        {
+                            panic!(
+                                "Expected property name after dot at line {}",
+                                self.current_token.line
+                            );
+                        }
+                    }
                 };
                 let name_line = self.current_token.line;
                 self.eat();

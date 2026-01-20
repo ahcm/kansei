@@ -658,6 +658,41 @@ impl Lexer
     }
 }
 
+impl Token
+{
+    pub fn keyword_as_identifier(&self) -> Option<&'static str>
+    {
+        match self
+        {
+            Token::If => Some("if"),
+            Token::Else => Some("else"),
+            Token::Elif => Some("elif"),
+            Token::While => Some("while"),
+            Token::For => Some("for"),
+            Token::Loop => Some("loop"),
+            Token::Use => Some("use"),
+            Token::Import => Some("import"),
+            Token::Struct => Some("struct"),
+            Token::Export => Some("export"),
+            Token::As => Some("as"),
+            Token::Load => Some("load"),
+            Token::In => Some("in"),
+            Token::Yield => Some("yield"),
+            Token::Clone => Some("clone"),
+            Token::Not => Some("not"),
+            Token::And => Some("and"),
+            Token::Or => Some("or"),
+            Token::End => Some("end"),
+            Token::Return => Some("return"),
+            Token::True => Some("true"),
+            Token::False => Some("false"),
+            Token::Nil => Some("nil"),
+            Token::Fn => Some("fn"),
+            _ => None,
+        }
+    }
+}
+
 fn signed_int_max(kind: IntKind) -> i128
 {
     match kind

@@ -1,10 +1,11 @@
 use crate::ast::Expr;
+use crate::eval::{resolve_slots, Interpreter};
 use crate::intern;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::sexpr::{expr_to_sexpr, parse_sexpr, sexpr_to_expr, sexpr_to_value, value_to_sexpr};
 use crate::source::expr_to_source;
-use crate::value::{MapValue, Value};
+use crate::value::{HostFunction, MapValue, Value};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -61,6 +62,60 @@ fn native_ast_from_source(args: &[Value]) -> Result<Value, String>
     Ok(Value::Ast(Rc::new(ast)))
 }
 
+fn native_ast_eval_in(interpreter: &mut Interpreter, args: &[Value]) -> Result<Value, String>
+{
+    if args.len() < 2
+    {
+        return Err("ast.eval_in expects ast, env_map, and optional program".to_string());
+    }
+    let mut ast = match args.get(0)
+    {
+        Some(Value::Ast(ast)) => (*ast.as_ref()).clone(),
+        Some(Value::String(s)) => parse_ast(s.as_str())?,
+        _ => return Err("ast.eval_in expects Ast or source string".to_string()),
+    };
+    let env_map = match args.get(1)
+    {
+        Some(Value::Map(map)) => map.clone(),
+        _ => return Err("ast.eval_in expects env_map as a map".to_string()),
+    };
+    let program_val = args.get(2);
+    if let Some(val) = program_val
+    {
+        match val
+        {
+            Value::Nil => {}
+            Value::Reference(_) => {}
+            _ => return Err("ast.eval_in expects &program or nil as third argument".to_string()),
+        }
+    }
+
+    resolve_slots(&mut ast);
+    let new_env = interpreter.get_env(None, false);
+    {
+        let map_ref = env_map.borrow();
+        for (key, value) in map_ref.data.iter()
+        {
+            let name = intern::intern_symbol(key.as_str());
+            new_env.borrow_mut().define(name, value.clone());
+        }
+    }
+    if let Some(Value::Reference(reference)) = program_val
+    {
+        let program_sym = intern::intern_symbol("program");
+        new_env
+            .borrow_mut()
+            .define(program_sym, Value::Reference(reference.clone()));
+    }
+
+    let original_env = interpreter.env.clone();
+    interpreter.env = new_env.clone();
+    let result = interpreter.eval(&ast, &mut []);
+    interpreter.env = original_env;
+    interpreter.recycle_env(new_env);
+    result.map_err(|err| err.message)
+}
+
 fn native_ast_to_source(args: &[Value]) -> Result<Value, String>
 {
     let arg = args.get(0).ok_or_else(|| "ast.to_source expects a value".to_string())?;
@@ -115,6 +170,10 @@ pub fn build_kansei_module() -> Value
     ast_map.insert(
         intern::intern("to_source"),
         Value::NativeFunction(native_ast_to_source),
+    );
+    ast_map.insert(
+        intern::intern("eval_in"),
+        Value::HostFunction(native_ast_eval_in as HostFunction),
     );
 
     let mut value_map = FxHashMap::default();

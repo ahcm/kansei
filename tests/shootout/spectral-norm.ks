@@ -1,7 +1,9 @@
+@file
 fn eval_A(i, j)
   1.0 / ((i+j)*(i+j+1)/2+i+1)
 end
 
+@file
 fn eval_A_times_u(n, u, au)
    loop n |i|
       au[i] = 0.0
@@ -11,6 +13,7 @@ fn eval_A_times_u(n, u, au)
    end
 end
 
+@file
 fn eval_At_times_u(n, u, au)
    loop n |i|
       au[i] = 0.0
@@ -20,6 +23,7 @@ fn eval_At_times_u(n, u, au)
    end
 end
 
+@file
 fn eval_AtA_times_u(n, u, atAu)
    v = [0.0;n]
    eval_A_times_u(n,u,v)

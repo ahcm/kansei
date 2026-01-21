@@ -14684,7 +14684,10 @@ impl Interpreter
                         // - Function is simple (no locals/assignments).
                         // - Function does not capture environment (no slot=None identifiers).
                         // - Args are simple expressions (Identifiers/Literals) to avoid code explosion or side-effect duplication.
-                        if data.is_simple && inlined_body.borrow().is_none() && !data.uses_env
+                        if data.is_simple
+                            && inlined_body.borrow().is_none()
+                            && !data.uses_env
+                            && args.len() == data.params.len()
                         {
                             let small_body = expr_size(&data.body) <= 40;
                             let safe_args = args.iter().all(is_inline_safe_arg);

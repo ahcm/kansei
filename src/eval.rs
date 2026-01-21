@@ -1670,6 +1670,7 @@ fn int_value_as_f64(value: &Value) -> Option<f64>
     {
         Value::Integer { value, .. } => Some(*value as f64),
         Value::Unsigned { value, .. } => Some(*value as f64),
+        Value::Float { value, .. } => Some(*value),
         _ => None,
     }
 }
@@ -14810,14 +14811,20 @@ impl Interpreter
                     ExprKind::Float { value, kind } => make_float(*value, *kind),
                     ExprKind::Identifier { slot: Some(s), .. } =>
                     {
-                        let v = &slots[*s];
-                        if let Value::Uninitialized = v
+                        if let Some(v) = slots.get(*s)
                         {
-                            self.eval(left, slots)?
+                            if let Value::Uninitialized = v
+                            {
+                                self.eval(left, slots)?
+                            }
+                            else
+                            {
+                                v.clone()
+                            }
                         }
                         else
                         {
-                            v.clone()
+                            self.eval(left, slots)?
                         }
                     }
                     _ => self.eval(left, slots)?,
@@ -14829,14 +14836,20 @@ impl Interpreter
                     ExprKind::Float { value, kind } => make_float(*value, *kind),
                     ExprKind::Identifier { slot: Some(s), .. } =>
                     {
-                        let v = &slots[*s];
-                        if let Value::Uninitialized = v
+                        if let Some(v) = slots.get(*s)
                         {
-                            self.eval(right, slots)?
+                            if let Value::Uninitialized = v
+                            {
+                                self.eval(right, slots)?
+                            }
+                            else
+                            {
+                                v.clone()
+                            }
                         }
                         else
                         {
-                            v.clone()
+                            self.eval(right, slots)?
                         }
                     }
                     _ => self.eval(right, slots)?,

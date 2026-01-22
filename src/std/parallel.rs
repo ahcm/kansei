@@ -263,9 +263,9 @@ fn native_parallel_apply(args: &[Value]) -> Result<Value, String>
 
 fn native_parallel_loop(args: &[Value]) -> Result<Value, String>
 {
-    if args.len() != 2
+    if args.len() < 2 || args.len() > 3
     {
-        return Err("parallel.loop expects count and native function".to_string());
+        return Err("parallel.loop expects count, native function, and optional context".to_string());
     }
     let n = match &args[0]
     {
@@ -274,6 +274,15 @@ fn native_parallel_loop(args: &[Value]) -> Result<Value, String>
         _ => return Err("parallel.loop expects non-negative integer count".to_string()),
     };
     let func = get_native_function(&args[1])?;
+    let context = if args.len() == 3
+    {
+        Some(value_to_numeric(args[2].clone())?)
+    }
+    else
+    {
+        None
+    };
+
     let results: Result<Vec<Numeric>, String> = (0..n)
         .into_par_iter()
         .map(|idx| {
@@ -281,11 +290,69 @@ fn native_parallel_loop(args: &[Value]) -> Result<Value, String>
                 value: idx as i128,
                 kind: IntKind::I64,
             };
-            let out = func(&[arg])?;
+            let out = if let Some(ctx) = &context
+            {
+                let ctx_val = match ctx
+                {
+                    Numeric::Int(i) => Value::Integer {
+                        value: *i as i128,
+                        kind: IntKind::I64,
+                    },
+                    Numeric::Float(f) => Value::Float {
+                        value: *f,
+                        kind: FloatKind::F64,
+                    },
+                };
+                func(&[arg, ctx_val])?
+            }
+            else
+            {
+                func(&[arg])?
+            };
             value_to_numeric(out)
         })
         .collect();
     Ok(map_numeric_results(results?))
+}
+
+fn eval_a(i: usize, j: usize) -> f64
+{
+    let ij = i + j;
+    let denom = (ij * (ij + 1) / 2 + i + 1) as f64;
+    1.0 / denom
+}
+
+fn value_to_usize(v: &Value) -> Result<usize, String>
+{
+    match v
+    {
+        Value::Integer { value, .. } => Ok(*value as usize),
+        Value::Unsigned { value, .. } => Ok(*value as usize),
+        Value::Float { value, .. } => Ok(*value as usize),
+        _ => Err("eval_a expects numeric arguments".to_string()),
+    }
+}
+
+fn native_eval_a_i_j(args: &[Value]) -> Result<Value, String>
+{
+    // args[0] is j (idx), args[1] is i (ctx)
+    let j = value_to_usize(&args[0])?;
+    let i = value_to_usize(&args[1])?;
+    Ok(Value::Float {
+        value: eval_a(i, j),
+        kind: FloatKind::F64,
+    })
+}
+
+fn native_eval_a_j_i(args: &[Value]) -> Result<Value, String>
+{
+    // args[0] is j (idx), args[1] is i (ctx)
+    let j = value_to_usize(&args[0])?;
+    let i = value_to_usize(&args[1])?;
+    Ok(Value::Float {
+        value: eval_a(j, i),
+        kind: FloatKind::F64,
+    })
 }
 
 pub fn build_parallel_module() -> Value
@@ -295,5 +362,7 @@ pub fn build_parallel_module() -> Value
     map.insert(intern::intern("apply"), Value::NativeFunction(native_parallel_apply));
     map.insert(intern::intern("map"), Value::NativeFunction(native_parallel_map));
     map.insert(intern::intern("loop"), Value::NativeFunction(native_parallel_loop));
+    map.insert(intern::intern("eval_a_i_j"), Value::NativeFunction(native_eval_a_i_j));
+    map.insert(intern::intern("eval_a_j_i"), Value::NativeFunction(native_eval_a_j_i));
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
 }

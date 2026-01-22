@@ -1,5 +1,6 @@
 # Spectral Norm benchmark using std::simd
 # Uses SIMD operations for dot products in matrix-vector multiplies
+# Uses std::parallel for row generation
 
 @file
 use std::simd
@@ -7,6 +8,8 @@ use std::simd
 simd = std::simd
 @file
 use std::parallel
+@file
+parallel = std::parallel
 
 @file
 fn eval_A(i, j)
@@ -14,20 +17,23 @@ fn eval_A(i, j)
 end
 
 # Precompute row i of matrix A as an F64Array
+# row[j] = eval_A(i, j)
 @file
 fn compute_A_row(i, n)
-  row = [0.0; n]
-  row map {|j,&i| eval_A(i,j) }
+  # Use parallel.loop(n, func, ctx)
+  # func receives (j, i) and calls eval_a(i, j)
+  # We use parallel.eval_a_i_j for this (args[1]=i, args[0]=j)
+  parallel.loop(n, parallel.eval_a_i_j, i)
 end
 
 # Precompute row i of matrix A^T (which is column i of A)
+# row[j] = eval_A(j, i)
 @file
 fn compute_At_row(i, n)
-  row = [0.0; n]
-  loop n |j|
-    row[j] = eval_A(j, i)
-  end
-  row
+  # Use parallel.loop(n, func, ctx)
+  # func receives (j, i) and calls eval_a(j, i)
+  # We use parallel.eval_a_j_i for this (args[1]=i, args[0]=j)
+  parallel.loop(n, parallel.eval_a_j_i, i)
 end
 
 @file
@@ -55,6 +61,10 @@ fn main(n)
   # Precompute matrix rows for SIMD dot products
   A_rows = []
   At_rows = []
+  
+  # Note: A_rows generation can also be parallelized if we wanted, 
+  # but here we parallelize the inner loop (row generation).
+  
   loop n |i|
     A_rows = A_rows + [compute_A_row(i, n)]
     At_rows = At_rows + [compute_At_row(i, n)]

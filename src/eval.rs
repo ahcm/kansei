@@ -6459,7 +6459,7 @@ fn eval_call_value_cached_generic(
     block: Option<&Rc<Closure>>,
 ) -> EvalResult
 {
-    let block_owned = block.map(|b| (**b).clone());
+    let block_owned = block.map(|b| b.clone());
     if let Value::Function(func_data) = &func_val
     {
         let func_ptr = Rc::as_ptr(func_data) as usize;
@@ -8375,7 +8375,7 @@ fn execute_instructions(
                         line: 0,
                     })?;
                     let result =
-                        interpreter.call_value(func_val, args, 0, Some((*block).clone()))?;
+                        interpreter.call_value(func_val, args, 0, Some(block.clone()))?;
                     frame.stack.push(result);
                 }
                 Instruction::CallValueWithBlockCached(cache, block, argc) =>
@@ -10433,7 +10433,7 @@ fn is_simple(expr: &Expr) -> bool
         ExprKind::Call {
             function,
             args,
-            block,
+            block: _,
             ..
         } =>
         {
@@ -10767,7 +10767,7 @@ pub struct Interpreter
     // Current environment (scope)
     env: Rc<RefCell<Environment>>,
     // Stack of blocks passed to currently executing functions.
-    block_stack: Vec<Option<(Closure, Rc<RefCell<Environment>>)>>,
+    block_stack: Vec<Option<(Rc<Closure>, Rc<RefCell<Environment>>)>>,
     // Pool of spare environments for reuse
     env_pool: Vec<Rc<RefCell<Environment>>>,
     // Pool of reusable register buffers for reg-simple functions
@@ -11777,7 +11777,7 @@ impl Interpreter
         func_val: Value,
         arg_vals: smallvec::SmallVec<[Value; 8]>,
         line: usize,
-        block: Option<Closure>,
+        block: Option<Rc<Closure>>,
     ) -> EvalResult
     {
         match func_val
@@ -12700,7 +12700,7 @@ impl Interpreter
         data: Rc<crate::value::FunctionData>,
         arg_vals: smallvec::SmallVec<[Value; 8]>,
         line: usize,
-        block: Option<Closure>,
+        block: Option<Rc<Closure>>,
     ) -> EvalResult
     {
         let arg_len = arg_vals.len();
@@ -14857,7 +14857,7 @@ impl Interpreter
                             }
                         }
 
-                        self.invoke_function(data, arg_vals, line, block.clone())
+                        self.invoke_function(data, arg_vals, line, block.clone().map(Rc::new))
                     }
                     Value::NativeFunction(func) =>
                     {
@@ -14919,7 +14919,12 @@ impl Interpreter
                         {
                             arg_vals.push(self.eval(arg_expr, slots)?);
                         }
-                        self.call_value(method.func.clone(), arg_vals, line, block.clone())
+                        self.call_value(
+                            method.func.clone(),
+                            arg_vals,
+                            line,
+                            block.clone().map(Rc::new),
+                        )
                     }
                     _ => Err(RuntimeError {
                         message: format!("Tried to call a non-function value: {}", func_val),

@@ -12709,8 +12709,11 @@ impl Interpreter
         if arg_len < data.params.len()
         {
             let new_env = self.get_env(Some(data.env.clone()), true);
-            let mut bound_args: Vec<(usize, Value)> =
-                data.bound_args.iter().map(|(slot, val)| (*slot, val.clone())).collect();
+            let mut bound_args: Vec<(usize, Value)> = data
+                .bound_args
+                .iter()
+                .map(|(slot, val)| (*slot, val.clone()))
+                .collect();
             for (idx, (param, val)) in data.params.iter().zip(arg_vals.iter()).enumerate()
             {
                 let coerced = coerce_param_value(&data.env, param, val.clone(), line)?;

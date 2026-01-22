@@ -10437,10 +10437,6 @@ fn is_simple(expr: &Expr) -> bool
             ..
         } =>
         {
-            if block.is_some()
-            {
-                return false;
-            }
             is_simple(function) && args.iter().all(is_simple)
         }
         ExprKind::Array(elements) => elements.iter().all(is_simple),
@@ -10476,8 +10472,8 @@ fn should_compile(simple: bool, _uses_env: bool, mode: BytecodeMode) -> bool
     match mode
     {
         BytecodeMode::Off => false,
-        BytecodeMode::Simple => simple && !_uses_env,
-        BytecodeMode::Advanced => simple && !_uses_env,
+        BytecodeMode::Simple => simple,
+        BytecodeMode::Advanced => simple,
     }
 }
 
@@ -10791,8 +10787,10 @@ impl Interpreter
     {
         let module_search_paths = default_module_search_paths(None);
         let wasm_search_paths = default_wasm_search_paths(None);
+        let mut root_env = Environment::new(None);
+        root_env.is_partial = true;
         Self {
-            env: Rc::new(RefCell::new(Environment::new(None))),
+            env: Rc::new(RefCell::new(root_env)),
             block_stack: Vec::new(),
             env_pool: Vec::with_capacity(32),
             reg_pool: Vec::with_capacity(32),

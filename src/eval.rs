@@ -2071,9 +2071,16 @@ fn uses_environment(expr: &Expr) -> bool
                 || uses_environment(then_branch)
                 || else_branch.as_ref().map_or(false, |e| uses_environment(e))
         }
-        ExprKind::Call { function, args, .. } =>
+        ExprKind::Call {
+            function,
+            args,
+            block,
+            ..
+        } =>
         {
-            uses_environment(function) || args.iter().any(uses_environment)
+            uses_environment(function)
+                || args.iter().any(uses_environment)
+                || block.as_ref().map_or(false, |c| uses_environment(&c.body))
         }
         ExprKind::Not(expr) => uses_environment(expr),
         ExprKind::And { left, right }
@@ -10858,7 +10865,9 @@ impl Interpreter
         }
         else
         {
-            Rc::new(RefCell::new(Environment::new(parent)))
+            let mut env = Environment::new(parent);
+            env.is_partial = is_partial;
+            Rc::new(RefCell::new(env))
         }
     }
 
@@ -12802,12 +12811,9 @@ impl Interpreter
             if data.uses_env
             {
                 let new_env = self.get_env(Some(data.env.clone()), false);
-                if !data.bound_args.is_empty()
+                for (param, val) in data.params.iter().zip(coerced_args.iter().cloned())
                 {
-                    for (param, val) in data.params.iter().zip(coerced_args.iter().cloned())
-                    {
-                        new_env.borrow_mut().define(param.name, val);
-                    }
+                    new_env.borrow_mut().define(param.name, val);
                 }
                 let original_env = self.env.clone();
                 self.env = new_env.clone();
@@ -12839,12 +12845,9 @@ impl Interpreter
             if data.uses_env
             {
                 let new_env = self.get_env(Some(data.env.clone()), false);
-                if !data.bound_args.is_empty()
+                for (param, val) in data.params.iter().zip(coerced_args.iter().cloned())
                 {
-                    for (param, val) in data.params.iter().zip(coerced_args.iter().cloned())
-                    {
-                        new_env.borrow_mut().define(param.name, val);
-                    }
+                    new_env.borrow_mut().define(param.name, val);
                 }
                 let original_env = self.env.clone();
                 self.env = new_env.clone();
@@ -12878,6 +12881,11 @@ impl Interpreter
         let result = if data.uses_env
         {
             let new_env = self.get_env(Some(data.env.clone()), false);
+            for (i, param) in data.params.iter().enumerate()
+            {
+                let val = new_slots[i + data.param_offset].clone();
+                new_env.borrow_mut().define(param.name, val);
+            }
             let original_env = self.env.clone();
             self.env = new_env.clone();
             let result = handle_eval_result(self.eval(&data.body, &mut new_slots))?;

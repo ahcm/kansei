@@ -16,10 +16,8 @@ end
 # Precompute row i of matrix A as an F64Array
 @file
 fn compute_A_row(i, n)
-  @function
-  fn e(j) eval_A(i) end
   row = [0.0; n]
-  row map {|j| e(j) }
+  row map {|j,&i| eval_A(i,j) }
 end
 
 # Precompute row i of matrix A^T (which is column i of A)

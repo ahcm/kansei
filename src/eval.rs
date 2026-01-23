@@ -8374,8 +8374,7 @@ fn execute_instructions(
                         message: "Missing function value for call".to_string(),
                         line: 0,
                     })?;
-                    let result =
-                        interpreter.call_value(func_val, args, 0, Some(block.clone()))?;
+                    let result = interpreter.call_value(func_val, args, 0, Some(block.clone()))?;
                     frame.stack.push(result);
                 }
                 Instruction::CallValueWithBlockCached(cache, block, argc) =>
@@ -10433,10 +10432,14 @@ fn is_simple(expr: &Expr) -> bool
         ExprKind::Call {
             function,
             args,
-            block: _,
+            block,
             ..
         } =>
         {
+            if block.is_some()
+            {
+                return false;
+            }
             is_simple(function) && args.iter().all(is_simple)
         }
         ExprKind::Array(elements) => elements.iter().all(is_simple),
@@ -10472,8 +10475,8 @@ fn should_compile(simple: bool, _uses_env: bool, mode: BytecodeMode) -> bool
     match mode
     {
         BytecodeMode::Off => false,
-        BytecodeMode::Simple => simple,
-        BytecodeMode::Advanced => simple,
+        BytecodeMode::Simple => simple && !_uses_env,
+        BytecodeMode::Advanced => simple && !_uses_env,
     }
 }
 

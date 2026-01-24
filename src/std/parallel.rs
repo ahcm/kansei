@@ -265,7 +265,9 @@ fn native_parallel_loop(args: &[Value]) -> Result<Value, String>
 {
     if args.len() < 2 || args.len() > 3
     {
-        return Err("parallel.loop expects count, native function, and optional context".to_string());
+        return Err(
+            "parallel.loop expects count, native function, and optional context".to_string()
+        );
     }
     let n = match &args[0]
     {

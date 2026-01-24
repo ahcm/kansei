@@ -11,29 +11,36 @@ use std::parallel
 @file
 parallel = std::parallel
 
-@file
-fn eval_A(i, j)
-  1.0 / ((i + j) * (i + j + 1) / 2 + i + 1)
-end
-
 # Precompute row i of matrix A as an F64Array
 # row[j] = eval_A(i, j)
 @file
+fn compute_A_row_parallel(i, n)
+  parallel.loop(n, fn(j, i)
+    1.0 / ((i + j) * (i + j + 1) / 2 + i + 1)
+  end, i)
+end
+
+@file
 fn compute_A_row(i, n)
-  # Use parallel.loop(n, func, ctx)
-  # func receives (j, i) and calls eval_a(i, j)
-  # We use parallel.eval_a_i_j for this (args[1]=i, args[0]=j)
-  parallel.loop(n, parallel.eval_a_i_j, i)
+  loop n |j|
+    1.0 / ((i + j) * (i + j + 1) / 2 + i + 1)
+  end
 end
 
 # Precompute row i of matrix A^T (which is column i of A)
 # row[j] = eval_A(j, i)
 @file
+fn compute_At_row_parallel(i, n)
+  parallel.loop(n, fn(j, i)
+    1.0 / ((j + i) * (j + i + 1) / 2 + j + 1)
+  end, i)
+end
+
+@file
 fn compute_At_row(i, n)
-  # Use parallel.loop(n, func, ctx)
-  # func receives (j, i) and calls eval_a(j, i)
-  # We use parallel.eval_a_j_i for this (args[1]=i, args[0]=j)
-  parallel.loop(n, parallel.eval_a_j_i, i)
+  loop n |j|
+    1.0 / ((j + i) * (j + i + 1) / 2 + j + 1)
+  end
 end
 
 @file
@@ -59,24 +66,22 @@ end
 
 fn main(n)
   # Precompute matrix rows for SIMD dot products
-  A_rows = []
+  A_rows  = []
   At_rows = []
   
-  # Note: A_rows generation can also be parallelized if we wanted, 
-  # but here we parallelize the inner loop (row generation).
-  
   loop n |i|
-    A_rows = A_rows + [compute_A_row(i, n)]
+    A_rows  = A_rows + [compute_A_row(i, n)]
     At_rows = At_rows + [compute_At_row(i, n)]
   end
 
   u = [1.0; n]
   v = [0.0; n]
 
-  loop 10 |i|
+  parallel.loop(10, { |n|
     eval_AtA_times_u_simd(n, u, v, A_rows, At_rows)
     eval_AtA_times_u_simd(n, v, u, A_rows, At_rows)
-  end
+    }, eval_AtA_times_u_simd)
+  #end
 
   # Use SIMD for final dot products
   vBv = simd.dot(u, v)

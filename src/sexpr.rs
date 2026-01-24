@@ -3,7 +3,7 @@ use crate::ast::{
     TypeRef,
 };
 use crate::intern::{self, SymbolId};
-use crate::value::{BytesViewSource, MapValue, Value};
+use crate::value::{BytesViewSource, Environment, FunctionData, MapValue, Value};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -1764,6 +1764,14 @@ pub fn value_to_sexpr(value: &Value) -> Result<SExpr, String>
             Ok(SExpr::List(entries))
         }
         Value::Ast(ast) => Ok(list("ast", vec![expr_to_sexpr(ast.as_ref())])),
+        Value::Function(data) =>
+        {
+            let params_list = SExpr::List(data.params.iter().map(param_to_sexpr).collect());
+            Ok(list(
+                "function",
+                vec![params_list, expr_to_sexpr(&data.body)],
+            ))
+        }
         _ => Err("value.to_sexpr does not support this type".to_string()),
     }
 }
@@ -1939,6 +1947,37 @@ pub fn sexpr_to_value(expr: &SExpr) -> Result<Value, String>
                     }
                     let expr = sexpr_to_expr(&items[1])?;
                     Ok(Value::Ast(Rc::new(expr)))
+                }
+                "function" =>
+                {
+                    if items.len() != 3
+                    {
+                        return Err("Invalid function".to_string());
+                    }
+                    let params_list = expect_list(&items[1])?;
+                    let mut params = Vec::with_capacity(params_list.len());
+                    let mut decls = Vec::with_capacity(params_list.len());
+                    for item in params_list
+                    {
+                        params.push(parse_param(item)?);
+                        decls.push(Rc::new(String::new())); // Dummy declaration for slot allocation
+                    }
+                    let body = parse_expr(&items[2])?;
+                    let func_data = FunctionData {
+                        params,
+                        body,
+                        declarations: Rc::new(decls),
+                        param_offset: 0,
+                        is_simple: false,
+                        uses_env: true,
+                        code: None,
+                        reg_code: None,
+                        fast_reg_code: None,
+                        const_pool: Rc::new(Vec::new()),
+                        bound_args: Rc::new(Vec::new()),
+                        env: Rc::new(RefCell::new(Environment::new(None))),
+                    };
+                    Ok(Value::Function(Rc::new(func_data)))
                 }
                 _ => Err("Unknown value tag".to_string()),
             }

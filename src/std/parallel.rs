@@ -1,5 +1,7 @@
 use crate::ast::{FloatKind, IntKind};
+use crate::eval::Interpreter;
 use crate::intern;
+use crate::sexpr;
 use crate::value::{MapValue, Value};
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
@@ -266,7 +268,7 @@ fn native_parallel_loop(args: &[Value]) -> Result<Value, String>
     if args.len() < 2 || args.len() > 3
     {
         return Err(
-            "parallel.loop expects count, native function, and optional context".to_string()
+            "parallel.loop expects count, function, and optional context".to_string()
         );
     }
     let n = match &args[0]
@@ -275,86 +277,91 @@ fn native_parallel_loop(args: &[Value]) -> Result<Value, String>
         Value::Unsigned { value, .. } => *value as usize,
         _ => return Err("parallel.loop expects non-negative integer count".to_string()),
     };
-    let func = get_native_function(&args[1])?;
-    let context = if args.len() == 3
+
+    // Prepare context
+    let context_sexpr = if args.len() == 3
     {
-        Some(value_to_numeric(args[2].clone())?)
+        Some(sexpr::value_to_sexpr(&args[2])?)
     }
     else
     {
         None
     };
 
-    let results: Result<Vec<Numeric>, String> = (0..n)
-        .into_par_iter()
-        .map(|idx| {
-            let arg = Value::Integer {
-                value: idx as i128,
-                kind: IntKind::I64,
-            };
-            let out = if let Some(ctx) = &context
-            {
-                let ctx_val = match ctx
-                {
-                    Numeric::Int(i) => Value::Integer {
-                        value: *i as i128,
-                        kind: IntKind::I64,
-                    },
-                    Numeric::Float(f) => Value::Float {
-                        value: *f,
-                        kind: FloatKind::F64,
-                    },
-                };
-                func(&[arg, ctx_val])?
-            }
-            else
-            {
-                func(&[arg])?
-            };
-            value_to_numeric(out)
-        })
-        .collect();
-    Ok(map_numeric_results(results?))
-}
-
-fn value_to_usize(v: &Value) -> Result<usize, String>
-{
-    match v
+    // Prepare function (Native or User Function)
+    if let Value::NativeFunction(func) = &args[1]
     {
-        Value::Integer { value, .. } => Ok(*value as usize),
-        Value::Unsigned { value, .. } => Ok(*value as usize),
-        Value::Float { value, .. } => Ok(*value as usize),
-        _ => Err("eval_a expects numeric arguments".to_string()),
+        let func = *func;
+        // Native path (Send-safe)
+        // BUT context_sexpr is SExpr. We need to convert back or pass original Value if it was simple?
+        // Wait, native functions expect Value.
+        // We can reconstruct value from SExpr in the thread.
+        
+        // However, for Native function, we don't need SExpr if we assume Native function handles Value creation inside thread?
+        // No, Value is !Send. We must pass Send data.
+        // So SExpr roundtrip is necessary even for native function arguments (context).
+        
+        let results: Result<Vec<Numeric>, String> = (0..n)
+            .into_par_iter()
+            .map(|idx| {
+                let arg = Value::Integer {
+                    value: idx as i128,
+                    kind: IntKind::I64,
+                };
+                let out = if let Some(ctx_sexpr) = &context_sexpr
+                {
+                    let ctx_val = sexpr::sexpr_to_value(ctx_sexpr)?;
+                    func(&[arg, ctx_val])?
+                }
+                else
+                {
+                    func(&[arg])?
+                };
+                value_to_numeric(out)
+            })
+            .collect();
+        return Ok(map_numeric_results(results?));
     }
-}
+    
+    // User Function path
+    if let Value::Function(_) = &args[1]
+    {
+        let func_sexpr = sexpr::value_to_sexpr(&args[1])?;
+        
+        let results: Result<Vec<Numeric>, String> = (0..n)
+            .into_par_iter()
+            .map(|idx| {
+                let arg = Value::Integer {
+                    value: idx as i128,
+                    kind: IntKind::I64,
+                };
+                
+                // Initialize thread-local interpreter
+                let mut interpreter = Interpreter::new();
+                
+                // Reconstruct function
+                let func_val = sexpr::sexpr_to_value(&func_sexpr)?;
+                
+                let out = if let Some(ctx_sexpr) = &context_sexpr
+                {
+                    let ctx_val = sexpr::sexpr_to_value(ctx_sexpr)?;
+                    // Call the function
+                    // We can use call_value_from_host or just call_value
+                    // But call_value is private?
+                    // call_value_from_host is public.
+                    interpreter.call_value_from_host(func_val, vec![arg, ctx_val])?
+                }
+                else
+                {
+                    interpreter.call_value_from_host(func_val, vec![arg])?
+                };
+                value_to_numeric(out)
+            })
+            .collect();
+        return Ok(map_numeric_results(results?));
+    }
 
-fn eval_a(i: usize, j: usize) -> f64
-{
-    let ij = i + j;
-    let denom = (ij * (ij + 1) / 2 + i + 1) as f64;
-    1.0 / denom
-}
-
-fn native_eval_a_i_j(args: &[Value]) -> Result<Value, String>
-{
-    // args[0] is j (idx), args[1] is i (ctx)
-    let j = value_to_usize(&args[0])?;
-    let i = value_to_usize(&args[1])?;
-    Ok(Value::Float {
-        value: eval_a(i, j),
-        kind: FloatKind::F64,
-    })
-}
-
-fn native_eval_a_j_i(args: &[Value]) -> Result<Value, String>
-{
-    // args[0] is j (idx), args[1] is i (ctx)
-    let j = value_to_usize(&args[0])?;
-    let i = value_to_usize(&args[1])?;
-    Ok(Value::Float {
-        value: eval_a(j, i),
-        kind: FloatKind::F64,
-    })
+    Err("parallel.loop expects a native function or a user function".to_string())
 }
 
 pub fn build_parallel_module() -> Value
@@ -364,13 +371,5 @@ pub fn build_parallel_module() -> Value
     map.insert(intern::intern("apply"), Value::NativeFunction(native_parallel_apply));
     map.insert(intern::intern("map"), Value::NativeFunction(native_parallel_map));
     map.insert(intern::intern("loop"), Value::NativeFunction(native_parallel_loop));
-    map.insert(
-        intern::intern("eval_a_i_j"),
-        Value::NativeFunction(native_eval_a_i_j),
-    );
-    map.insert(
-        intern::intern("eval_a_j_i"),
-        Value::NativeFunction(native_eval_a_j_i),
-    );
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
 }

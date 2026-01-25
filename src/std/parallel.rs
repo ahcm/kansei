@@ -2,7 +2,7 @@ use crate::ast::{FloatKind, IntKind};
 use crate::eval::Interpreter;
 use crate::intern;
 use crate::sexpr;
-use crate::value::{MapValue, Value, freeze_value};
+use crate::value::{MapValue, Value, clone_frozen_value};
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
@@ -392,10 +392,7 @@ fn native_parallel_loop(args: &[Value]) -> Result<Value, String>
                                     for (key, val) in &env_val.data
                                     {
                                         let sym = intern::intern_symbol(key.as_str());
-                                        let frozen = freeze_value(val).map_err(|message| {
-                                            format!("parallel.loop env freeze failed: {}", message)
-                                        })?;
-                                        env.define(sym, frozen);
+                                        env.define(sym, clone_frozen_value(val));
                                     }
                                 }
                                 _ =>

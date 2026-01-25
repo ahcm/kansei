@@ -5,7 +5,7 @@ use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::sexpr::{expr_to_sexpr, parse_sexpr, sexpr_to_expr, sexpr_to_value, value_to_sexpr};
 use crate::source::expr_to_source;
-use crate::value::{HostFunction, MapValue, Value};
+use crate::value::{HostFunction, MapValue, Value, freeze_to_env};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -68,7 +68,7 @@ fn native_ast_eval_in(interpreter: &mut Interpreter, args: &[Value]) -> Result<V
 {
     if args.len() < 2
     {
-        return Err("ast.eval_in expects ast, env_map, and optional program".to_string());
+        return Err("ast.eval_in expects ast, env, and optional program".to_string());
     }
     let ast = match args.get(0)
     {
@@ -76,11 +76,11 @@ fn native_ast_eval_in(interpreter: &mut Interpreter, args: &[Value]) -> Result<V
         Some(Value::String(s)) => parse_ast(s.as_str())?,
         _ => return Err("ast.eval_in expects Ast or source string".to_string()),
     };
-    let env_map = match args.get(1)
-    {
-        Some(Value::Map(map)) => map.clone(),
-        _ => return Err("ast.eval_in expects env_map as a map".to_string()),
-    };
+    let env_val = args
+        .get(1)
+        .ok_or_else(|| "ast.eval_in expects env".to_string())?;
+    let env = freeze_to_env(env_val)
+        .map_err(|_| "ast.eval_in expects env as a map, struct, or env".to_string())?;
     let program_val = args.get(2);
     if let Some(val) = program_val
     {
@@ -95,7 +95,7 @@ fn native_ast_eval_in(interpreter: &mut Interpreter, args: &[Value]) -> Result<V
     }
 
     interpreter
-        .eval_ast_in(ast, env_map, program_val.cloned())
+        .eval_ast_in(ast, env, program_val.cloned())
         .map_err(|err| err.message)
 }
 

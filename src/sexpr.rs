@@ -3,7 +3,7 @@ use crate::ast::{
     TypeRef,
 };
 use crate::intern::{self, SymbolId};
-use crate::value::{BytesViewSource, Environment, FunctionData, MapValue, Value};
+use crate::value::{BytesViewSource, EnvValue, Environment, FunctionData, MapValue, Value};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -635,6 +635,7 @@ pub fn expr_to_sexpr(expr: &Expr) -> SExpr
             list("Shell", vec![line_atom, SExpr::String(cmd.as_str().to_string())])
         }
         ExprKind::Clone(expr) => list("Clone", vec![line_atom, expr_to_sexpr(expr)]),
+        ExprKind::EnvFreeze(expr) => list("EnvFreeze", vec![line_atom, expr_to_sexpr(expr)]),
         ExprKind::Not(expr) => list("Not", vec![line_atom, expr_to_sexpr(expr)]),
         ExprKind::And { left, right } =>
         {
@@ -1095,6 +1096,14 @@ fn parse_expr(expr: &SExpr) -> Result<Expr, String>
                 return Err("Invalid Clone".to_string());
             }
             ExprKind::Clone(Box::new(parse_expr(&items[2])?))
+        }
+        "EnvFreeze" =>
+        {
+            if items.len() != 3
+            {
+                return Err("Invalid EnvFreeze".to_string());
+            }
+            ExprKind::EnvFreeze(Box::new(parse_expr(&items[2])?))
         }
         "Not" =>
         {
@@ -1763,14 +1772,27 @@ pub fn value_to_sexpr(value: &Value) -> Result<SExpr, String>
             }
             Ok(SExpr::List(entries))
         }
+        Value::Env(env) =>
+        {
+            let mut entries = Vec::with_capacity(env.data.len() + 1);
+            entries.push(atom("env"));
+            for (key, value) in env.data.iter()
+            {
+                entries.push(list(
+                    "entry",
+                    vec![
+                        SExpr::String(key.as_str().to_string()),
+                        value_to_sexpr(value)?,
+                    ],
+                ));
+            }
+            Ok(SExpr::List(entries))
+        }
         Value::Ast(ast) => Ok(list("ast", vec![expr_to_sexpr(ast.as_ref())])),
         Value::Function(data) =>
         {
             let params_list = SExpr::List(data.params.iter().map(param_to_sexpr).collect());
-            Ok(list(
-                "function",
-                vec![params_list, expr_to_sexpr(&data.body)],
-            ))
+            Ok(list("function", vec![params_list, expr_to_sexpr(&data.body)]))
         }
         Value::Reference(r) => value_to_sexpr(&r.borrow()),
         _ => Err("value.to_sexpr does not support this type".to_string()),
@@ -1939,6 +1961,22 @@ pub fn sexpr_to_value(expr: &SExpr) -> Result<Value, String>
                         map.insert(intern::intern_owned(key.to_string()), value);
                     }
                     Ok(Value::Map(Rc::new(RefCell::new(MapValue::new(map)))))
+                }
+                "env" =>
+                {
+                    let mut map = FxHashMap::default();
+                    for item in &items[1..]
+                    {
+                        let entry = expect_list(item)?;
+                        if entry.len() != 3 || expect_atom(&entry[0])? != "entry"
+                        {
+                            return Err("Invalid env entry".to_string());
+                        }
+                        let key = expect_string(&entry[1])?;
+                        let value = sexpr_to_value(&entry[2])?;
+                        map.insert(intern::intern_owned(key.to_string()), value);
+                    }
+                    Ok(Value::Env(Rc::new(EnvValue::new(map))))
                 }
                 "ast" =>
                 {

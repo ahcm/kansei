@@ -287,6 +287,7 @@ fn format_expr(expr: &Expr, indent: usize) -> String
         ExprKind::Nil => "nil".to_string(),
         ExprKind::Shell(cmd) => format_shell_literal(cmd.as_str()),
         ExprKind::Clone(inner) => format!("clone {}", format_expr(inner, indent)),
+        ExprKind::EnvFreeze(inner) => format!("%{}", format_expr(inner, indent)),
         ExprKind::Not(inner) => format!("not {}", format_expr(inner, indent)),
         ExprKind::And { left, right } =>
         {

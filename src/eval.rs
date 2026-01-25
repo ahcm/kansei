@@ -9,10 +9,10 @@ use crate::kansei_std::{
     build_parallel_module, build_simd_module,
 };
 use crate::value::{
-    BinaryOpCache, BinaryOpCacheKind, BoundMethod, Builtin, CallSiteCache, Environment,
+    BinaryOpCache, BinaryOpCacheKind, BoundMethod, Builtin, CallSiteCache, EnvValue, Environment,
     FastRegFunction, FastRegInstruction, GlobalCache, IndexCache, Instruction, MapAccessCache,
     MapAccessCacheEntry, MapValue, RangeEnd, RegBinOp, RegFunction, RegInstruction, StructType,
-    Value,
+    Value, deep_clone_value, freeze_to_env, freeze_value,
 };
 use crate::wasm::{
     WasmBackend, WasmFunction, WasmModule, WasmValue, WasmValueType, parse_wasm_backend,
@@ -287,6 +287,14 @@ fn lookup_value_path(env: &Rc<RefCell<Environment>>, path: &[SymbolId]) -> Optio
             Value::Map(map) =>
             {
                 value = map.borrow().data.get(&key).cloned().unwrap_or(Value::Nil);
+            }
+            Value::Env(env) =>
+            {
+                value = env
+                    .data
+                    .get(&key)
+                    .map(env_clone_value)
+                    .unwrap_or(Value::Nil);
             }
             _ => return None,
         }
@@ -775,6 +783,31 @@ fn map_values_array(map: &MapValue) -> Value
     Value::Array(Rc::new(RefCell::new(vals)))
 }
 
+fn env_clone_value(value: &Value) -> Value
+{
+    freeze_value(value).expect("env value must be freezeable")
+}
+
+fn env_keys_array(env: &EnvValue) -> Value
+{
+    let mut vals = Vec::with_capacity(env.data.len());
+    for key in env.data.keys()
+    {
+        vals.push(Value::String(key.clone()));
+    }
+    Value::Array(Rc::new(RefCell::new(vals)))
+}
+
+fn env_values_array(env: &EnvValue) -> Value
+{
+    let mut vals = Vec::with_capacity(env.data.len());
+    for val in env.data.values()
+    {
+        vals.push(env_clone_value(val));
+    }
+    Value::Array(Rc::new(RefCell::new(vals)))
+}
+
 fn parse_signed_int(args: &[Value], kind: IntKind, label: &str) -> Result<Value, String>
 {
     let arg = args
@@ -1211,64 +1244,7 @@ fn normalize_float_value(value: f64, kind: FloatKind) -> f64
 
 fn clone_value(value: &Value) -> Value
 {
-    match value
-    {
-        Value::Array(arr) =>
-        {
-            let vals = arr.borrow().clone();
-            Value::Array(Rc::new(RefCell::new(vals)))
-        }
-        Value::F32Array(arr) =>
-        {
-            let vals = arr.borrow().clone();
-            Value::F32Array(Rc::new(RefCell::new(vals)))
-        }
-        Value::F64Array(arr) =>
-        {
-            let vals = arr.borrow().clone();
-            Value::F64Array(Rc::new(RefCell::new(vals)))
-        }
-        Value::I32Array(arr) =>
-        {
-            let vals = arr.borrow().clone();
-            Value::I32Array(Rc::new(RefCell::new(vals)))
-        }
-        Value::I64Array(arr) =>
-        {
-            let vals = arr.borrow().clone();
-            Value::I64Array(Rc::new(RefCell::new(vals)))
-        }
-        Value::Bytes(bytes) => Value::Bytes(bytes.clone()),
-        Value::ByteBuf(buf) =>
-        {
-            let vals = buf.borrow().clone();
-            Value::ByteBuf(Rc::new(RefCell::new(vals)))
-        }
-        Value::BytesView(view) => Value::BytesView(view.clone()),
-        Value::StructType(ty) => Value::StructType(ty.clone()),
-        Value::StructInstance(inst) =>
-        {
-            let vals = inst.fields.borrow().clone();
-            Value::StructInstance(Rc::new(crate::value::StructInstance {
-                ty: inst.ty.clone(),
-                fields: RefCell::new(vals),
-            }))
-        }
-        Value::BoundMethod(method) => Value::BoundMethod(method.clone()),
-        Value::Map(map) =>
-        {
-            let map_ref = map.borrow();
-            Value::Map(Rc::new(RefCell::new(MapValue::new(map_ref.data.clone()))))
-        }
-        Value::Ast(ast) => Value::Ast(ast.clone()),
-        Value::DataFrame(df) => Value::DataFrame(df.clone()),
-        Value::Sqlite(conn) => Value::Sqlite(conn.clone()),
-        Value::Mmap(mmap) => Value::Mmap(mmap.clone()),
-        Value::MmapMut(mmap) => Value::MmapMut(mmap.clone()),
-        Value::String(s) => Value::String(s.clone()),
-        Value::Reference(r) => clone_value(&r.borrow()),
-        v => v.clone(),
-    }
+    deep_clone_value(value)
 }
 
 fn promote_float_kind(left: FloatKind, right: FloatKind) -> FloatKind
@@ -1802,6 +1778,10 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<SymbolId>)
         {
             collect_declarations(expr, decls);
         }
+        ExprKind::EnvFreeze(expr) =>
+        {
+            collect_declarations(expr, decls);
+        }
         ExprKind::FilePublic(expr) =>
         {
             collect_declarations(expr, decls);
@@ -1939,6 +1919,10 @@ fn resolve_functions(expr: &mut Expr)
             resolve_functions(right);
         }
         ExprKind::Clone(expr) =>
+        {
+            resolve_functions(expr);
+        }
+        ExprKind::EnvFreeze(expr) =>
         {
             resolve_functions(expr);
         }
@@ -2087,7 +2071,7 @@ fn uses_environment(expr: &Expr) -> bool
         | ExprKind::AndBool { left, right }
         | ExprKind::Or { left, right }
         | ExprKind::OrBool { left, right } => uses_environment(left) || uses_environment(right),
-        ExprKind::Clone(expr) => uses_environment(expr),
+        ExprKind::Clone(expr) | ExprKind::EnvFreeze(expr) => uses_environment(expr),
         ExprKind::Use(_) => true,
         ExprKind::Load(_) => true,
         ExprKind::Import { .. } => true,
@@ -2693,6 +2677,10 @@ fn compile_expr(
             {
                 code.push(Instruction::Pop);
             }
+        }
+        ExprKind::EnvFreeze(_) =>
+        {
+            return false;
         }
         ExprKind::Not(expr) =>
         {
@@ -4029,7 +4017,7 @@ fn find_compile_failure(expr: &Expr) -> Option<String>
         } => find_compile_failure(target)
             .or_else(|| find_compile_failure(index))
             .or_else(|| find_compile_failure(value)),
-        ExprKind::Clone(expr) => find_compile_failure(expr),
+        ExprKind::Clone(expr) | ExprKind::EnvFreeze(expr) => find_compile_failure(expr),
         ExprKind::Not(expr) => find_compile_failure(expr),
         ExprKind::And { left, right }
         | ExprKind::AndBool { left, right }
@@ -4203,6 +4191,10 @@ fn collect_function_exprs(
             collect_function_exprs(value, out);
         }
         ExprKind::Clone(expr) =>
+        {
+            collect_function_exprs(expr, out);
+        }
+        ExprKind::EnvFreeze(expr) =>
         {
             collect_function_exprs(expr, out);
         }
@@ -4750,6 +4742,10 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
             kind: ExprKind::Clone(Box::new(substitute(expr, args))),
             line: expr.line,
         },
+        ExprKind::EnvFreeze(expr) => Expr {
+            kind: ExprKind::EnvFreeze(Box::new(substitute(expr, args))),
+            line: expr.line,
+        },
         ExprKind::If {
             condition,
             then_branch,
@@ -4905,7 +4901,10 @@ fn expr_size(expr: &Expr) -> usize
     match &expr.kind
     {
         ExprKind::BinaryOp { left, right, .. } => 1 + expr_size(left) + expr_size(right),
-        ExprKind::Not(expr) => 1 + expr_size(expr),
+        ExprKind::Not(expr) | ExprKind::Clone(expr) | ExprKind::EnvFreeze(expr) =>
+        {
+            1 + expr_size(expr)
+        }
         ExprKind::And { left, right }
         | ExprKind::AndBool { left, right }
         | ExprKind::Or { left, right }
@@ -4999,6 +4998,7 @@ fn is_reg_simple(expr: &Expr) -> bool
         | ExprKind::Map(_)
         | ExprKind::StructLiteral { .. }
         | ExprKind::FormatString(_)
+        | ExprKind::EnvFreeze(_)
         | ExprKind::Not(_)
         | ExprKind::And { .. }
         | ExprKind::AndBool { .. }
@@ -5131,6 +5131,7 @@ fn compile_reg_expr(
             code.push(RegInstruction::CloneValue { dst, src });
             Some(dst)
         }
+        ExprKind::EnvFreeze(_) => None,
         ExprKind::Not(_) => None,
         ExprKind::And { .. }
         | ExprKind::AndBool { .. }
@@ -5445,6 +5446,7 @@ fn is_inline_safe_arg(expr: &Expr) -> bool
         | ExprKind::Boolean(_)
         | ExprKind::Nil => true,
         ExprKind::Identifier { .. } => true,
+        ExprKind::EnvFreeze(_) => false,
         ExprKind::Not(expr) => is_inline_safe_arg(expr),
         ExprKind::And { left, right } | ExprKind::AndBool { left, right } =>
         {
@@ -5565,6 +5567,67 @@ fn resolve_method_value(
                 let map_ptr = Rc::as_ptr(&map) as usize;
                 let map_ref = map.borrow();
                 eval_map_index_cached(&map_ref, map_ptr, name, map_cache)
+            }
+        }
+        Value::Env(env) =>
+        {
+            if name.as_str() == "keys"
+            {
+                env_keys_array(env.as_ref())
+            }
+            else if name.as_str() == "values"
+            {
+                env_values_array(env.as_ref())
+            }
+            else
+            {
+                let map_ptr = Rc::as_ptr(&env) as usize;
+                let mut cache_mut = map_cache.borrow_mut();
+                if let Some(entry) = cache_mut.entries[0].as_ref()
+                {
+                    if entry.map_ptr == map_ptr
+                        && entry.version == env.version
+                        && entry.key.as_ref() == name.as_ref()
+                    {
+                        let value = entry.value.clone();
+                        cache_mut.hits += 1;
+                        return Ok(value);
+                    }
+                }
+                if let Some(entry) = cache_mut.entries[1].as_ref()
+                {
+                    if entry.map_ptr == map_ptr
+                        && entry.version == env.version
+                        && entry.key.as_ref() == name.as_ref()
+                    {
+                        let value = entry.value.clone();
+                        cache_mut.hits += 1;
+                        if let Some(entry1) = cache_mut.entries[1].take()
+                        {
+                            cache_mut.entries[1] = cache_mut.entries[0].take();
+                            cache_mut.entries[0] = Some(entry1);
+                        }
+                        return Ok(value);
+                    }
+                }
+                cache_mut.misses += 1;
+                let value = env
+                    .data
+                    .get(name)
+                    .map(env_clone_value)
+                    .unwrap_or(Value::Nil);
+                let new_entry = MapAccessCacheEntry {
+                    map_ptr,
+                    version: env.version,
+                    key: name.clone(),
+                    value: value.clone(),
+                };
+                if let Some(entry0) = cache_mut.entries[0].take()
+                {
+                    cache_mut.entries[1] = Some(entry0);
+                }
+                cache_mut.entries[0] = Some(new_entry);
+                value
             }
         }
         Value::Array(_)
@@ -5984,6 +6047,50 @@ fn eval_index_cached_value(
                 map.borrow().data.get(&key).cloned().unwrap_or(Value::Nil)
             }
         }
+        Value::Env(env) =>
+        {
+            if let Value::String(s) = index_val
+            {
+                if s.as_str() == "keys"
+                {
+                    env_keys_array(env.as_ref())
+                }
+                else if s.as_str() == "values"
+                {
+                    env_values_array(env.as_ref())
+                }
+                else
+                {
+                    let map_ptr = Rc::as_ptr(&env) as usize;
+                    let mut cache_mut = cache.borrow_mut();
+                    if cache_mut.map_ptr == Some(map_ptr)
+                        && cache_mut.version == env.version
+                        && cache_mut.key.as_ref() == Some(&s)
+                    {
+                        cache_mut.hits += 1;
+                        cache_mut.value.clone().unwrap_or(Value::Nil)
+                    }
+                    else
+                    {
+                        let value = env.data.get(&s).map(env_clone_value).unwrap_or(Value::Nil);
+                        cache_mut.map_ptr = Some(map_ptr);
+                        cache_mut.version = env.version;
+                        cache_mut.key = Some(s.clone());
+                        cache_mut.value = Some(value.clone());
+                        cache_mut.misses += 1;
+                        value
+                    }
+                }
+            }
+            else
+            {
+                let key = intern::intern_owned(index_val.inspect());
+                env.data
+                    .get(&key)
+                    .map(env_clone_value)
+                    .unwrap_or(Value::Nil)
+            }
+        }
         _ => return Err(err_index_unsupported()),
     };
     Ok(result)
@@ -6276,6 +6383,13 @@ fn eval_index_assign_value(
             let mut map_mut = map.borrow_mut();
             map_mut.data.insert(key, value.clone());
             map_mut.version = map_mut.version.wrapping_add(1);
+        }
+        Value::Env(_) =>
+        {
+            return Err(RuntimeError {
+                message: "Env is immutable".to_string(),
+                line: 0,
+            });
         }
         _ =>
         {
@@ -6726,6 +6840,72 @@ fn eval_map_index_cached_value(
                 map.borrow().data.get(&key).cloned().unwrap_or(Value::Nil)
             }
         }
+        Value::Env(env) =>
+        {
+            if let Value::String(s) = index_val
+            {
+                if s.as_str() == "keys"
+                {
+                    env_keys_array(env.as_ref())
+                }
+                else if s.as_str() == "values"
+                {
+                    env_values_array(env.as_ref())
+                }
+                else
+                {
+                    let map_ptr = Rc::as_ptr(&env) as usize;
+                    let mut cache_mut = cache.borrow_mut();
+                    if let Some(entry) = cache_mut.entries[0].clone()
+                    {
+                        if entry.map_ptr == map_ptr
+                            && entry.version == env.version
+                            && entry.key.as_ref() == s.as_ref()
+                        {
+                            cache_mut.hits += 1;
+                            return Ok(entry.value);
+                        }
+                    }
+                    if let Some(entry) = cache_mut.entries[1].clone()
+                    {
+                        if entry.map_ptr == map_ptr
+                            && entry.version == env.version
+                            && entry.key.as_ref() == s.as_ref()
+                        {
+                            cache_mut.hits += 1;
+                            if let Some(entry1) = cache_mut.entries[1].take()
+                            {
+                                cache_mut.entries[1] = cache_mut.entries[0].take();
+                                cache_mut.entries[0] = Some(entry1);
+                            }
+                            return Ok(entry.value);
+                        }
+                    }
+                    cache_mut.misses += 1;
+                    let value = env.data.get(&s).map(env_clone_value).unwrap_or(Value::Nil);
+                    let new_entry = MapAccessCacheEntry {
+                        map_ptr,
+                        version: env.version,
+                        key: s.clone(),
+                        value: value.clone(),
+                    };
+                    if let Some(entry0) = cache_mut.entries[0].take()
+                    {
+                        cache_mut.entries[1] = Some(entry0);
+                    }
+                    cache_mut.entries[0] = Some(new_entry);
+                    value
+                }
+            }
+            else
+            {
+                let key = intern::intern_owned(index_val.inspect());
+                env.data
+                    .get(&key)
+                    .map(env_clone_value)
+                    .unwrap_or(Value::Nil)
+            }
+        }
         Value::Array(_)
         | Value::F32Array(_)
         | Value::F64Array(_)
@@ -7070,6 +7250,7 @@ fn execute_reg_instructions(
                         Value::ByteBuf(buf) => default_int(buf.borrow().len() as i128),
                         Value::BytesView(view) => default_int(view.len as i128),
                         Value::Map(map) => default_int(map.borrow().data.len() as i128),
+                        Value::Env(env) => default_int(env.data.len() as i128),
                         Value::Mmap(mmap) => default_int(mmap.len() as i128),
                         Value::MmapMut(mmap) => default_int(mmap.borrow().len() as i128),
                         _ => default_int(0),
@@ -7081,6 +7262,7 @@ fn execute_reg_instructions(
                     regs[*dst] = match val
                     {
                         Value::Map(map) => map_keys_array(&map.borrow()),
+                        Value::Env(env) => env_keys_array(env.as_ref()),
                         _ => Value::Nil,
                     };
                 }
@@ -7090,6 +7272,7 @@ fn execute_reg_instructions(
                     regs[*dst] = match val
                     {
                         Value::Map(map) => map_values_array(&map.borrow()),
+                        Value::Env(env) => env_values_array(env.as_ref()),
                         _ => Value::Nil,
                     };
                 }
@@ -8290,6 +8473,7 @@ fn execute_instructions(
                         Value::ByteBuf(buf) => default_int(buf.borrow().len() as i128),
                         Value::BytesView(view) => default_int(view.len as i128),
                         Value::Map(map) => default_int(map.borrow().data.len() as i128),
+                        Value::Env(env) => default_int(env.data.len() as i128),
                         Value::Mmap(mmap) => default_int(mmap.len() as i128),
                         Value::MmapMut(mmap) => default_int(mmap.borrow().len() as i128),
                         _ => default_int(0),
@@ -8315,6 +8499,7 @@ fn execute_instructions(
                     let result = match target_val
                     {
                         Value::Map(map) => map_keys_array(&map.borrow()),
+                        Value::Env(env) => env_keys_array(env.as_ref()),
                         _ => Value::Nil,
                     };
                     frame.stack.push(result);
@@ -8328,6 +8513,7 @@ fn execute_instructions(
                     let result = match target_val
                     {
                         Value::Map(map) => map_values_array(&map.borrow()),
+                        Value::Env(env) => env_values_array(env.as_ref()),
                         _ => Value::Nil,
                     };
                     frame.stack.push(result);
@@ -8576,6 +8762,12 @@ fn execute_instructions(
                             let map_ref = map.borrow();
                             let mut keys = Vec::with_capacity(map_ref.data.len());
                             keys.extend(map_ref.data.keys().cloned());
+                            ForEachIter::Map { keys, idx: 0 }
+                        }
+                        Value::Env(env) =>
+                        {
+                            let mut keys = Vec::with_capacity(env.data.len());
+                            keys.extend(env.data.keys().cloned());
                             ForEachIter::Map { keys, idx: 0 }
                         }
                         _ =>
@@ -9387,6 +9579,32 @@ fn execute_instructions(
                             {
                                 let key = intern::intern_owned(index_val.inspect());
                                 map_ref.data.get(&key).cloned().unwrap_or(Value::Nil)
+                            }
+                        }
+                        Value::Env(env) =>
+                        {
+                            if let Value::String(s) = index_val
+                            {
+                                if s.as_str() == "keys"
+                                {
+                                    env_keys_array(env.as_ref())
+                                }
+                                else if s.as_str() == "values"
+                                {
+                                    env_values_array(env.as_ref())
+                                }
+                                else
+                                {
+                                    env.data.get(&s).map(env_clone_value).unwrap_or(Value::Nil)
+                                }
+                            }
+                            else
+                            {
+                                let key = intern::intern_owned(index_val.inspect());
+                                env.data
+                                    .get(&key)
+                                    .map(env_clone_value)
+                                    .unwrap_or(Value::Nil)
                             }
                         }
                         _ => return Err(err_index_unsupported()),
@@ -10451,6 +10669,7 @@ fn is_simple(expr: &Expr) -> bool
         {
             is_simple(target) && is_simple(start) && is_simple(end)
         }
+        ExprKind::EnvFreeze(_) => false,
         ExprKind::Not(expr) => is_simple(expr),
         ExprKind::And { left, right } | ExprKind::AndBool { left, right } =>
         {
@@ -10642,6 +10861,10 @@ fn resolve(expr: &mut Expr, slot_map: &FxHashMap<SymbolId, usize>)
         {
             resolve(expr, slot_map);
         }
+        ExprKind::EnvFreeze(expr) =>
+        {
+            resolve(expr, slot_map);
+        }
         ExprKind::IndexAssignment {
             target,
             index,
@@ -10778,6 +11001,7 @@ pub struct Interpreter
     // Pool of reusable operand stacks for bytecode frames
     stack_pool: Vec<Vec<Value>>,
     bytecode_mode: BytecodeMode,
+    autoload_std: bool,
     module_cache: FxHashMap<String, ModuleCacheEntry>,
     module_lookup_cache: FxHashMap<String, ModuleLookupEntry>,
     module_search_paths: Vec<PathBuf>,
@@ -10799,6 +11023,7 @@ impl Interpreter
             reg_pool: Vec::with_capacity(32),
             stack_pool: Vec::with_capacity(32),
             bytecode_mode: BytecodeMode::Simple,
+            autoload_std: true,
             module_cache: FxHashMap::default(),
             module_lookup_cache: FxHashMap::default(),
             module_search_paths,
@@ -10809,6 +11034,11 @@ impl Interpreter
     pub fn set_bytecode_mode(&mut self, mode: BytecodeMode)
     {
         self.bytecode_mode = mode;
+    }
+
+    pub fn set_autoload_std(&mut self, enabled: bool)
+    {
+        self.autoload_std = enabled;
     }
 
     pub fn set_main_path(&mut self, path: &std::path::Path)
@@ -11569,7 +11799,10 @@ impl Interpreter
         let std_sym = intern::intern_symbol("std");
         if path[0] == std_sym
         {
-            self.ensure_std_module();
+            if self.autoload_std
+            {
+                self.ensure_std_module();
+            }
         }
 
         let key = Self::module_lookup_key(path);
@@ -11673,6 +11906,7 @@ impl Interpreter
                     Value::ByteBuf(buf) => Ok(default_int(buf.borrow().len() as i128)),
                     Value::BytesView(view) => Ok(default_int(view.len as i128)),
                     Value::Map(map) => Ok(default_int(map.borrow().data.len() as i128)),
+                    Value::Env(env) => Ok(default_int(env.data.len() as i128)),
                     Value::Mmap(mmap) => Ok(default_int(mmap.len() as i128)),
                     Value::MmapMut(mmap) => Ok(default_int(mmap.borrow().len() as i128)),
                     _ => Ok(default_int(0)),
@@ -11750,6 +11984,7 @@ impl Interpreter
                     Value::StructInstance(inst) => return Ok(Value::String(inst.ty.name.clone())),
                     Value::BoundMethod(_) => "BoundMethod",
                     Value::Map(_) => "Map",
+                    Value::Env(_) => "Env",
                     Value::Ast(_) => "Ast",
                     Value::DataFrame(_) => "DataFrame",
                     Value::Sqlite(_) => "Sqlite",
@@ -13204,6 +13439,12 @@ impl Interpreter
                 let val = self.eval(expr, slots)?;
                 Ok(clone_value(&val))
             }
+            ExprKind::EnvFreeze(expr) =>
+            {
+                let val = self.eval(expr, slots)?;
+                let env = freeze_to_env(&val).map_err(|message| RuntimeError { message, line })?;
+                Ok(Value::Env(env))
+            }
             ExprKind::Not(expr) =>
             {
                 let val = self.eval(expr, slots)?;
@@ -13622,6 +13863,13 @@ impl Interpreter
                         let mut map_mut = map.borrow_mut();
                         map_mut.data.insert(key, val.clone());
                         map_mut.version = map_mut.version.wrapping_add(1);
+                    }
+                    Value::Env(_) =>
+                    {
+                        return Err(RuntimeError {
+                            message: "Env is immutable".to_string(),
+                            line,
+                        });
                     }
                     Value::StructInstance(inst) =>
                     {
@@ -14582,6 +14830,29 @@ impl Interpreter
                             Ok(map.borrow().data.get(&key).cloned().unwrap_or(Value::Nil))
                         }
                     }
+                    Value::Env(env) =>
+                    {
+                        if let Value::String(s) = index_val
+                        {
+                            if s.as_str() == "keys"
+                            {
+                                Ok(env_keys_array(env.as_ref()))
+                            }
+                            else if s.as_str() == "values"
+                            {
+                                Ok(env_values_array(env.as_ref()))
+                            }
+                            else
+                            {
+                                Ok(env.data.get(&s).map(env_clone_value).unwrap_or(Value::Nil))
+                            }
+                        }
+                        else
+                        {
+                            let key = intern::intern_owned(index_val.inspect());
+                            Ok(env.data.get(&key).map(env_clone_value).unwrap_or(Value::Nil))
+                        }
+                    }
                     _ => Err(RuntimeError {
                         message: err_index_unsupported().message,
                         line,
@@ -14758,6 +15029,7 @@ impl Interpreter
                                 Value::ByteBuf(buf) => Ok(default_int(buf.borrow().len() as i128)),
                                 Value::BytesView(view) => Ok(default_int(view.len as i128)),
                                 Value::Map(map) => Ok(default_int(map.borrow().data.len() as i128)),
+                                Value::Env(env) => Ok(default_int(env.data.len() as i128)),
                                 Value::Mmap(mmap) => Ok(default_int(mmap.len() as i128)),
                                 Value::MmapMut(mmap) =>
                                 {
@@ -15657,18 +15929,17 @@ impl Interpreter
     pub fn eval_ast_in(
         &mut self,
         mut ast: Expr,
-        env_map: Rc<RefCell<MapValue>>,
+        env: Rc<EnvValue>,
         program: Option<Value>,
     ) -> EvalResult
     {
         resolve_slots(&mut ast);
         let new_env = self.get_env(None, false);
         {
-            let map_ref = env_map.borrow();
-            for (key, value) in map_ref.data.iter()
+            for (key, value) in env.data.iter()
             {
                 let name = intern::intern_symbol(key.as_str());
-                new_env.borrow_mut().define(name, value.clone());
+                new_env.borrow_mut().define(name, env_clone_value(value));
             }
         }
         if let Some(Value::Reference(reference)) = program
@@ -15680,9 +15951,12 @@ impl Interpreter
         }
 
         let original_env = self.env.clone();
+        let original_autoload_std = self.autoload_std;
+        self.autoload_std = false;
         self.env = new_env.clone();
         let result = self.eval(&ast, &mut []);
         self.env = original_env;
+        self.autoload_std = original_autoload_std;
         self.recycle_env(new_env);
         result
     }

@@ -149,7 +149,10 @@ The `::` operator accesses module members, similar to map dot access.
 It supports both native functions and user-defined Kansei functions/closures.
 User-defined functions are executed in isolated, thread-local interpreters.
 
-**Note:** Functions passed to `std::parallel` must be **self-contained**. They cannot access variables from the outer scope via implicit or explicit capture (except via the provided `context` argument). They should only use their parameters and local logic.
+**Note:** Functions passed to `std::parallel` must be **self-contained**. They
+cannot access variables from the outer scope via implicit or explicit capture
+(except via the provided `context` argument). They should only use their
+parameters and local logic.
 
 ```ruby
 use std::parallel
@@ -159,13 +162,14 @@ parallel = std::parallel
 # Preferred: parallel.loop(count, context, function)
 # The closure receives (context, index) as arguments.
 n = 10
-context = {"a": 5}
 
-# Context fields are automatically injected into the environment!
+# Env context fields are automatically injected into the environment!
 # You can access 'a' directly.
-# The context object itself is passed as the first argument 'ctx'.
+# The Env object itself is passed as the first argument 'ctx'.
+context = %{ "a": 5 }
 results = parallel.loop(n, context, {|ctx, i| i + a })
 # -> [5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+# If context is a Map or Struct, fields are not injected; use ctx.
 
 # Thread Safety and Data Copying
 # Data passed to parallel threads (including `context`) is COPIED by value.
@@ -209,16 +213,17 @@ Available functions:
 - `std::kansei::ast::from_sexpr(sexpr)` -> `Ast`
 - `std::kansei::ast::to_source(src_or_ast)` -> canonical source string
 - `std::kansei::ast::from_source(src)` -> `Ast`
-- `std::kansei::ast::eval_in(ast_or_src, env_map, program_or_nil)` -> value
+- `std::kansei::ast::eval_in(ast_or_src, env, program_or_nil)` -> value
 
-`eval_in` evaluates the AST in a fresh environment populated from `env_map`. Pass `&program` to expose the program object, or `nil` to omit it.
+`eval_in` evaluates the AST in a fresh environment populated from a frozen `Env`. You can pass an `Env` directly or a Map/Struct (it will be frozen). No standard library is injected unless you pass it in. Pass `&program` to expose the program object, or `nil` to omit it.
 
 ```ruby
 use std::kansei ast = std::kansei::ast
 
-env = { "x": 3 }
+env = %{ "x": 3 }
 ast.eval_in("x + 2", env, nil)    # -> 5
 ast.eval_in("program.name", env, &program)
+# To use std inside eval_in, include it explicitly: env = %{ "std": std, "x": 3 }
 ```
 
 ### std::kansei::value
@@ -730,10 +735,21 @@ sum = 0
 }
 ```
 
+### Env Snapshots (`%`)
+`%expr` freezes a Map or Struct into an immutable Env snapshot (deep copy).
+Use `%{...}` for an Env literal.
+
+```ruby
+env = %{ "x": 3 }
+env2 = %some_struct
+```
+
+Env is read-only; attempts to assign into it will error. To use an Env as an environment, pass it to `std::parallel` or `std::kansei::ast::eval_in`.
+
 ## Built-in Functions
 - `puts(val)`: Print value with newline.
 - `print(val)`: Print value without newline.
-- `len(obj)`: Return length of String, Array, or Map.
+- `len(obj)`: Return length of String, Array, Map, or Env.
 - `read_file(path)`: Read file content as string.
 - `write_file(path, content)`: Write string to file.
 

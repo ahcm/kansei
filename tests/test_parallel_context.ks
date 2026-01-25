@@ -1,18 +1,17 @@
 use std::parallel
 parallel = std::parallel
 
-ctx = {"a": 10, "b": 20}
+env_ctx = %{"a": 10, "b": 20}
+map_ctx = {"a": 10, "b": 20}
 
-# Verify single argument closure: |i|
-# Context 'a' and 'b' are injected into environment automatically.
-results1 = parallel.loop(5, ctx, {|i|
+# Env context fields are injected into the environment.
+results1 = parallel.loop(5, env_ctx, {|i|
   i + a + b
 })
 puts results1
 
-# Verify two argument closure: |ctx, i|
-# Context object is passed explicitly as first argument.
-results2 = parallel.loop(5, ctx, {|ctx, i|
-  i + ctx.a
+# Map context is not injected; use ctx explicitly.
+results2 = parallel.loop(5, map_ctx, {|ctx, i|
+  i + ctx.a + ctx.b
 })
 puts results2

@@ -2,7 +2,7 @@ use crate::ast::{FloatKind, IntKind};
 use crate::eval::Interpreter;
 use crate::intern;
 use crate::sexpr;
-use crate::value::{MapValue, Value};
+use crate::value::{MapValue, Value, freeze_value};
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
@@ -103,12 +103,17 @@ fn resolve_parallel_args(args: &[Value]) -> Result<(&Value, Option<&Value>, bool
 {
     if args.len() < 2 || args.len() > 3
     {
-        return Err(
-            "parallel function expects target, function, and optional context".to_string(),
-        );
+        return Err("parallel function expects target, function, and optional context".to_string());
     }
     let mut func_arg = &args[1];
-    let mut context_arg = if args.len() == 3 { Some(&args[2]) } else { None };
+    let mut context_arg = if args.len() == 3
+    {
+        Some(&args[2])
+    }
+    else
+    {
+        None
+    };
     let mut new_order = false;
 
     if !matches!(func_arg, Value::Function(_) | Value::NativeFunction(_))
@@ -121,9 +126,7 @@ fn resolve_parallel_args(args: &[Value]) -> Result<(&Value, Option<&Value>, bool
         }
         else
         {
-            return Err(
-                "parallel function expects a function as 2nd or 3rd argument".to_string()
-            );
+            return Err("parallel function expects a function as 2nd or 3rd argument".to_string());
         }
     }
     Ok((func_arg, context_arg, new_order))
@@ -131,13 +134,15 @@ fn resolve_parallel_args(args: &[Value]) -> Result<(&Value, Option<&Value>, bool
 
 fn native_parallel_map(args: &[Value]) -> Result<Value, String>
 {
-    // For now, only support native functions to avoid code explosion, 
+    // For now, only support native functions to avoid code explosion,
     // unless requested. Keeping legacy support.
     // If user passed context or new order, we error for now or fallback?
     // We'll support Legacy Native path fully.
-    
-    if args.len() == 2 {
-        if let Value::NativeFunction(func) = &args[1] {
+
+    if args.len() == 2
+    {
+        if let Value::NativeFunction(func) = &args[1]
+        {
             let func = *func;
             match &args[0]
             {
@@ -147,7 +152,10 @@ fn native_parallel_map(args: &[Value]) -> Result<Value, String>
                     let result: Result<Vec<f64>, String> = values
                         .par_iter()
                         .map(|v| {
-                            let arg = Value::Float { value: *v, kind: FloatKind::F64 };
+                            let arg = Value::Float {
+                                value: *v,
+                                kind: FloatKind::F64,
+                            };
                             let out = func(&[arg])?;
                             value_to_f64(out)
                         })
@@ -160,7 +168,10 @@ fn native_parallel_map(args: &[Value]) -> Result<Value, String>
                     let result: Result<Vec<f32>, String> = values
                         .par_iter()
                         .map(|v| {
-                            let arg = Value::Float { value: *v as f64, kind: FloatKind::F32 };
+                            let arg = Value::Float {
+                                value: *v as f64,
+                                kind: FloatKind::F32,
+                            };
                             let out = func(&[arg])?;
                             value_to_f64(out).map(|f| f as f32)
                         })
@@ -173,7 +184,10 @@ fn native_parallel_map(args: &[Value]) -> Result<Value, String>
                     let result: Result<Vec<i64>, String> = values
                         .par_iter()
                         .map(|v| {
-                            let arg = Value::Integer { value: *v as i128, kind: IntKind::I64 };
+                            let arg = Value::Integer {
+                                value: *v as i128,
+                                kind: IntKind::I64,
+                            };
                             let out = func(&[arg])?;
                             value_to_i64(out)
                         })
@@ -186,10 +200,14 @@ fn native_parallel_map(args: &[Value]) -> Result<Value, String>
                     let result: Result<Vec<i32>, String> = values
                         .par_iter()
                         .map(|v| {
-                            let arg = Value::Integer { value: *v as i128, kind: IntKind::I32 };
+                            let arg = Value::Integer {
+                                value: *v as i128,
+                                kind: IntKind::I32,
+                            };
                             let out = func(&[arg])?;
                             let i = value_to_i64(out)?;
-                            if i < i32::MIN as i64 || i > i32::MAX as i64 {
+                            if i < i32::MIN as i64 || i > i32::MAX as i64
+                            {
                                 return Err("parallel.map result out of i32 range".to_string());
                             }
                             Ok(i as i32)
@@ -201,7 +219,7 @@ fn native_parallel_map(args: &[Value]) -> Result<Value, String>
             }
         }
     }
-    
+
     Err("parallel.map only supports (array, native_function) for now".to_string())
 }
 
@@ -311,7 +329,7 @@ fn native_parallel_loop(args: &[Value]) -> Result<Value, String>
     if let Value::NativeFunction(func) = func_arg
     {
         let func = *func;
-        
+
         let results: Result<Vec<Numeric>, String> = (0..n)
             .into_par_iter()
             .map(|idx| {
@@ -322,9 +340,12 @@ fn native_parallel_loop(args: &[Value]) -> Result<Value, String>
                 let out = if let Some(ctx_sexpr) = &context_sexpr
                 {
                     let ctx_val = sexpr::sexpr_to_value(ctx_sexpr)?;
-                    if new_order {
+                    if new_order
+                    {
                         func(&[ctx_val, arg])?
-                    } else {
+                    }
+                    else
+                    {
                         func(&[arg, ctx_val])?
                     }
                 }
@@ -337,11 +358,11 @@ fn native_parallel_loop(args: &[Value]) -> Result<Value, String>
             .collect();
         return Ok(map_numeric_results(results?));
     }
-    
+
     if let Value::Function(_) = func_arg
     {
         let func_sexpr = sexpr::value_to_sexpr(func_arg)?;
-        
+
         let results: Result<Vec<Numeric>, String> = (0..n)
             .into_par_iter()
             .map(|idx| {
@@ -349,15 +370,16 @@ fn native_parallel_loop(args: &[Value]) -> Result<Value, String>
                     value: idx as i128,
                     kind: IntKind::I64,
                 };
-                
+
                 let mut interpreter = Interpreter::new();
+                interpreter.set_autoload_std(false);
                 let func_val = sexpr::sexpr_to_value(&func_sexpr)?;
-                
+
                 let out = if let Some(ctx_sexpr) = &context_sexpr
                 {
                     let ctx_val = sexpr::sexpr_to_value(ctx_sexpr)?;
-                    
-                    // Inject context into function environment if it's a Map or Struct
+
+                    // Inject context into function environment if it's an Env
                     if let Value::Function(data) = &func_val
                     {
                         {
@@ -365,27 +387,19 @@ fn native_parallel_loop(args: &[Value]) -> Result<Value, String>
                             env.is_partial = true; // Allow lookup from child scope (closure)
                             match &ctx_val
                             {
-                                Value::Map(map) =>
+                                Value::Env(env_val) =>
                                 {
-                                    for (key, val) in &map.borrow().data
+                                    for (key, val) in &env_val.data
                                     {
                                         let sym = intern::intern_symbol(key.as_str());
-                                        env.define(sym, val.clone());
+                                        let frozen = freeze_value(val).map_err(|message| {
+                                            format!("parallel.loop env freeze failed: {}", message)
+                                        })?;
+                                        env.define(sym, frozen);
                                     }
                                 }
-                                Value::StructInstance(s) =>
-                                {
-                                    let fields = s.fields.borrow();
-                                    for (name, idx) in &s.ty.field_map
-                                    {
-                                        if let Some(val) = fields.get(*idx)
-                                        {
-                                            let sym = intern::intern_symbol(name.as_str());
-                                            env.define(sym, val.clone());
-                                        }
-                                    }
-                                }
-                                _ => {}
+                                _ =>
+                                {}
                             }
                         }
 

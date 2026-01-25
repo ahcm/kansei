@@ -24,6 +24,7 @@ pub enum Token
     Minus,
     Star,
     Slash,
+    Percent,
     Equals,
     StringLiteral(String),  // "hello"
     CommandLiteral(String), // `ls`
@@ -147,6 +148,11 @@ impl Lexer
                 {
                     self.position += 1;
                     Token::Slash
+                }
+                '%' =>
+                {
+                    self.position += 1;
+                    Token::Percent
                 }
                 '=' =>
                 {

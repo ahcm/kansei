@@ -261,6 +261,13 @@ impl Parser
             let inner = self.parse_factor();
             return self.make_expr(ExprKind::Clone(Box::new(inner)), line);
         }
+        if self.current_token.token == Token::Percent
+        {
+            let line = self.current_token.line;
+            self.eat();
+            let inner = self.parse_factor();
+            return self.make_expr(ExprKind::EnvFreeze(Box::new(inner)), line);
+        }
 
         let mut expr = self.parse_atom();
 

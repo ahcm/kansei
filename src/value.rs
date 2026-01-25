@@ -830,6 +830,7 @@ pub enum Value
     StructInstance(Rc<StructInstance>),
     BoundMethod(Rc<BoundMethod>),
     Map(Rc<RefCell<MapValue>>),
+    Env(Rc<EnvValue>),
     Ast(Rc<Expr>),
     DataFrame(Rc<RefCell<polars::prelude::DataFrame>>),
     Sqlite(Rc<RefCell<Connection>>),
@@ -858,6 +859,218 @@ impl MapValue
     pub fn new(data: FxHashMap<Rc<String>, Value>) -> Self
     {
         Self { data, version: 0 }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EnvValue
+{
+    pub data: FxHashMap<Rc<String>, Value>,
+    pub version: u64,
+}
+
+impl EnvValue
+{
+    pub fn new(data: FxHashMap<Rc<String>, Value>) -> Self
+    {
+        Self { data, version: 0 }
+    }
+}
+
+pub fn deep_clone_value(value: &Value) -> Value
+{
+    match value
+    {
+        Value::Array(arr) =>
+        {
+            let vals = arr.borrow().clone();
+            Value::Array(Rc::new(RefCell::new(vals)))
+        }
+        Value::F32Array(arr) =>
+        {
+            let vals = arr.borrow().clone();
+            Value::F32Array(Rc::new(RefCell::new(vals)))
+        }
+        Value::F64Array(arr) =>
+        {
+            let vals = arr.borrow().clone();
+            Value::F64Array(Rc::new(RefCell::new(vals)))
+        }
+        Value::I32Array(arr) =>
+        {
+            let vals = arr.borrow().clone();
+            Value::I32Array(Rc::new(RefCell::new(vals)))
+        }
+        Value::I64Array(arr) =>
+        {
+            let vals = arr.borrow().clone();
+            Value::I64Array(Rc::new(RefCell::new(vals)))
+        }
+        Value::Bytes(bytes) => Value::Bytes(bytes.clone()),
+        Value::ByteBuf(buf) =>
+        {
+            let vals = buf.borrow().clone();
+            Value::ByteBuf(Rc::new(RefCell::new(vals)))
+        }
+        Value::BytesView(view) => Value::BytesView(view.clone()),
+        Value::StructType(ty) => Value::StructType(ty.clone()),
+        Value::StructInstance(inst) =>
+        {
+            let vals = inst.fields.borrow().clone();
+            Value::StructInstance(Rc::new(StructInstance {
+                ty: inst.ty.clone(),
+                fields: RefCell::new(vals),
+            }))
+        }
+        Value::BoundMethod(method) => Value::BoundMethod(method.clone()),
+        Value::Map(map) =>
+        {
+            let map_ref = map.borrow();
+            Value::Map(Rc::new(RefCell::new(MapValue::new(map_ref.data.clone()))))
+        }
+        Value::Env(env) => Value::Env(env.clone()),
+        Value::Ast(ast) => Value::Ast(ast.clone()),
+        Value::DataFrame(df) => Value::DataFrame(df.clone()),
+        Value::Sqlite(conn) => Value::Sqlite(conn.clone()),
+        Value::Mmap(mmap) => Value::Mmap(mmap.clone()),
+        Value::MmapMut(mmap) => Value::MmapMut(mmap.clone()),
+        Value::String(s) => Value::String(s.clone()),
+        Value::Reference(r) => deep_clone_value(&r.borrow()),
+        v => v.clone(),
+    }
+}
+
+pub fn freeze_value(value: &Value) -> Result<Value, String>
+{
+    match value
+    {
+        Value::Nil
+        | Value::Boolean(_)
+        | Value::Integer { .. }
+        | Value::Unsigned { .. }
+        | Value::Float { .. }
+        | Value::String(_)
+        | Value::Bytes(_)
+        | Value::NativeFunction(_)
+        | Value::HostFunction(_)
+        | Value::Ast(_) => Ok(value.clone()),
+        Value::Env(env) => Ok(Value::Env(env.clone())),
+        Value::Array(arr) =>
+        {
+            let mut out = Vec::with_capacity(arr.borrow().len());
+            for item in arr.borrow().iter()
+            {
+                out.push(freeze_value(item)?);
+            }
+            Ok(Value::Array(Rc::new(RefCell::new(out))))
+        }
+        Value::F32Array(arr) =>
+        {
+            let vals = arr.borrow().clone();
+            Ok(Value::F32Array(Rc::new(RefCell::new(vals))))
+        }
+        Value::F64Array(arr) =>
+        {
+            let vals = arr.borrow().clone();
+            Ok(Value::F64Array(Rc::new(RefCell::new(vals))))
+        }
+        Value::I32Array(arr) =>
+        {
+            let vals = arr.borrow().clone();
+            Ok(Value::I32Array(Rc::new(RefCell::new(vals))))
+        }
+        Value::I64Array(arr) =>
+        {
+            let vals = arr.borrow().clone();
+            Ok(Value::I64Array(Rc::new(RefCell::new(vals))))
+        }
+        Value::ByteBuf(buf) =>
+        {
+            let vals = buf.borrow().clone();
+            Ok(Value::ByteBuf(Rc::new(RefCell::new(vals))))
+        }
+        Value::BytesView(view) =>
+        {
+            let data = bytes_view_to_vec(view);
+            Ok(Value::Bytes(Rc::new(data)))
+        }
+        Value::StructType(ty) => Ok(Value::StructType(ty.clone())),
+        Value::StructInstance(inst) =>
+        {
+            let fields = inst.fields.borrow();
+            let mut frozen_fields = Vec::with_capacity(fields.len());
+            for item in fields.iter()
+            {
+                frozen_fields.push(freeze_value(item)?);
+            }
+            Ok(Value::StructInstance(Rc::new(StructInstance {
+                ty: inst.ty.clone(),
+                fields: RefCell::new(frozen_fields),
+            })))
+        }
+        Value::Map(map) =>
+        {
+            let map_ref = map.borrow();
+            let mut data = FxHashMap::default();
+            for (key, val) in map_ref.data.iter()
+            {
+                data.insert(key.clone(), freeze_value(val)?);
+            }
+            Ok(Value::Map(Rc::new(RefCell::new(MapValue::new(data)))))
+        }
+        Value::Function(data) =>
+        {
+            if data.uses_env
+            {
+                Err("env freeze does not allow functions that capture environment".to_string())
+            }
+            else
+            {
+                Ok(Value::Function(data.clone()))
+            }
+        }
+        Value::Reference(r) => freeze_value(&r.borrow()),
+        Value::DataFrame(_)
+        | Value::Sqlite(_)
+        | Value::Mmap(_)
+        | Value::MmapMut(_)
+        | Value::WasmFunction(_)
+        | Value::BoundMethod(_)
+        | Value::Uninitialized => Err("env freeze does not support this value type".to_string()),
+        #[cfg(feature = "lib-net")]
+        Value::NetStream(_) => Err("env freeze does not support this value type".to_string()),
+    }
+}
+
+pub fn freeze_to_env(value: &Value) -> Result<Rc<EnvValue>, String>
+{
+    match value
+    {
+        Value::Env(env) => Ok(env.clone()),
+        Value::Map(map) =>
+        {
+            let map_ref = map.borrow();
+            let mut data = FxHashMap::default();
+            for (key, val) in map_ref.data.iter()
+            {
+                data.insert(key.clone(), freeze_value(val)?);
+            }
+            Ok(Rc::new(EnvValue::new(data)))
+        }
+        Value::StructInstance(inst) =>
+        {
+            let fields = inst.fields.borrow();
+            let mut data = FxHashMap::default();
+            for (name, idx) in inst.ty.field_map.iter()
+            {
+                if let Some(val) = fields.get(*idx)
+                {
+                    data.insert(name.clone(), freeze_value(val)?);
+                }
+            }
+            Ok(Rc::new(EnvValue::new(data)))
+        }
+        _ => Err("env freeze expects a Map, Struct, or Env".to_string()),
     }
 }
 
@@ -972,6 +1185,28 @@ impl PartialEq for Value
                 }
                 true
             }
+            (Value::Env(a), Value::Env(b)) =>
+            {
+                if a.data.len() != b.data.len()
+                {
+                    return false;
+                }
+                for (k, v) in a.data.iter()
+                {
+                    if let Some(other_v) = b.data.get(k)
+                    {
+                        if v != other_v
+                        {
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        return false;
+                    }
+                }
+                true
+            }
             (Value::Ast(a), Value::Ast(b)) => a == b,
             (Value::DataFrame(a), Value::DataFrame(b)) => Rc::ptr_eq(a, b),
             (Value::Sqlite(a), Value::Sqlite(b)) => Rc::ptr_eq(a, b),
@@ -1013,6 +1248,7 @@ impl fmt::Debug for Value
             Value::StructInstance(inst) => write!(f, "StructInstance({})", inst.ty.name),
             Value::BoundMethod(_) => write!(f, "BoundMethod(...)"),
             Value::Map(m) => write!(f, "Map({:?})", m.borrow().data),
+            Value::Env(env) => write!(f, "Env({:?})", env.data),
             Value::Ast(_) => write!(f, "Ast(...)"),
             Value::DataFrame(df) =>
             {
@@ -1085,6 +1321,15 @@ impl Value
                     .map(|(k, v)| format!("\"{}\": {}\"", k, v.inspect()))
                     .collect();
                 format!("{{{}}}", entries.join(", "))
+            }
+            Value::Env(env) =>
+            {
+                let entries: Vec<String> = env
+                    .data
+                    .iter()
+                    .map(|(k, v)| format!("\"{}\": {}\"", k, v.inspect()))
+                    .collect();
+                format!("%{{{}}}", entries.join(", "))
             }
             Value::Ast(_) => "<ast>".to_string(),
             Value::DataFrame(df) =>
@@ -1163,6 +1408,15 @@ impl fmt::Display for Value
                     .map(|(k, v)| format!("\"{}\": {}\"", k, v.inspect()))
                     .collect();
                 write!(f, "{{{}}}", entries.join(", "))
+            }
+            Value::Env(env) =>
+            {
+                let entries: Vec<String> = env
+                    .data
+                    .iter()
+                    .map(|(k, v)| format!("\"{}\": {}\"", k, v.inspect()))
+                    .collect();
+                write!(f, "%{{{}}}", entries.join(", "))
             }
             Value::Ast(_) => write!(f, "<ast>"),
             Value::DataFrame(df) =>

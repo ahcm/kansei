@@ -14,33 +14,19 @@ parallel = std::parallel
 # Precompute row i of matrix A as an F64Array
 # row[j] = eval_A(i, j)
 @file
-fn compute_A_row_parallel(i, n)
+fn compute_A_row(i, n)
   parallel.loop(n, fn(j, i)
     1.0 / ((i + j) * (i + j + 1) / 2 + i + 1)
   end, i)
-end
-
-@file
-fn compute_A_row(i, n)
-  loop n |j|
-    1.0 / ((i + j) * (i + j + 1) / 2 + i + 1)
-  end
 end
 
 # Precompute row i of matrix A^T (which is column i of A)
 # row[j] = eval_A(j, i)
 @file
-fn compute_At_row_parallel(i, n)
+fn compute_At_row(i, n)
   parallel.loop(n, fn(j, i)
     1.0 / ((j + i) * (j + i + 1) / 2 + j + 1)
   end, i)
-end
-
-@file
-fn compute_At_row(i, n)
-  loop n |j|
-    1.0 / ((j + i) * (j + i + 1) / 2 + j + 1)
-  end
 end
 
 @file
@@ -66,22 +52,21 @@ end
 
 fn main(n)
   # Precompute matrix rows for SIMD dot products
-  A_rows  = []
+  A_rows = []
   At_rows = []
   
   loop n |i|
-    A_rows  = A_rows + [compute_A_row(i, n)]
+    A_rows = A_rows + [compute_A_row(i, n)]
     At_rows = At_rows + [compute_At_row(i, n)]
   end
 
   u = [1.0; n]
   v = [0.0; n]
 
-  parallel.loop(10, { |n|
+  loop 10 |i|
     eval_AtA_times_u_simd(n, u, v, A_rows, At_rows)
     eval_AtA_times_u_simd(n, v, u, A_rows, At_rows)
-    }, eval_AtA_times_u_simd)
-  #end
+  end
 
   # Use SIMD for final dot products
   vBv = simd.dot(u, v)

@@ -345,6 +345,38 @@ fn native_parallel_loop(args: &[Value]) -> Result<Value, String>
                 let out = if let Some(ctx_sexpr) = &context_sexpr
                 {
                     let ctx_val = sexpr::sexpr_to_value(ctx_sexpr)?;
+                    
+                    // Inject context into function environment if it's a Map or Struct
+                    if let Value::Function(data) = &func_val
+                    {
+                        let mut env = data.env.borrow_mut();
+                        env.is_partial = true; // Allow lookup from child scope (closure)
+                        match &ctx_val
+                        {
+                            Value::Map(map) =>
+                            {
+                                for (key, val) in &map.borrow().data
+                                {
+                                    let sym = intern::intern_symbol(key.as_str());
+                                    env.define(sym, val.clone());
+                                }
+                            }
+                            Value::StructInstance(s) =>
+                            {
+                                let fields = s.fields.borrow();
+                                for (name, idx) in &s.ty.field_map
+                                {
+                                    if let Some(val) = fields.get(*idx)
+                                    {
+                                        let sym = intern::intern_symbol(name.as_str());
+                                        env.define(sym, val.clone());
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
                     // Call the function
                     // We can use call_value_from_host or just call_value
                     // But call_value is private?

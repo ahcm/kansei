@@ -1772,6 +1772,7 @@ pub fn value_to_sexpr(value: &Value) -> Result<SExpr, String>
                 vec![params_list, expr_to_sexpr(&data.body)],
             ))
         }
+        Value::Reference(r) => value_to_sexpr(&r.borrow()),
         _ => Err("value.to_sexpr does not support this type".to_string()),
     }
 }

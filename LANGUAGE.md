@@ -145,26 +145,44 @@ simd.sum([1,2,3,4])  # -> 10
 The `::` operator accesses module members, similar to map dot access.
 
 ### std::parallel
-`std::parallel` provides numeric-only, native-function parallel helpers backed by Rayon.
-These functions require a specialized numeric array and a native function. Regular Kansei
-functions and generic arrays are not supported.
+`std::parallel` provides parallel helpers backed by Rayon.
+It supports both native functions and user-defined Kansei functions/closures.
+User-defined functions are executed in isolated, thread-local interpreters.
+
+**Note:** Functions passed to `std::parallel` must be **self-contained**. They cannot access variables from the outer scope via implicit or explicit capture (except via the provided `context` argument). They should only use their parameters and local logic.
+
 ```ruby
 use std::parallel
 parallel = std::parallel
 
-fn add1(x) x + 1 end
+# Using a closure with parallel.loop
+# parallel.loop(count, function, optional_context)
+n = 10
+context = {"a": 5}
+# Context fields are automatically injected into the environment!
+# You can access 'a' directly.
+# The context object itself is also available as the second argument 'ctx'.
+results = parallel.loop(n, {|i, ctx| i + a }, context)
+# -> [5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
 
-# Native function example (Kansei-defined functions are not supported here)
-use std::simd simd = std::simd
-
-# Assume native `simd.sum` is not used here; pass a native function instead.
+# Thread Safety and Data Copying
+# Data passed to parallel threads (including `context`) is COPIED by value.
+# Shared mutability is NOT supported.
+# If you pass a reference `&x` as context, it is automatically dereferenced and its VALUE is copied.
+# Therefore, `&ref` semantics do not apply across threads; modifications are thread-local.
+x = 10
+parallel.loop(5, {|i, ctx|
+  # ctx is a local copy of x's value (10)
+  # Modifying it here has no effect on 'x' in the main thread.
+}, &x)
 ```
 
 Available functions:
-- `std::parallel::map(array, native_fn)` -> numeric array
-- `std::parallel::each(array, native_fn)` -> numeric array
-- `std::parallel::apply(array, native_fn)` -> original array
-- `std::parallel::loop(count, native_fn)` -> numeric array
+- `std::parallel::map(array, fn)` -> array of results
+- `std::parallel::each(array, fn)` -> array of results
+- `std::parallel::apply(array, fn)` -> original array (used for side effects)
+- `std::parallel::loop(count, fn, context = nil)` -> array of results
+
 
 ### std::kansei
 

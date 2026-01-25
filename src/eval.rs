@@ -5583,33 +5583,29 @@ fn resolve_method_value(
             {
                 let map_ptr = Rc::as_ptr(&env) as usize;
                 let mut cache_mut = map_cache.borrow_mut();
-                if let Some(entry) = cache_mut.entries[0].as_ref()
-                {
-                    if entry.map_ptr == map_ptr
-                        && entry.version == env.version
-                        && entry.key.as_ref() == name.as_ref()
+                    if let Some(entry) = cache_mut.entries[0].as_ref()
                     {
-                        let value = entry.value.clone();
-                        cache_mut.hits += 1;
-                        return Ok(value);
-                    }
-                }
-                if let Some(entry) = cache_mut.entries[1].as_ref()
-                {
-                    if entry.map_ptr == map_ptr
-                        && entry.version == env.version
-                        && entry.key.as_ref() == name.as_ref()
-                    {
-                        let value = entry.value.clone();
-                        cache_mut.hits += 1;
-                        if let Some(entry1) = cache_mut.entries[1].take()
+                        if entry.map_ptr == map_ptr && entry.key.as_ref() == name.as_ref()
                         {
-                            cache_mut.entries[1] = cache_mut.entries[0].take();
-                            cache_mut.entries[0] = Some(entry1);
+                            let value = entry.value.clone();
+                            cache_mut.hits += 1;
+                            return Ok(value);
                         }
-                        return Ok(value);
                     }
-                }
+                    if let Some(entry) = cache_mut.entries[1].as_ref()
+                    {
+                        if entry.map_ptr == map_ptr && entry.key.as_ref() == name.as_ref()
+                        {
+                            let value = entry.value.clone();
+                            cache_mut.hits += 1;
+                            if let Some(entry1) = cache_mut.entries[1].take()
+                            {
+                                cache_mut.entries[1] = cache_mut.entries[0].take();
+                                cache_mut.entries[0] = Some(entry1);
+                            }
+                            return Ok(value);
+                        }
+                    }
                 cache_mut.misses += 1;
                 let value = env
                     .data
@@ -6063,9 +6059,7 @@ fn eval_index_cached_value(
                 {
                     let map_ptr = Rc::as_ptr(&env) as usize;
                     let mut cache_mut = cache.borrow_mut();
-                    if cache_mut.map_ptr == Some(map_ptr)
-                        && cache_mut.version == env.version
-                        && cache_mut.key.as_ref() == Some(&s)
+                    if cache_mut.map_ptr == Some(map_ptr) && cache_mut.key.as_ref() == Some(&s)
                     {
                         cache_mut.hits += 1;
                         cache_mut.value.clone().unwrap_or(Value::Nil)
@@ -6074,7 +6068,6 @@ fn eval_index_cached_value(
                     {
                         let value = env.data.get(&s).map(env_clone_value).unwrap_or(Value::Nil);
                         cache_mut.map_ptr = Some(map_ptr);
-                        cache_mut.version = env.version;
                         cache_mut.key = Some(s.clone());
                         cache_mut.value = Some(value.clone());
                         cache_mut.misses += 1;
@@ -6858,9 +6851,7 @@ fn eval_map_index_cached_value(
                     let mut cache_mut = cache.borrow_mut();
                     if let Some(entry) = cache_mut.entries[0].clone()
                     {
-                        if entry.map_ptr == map_ptr
-                            && entry.version == env.version
-                            && entry.key.as_ref() == s.as_ref()
+                        if entry.map_ptr == map_ptr && entry.key.as_ref() == s.as_ref()
                         {
                             cache_mut.hits += 1;
                             return Ok(entry.value);
@@ -6868,9 +6859,7 @@ fn eval_map_index_cached_value(
                     }
                     if let Some(entry) = cache_mut.entries[1].clone()
                     {
-                        if entry.map_ptr == map_ptr
-                            && entry.version == env.version
-                            && entry.key.as_ref() == s.as_ref()
+                        if entry.map_ptr == map_ptr && entry.key.as_ref() == s.as_ref()
                         {
                             cache_mut.hits += 1;
                             if let Some(entry1) = cache_mut.entries[1].take()

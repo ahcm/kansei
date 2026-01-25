@@ -99,86 +99,110 @@ fn map_numeric_results(results: Vec<Numeric>) -> Value
     }
 }
 
+fn resolve_parallel_args(args: &[Value]) -> Result<(&Value, Option<&Value>, bool), String>
+{
+    if args.len() < 2 || args.len() > 3
+    {
+        return Err(
+            "parallel function expects target, function, and optional context".to_string(),
+        );
+    }
+    let mut func_arg = &args[1];
+    let mut context_arg = if args.len() == 3 { Some(&args[2]) } else { None };
+    let mut new_order = false;
+
+    if !matches!(func_arg, Value::Function(_) | Value::NativeFunction(_))
+    {
+        if args.len() == 3 && matches!(&args[2], Value::Function(_) | Value::NativeFunction(_))
+        {
+            func_arg = &args[2];
+            context_arg = Some(&args[1]);
+            new_order = true;
+        }
+        else
+        {
+            return Err(
+                "parallel function expects a function as 2nd or 3rd argument".to_string()
+            );
+        }
+    }
+    Ok((func_arg, context_arg, new_order))
+}
+
 fn native_parallel_map(args: &[Value]) -> Result<Value, String>
 {
-    if args.len() != 2
-    {
-        return Err("parallel.map expects array and native function".to_string());
+    // For now, only support native functions to avoid code explosion, 
+    // unless requested. Keeping legacy support.
+    // If user passed context or new order, we error for now or fallback?
+    // We'll support Legacy Native path fully.
+    
+    if args.len() == 2 {
+        if let Value::NativeFunction(func) = &args[1] {
+            let func = *func;
+            match &args[0]
+            {
+                Value::F64Array(arr) =>
+                {
+                    let values = arr.borrow();
+                    let result: Result<Vec<f64>, String> = values
+                        .par_iter()
+                        .map(|v| {
+                            let arg = Value::Float { value: *v, kind: FloatKind::F64 };
+                            let out = func(&[arg])?;
+                            value_to_f64(out)
+                        })
+                        .collect();
+                    return Ok(Value::F64Array(Rc::new(RefCell::new(result?))));
+                }
+                Value::F32Array(arr) =>
+                {
+                    let values = arr.borrow();
+                    let result: Result<Vec<f32>, String> = values
+                        .par_iter()
+                        .map(|v| {
+                            let arg = Value::Float { value: *v as f64, kind: FloatKind::F32 };
+                            let out = func(&[arg])?;
+                            value_to_f64(out).map(|f| f as f32)
+                        })
+                        .collect();
+                    return Ok(Value::F32Array(Rc::new(RefCell::new(result?))));
+                }
+                Value::I64Array(arr) =>
+                {
+                    let values = arr.borrow();
+                    let result: Result<Vec<i64>, String> = values
+                        .par_iter()
+                        .map(|v| {
+                            let arg = Value::Integer { value: *v as i128, kind: IntKind::I64 };
+                            let out = func(&[arg])?;
+                            value_to_i64(out)
+                        })
+                        .collect();
+                    return Ok(Value::I64Array(Rc::new(RefCell::new(result?))));
+                }
+                Value::I32Array(arr) =>
+                {
+                    let values = arr.borrow();
+                    let result: Result<Vec<i32>, String> = values
+                        .par_iter()
+                        .map(|v| {
+                            let arg = Value::Integer { value: *v as i128, kind: IntKind::I32 };
+                            let out = func(&[arg])?;
+                            let i = value_to_i64(out)?;
+                            if i < i32::MIN as i64 || i > i32::MAX as i64 {
+                                return Err("parallel.map result out of i32 range".to_string());
+                            }
+                            Ok(i as i32)
+                        })
+                        .collect();
+                    return Ok(Value::I32Array(Rc::new(RefCell::new(result?))));
+                }
+                _ => return Err("parallel.map requires a numeric array".to_string()),
+            }
+        }
     }
-    let func = get_native_function(&args[1])?;
-    match &args[0]
-    {
-        Value::F64Array(arr) =>
-        {
-            let values = arr.borrow();
-            let result: Result<Vec<f64>, String> = values
-                .par_iter()
-                .map(|v| {
-                    let arg = Value::Float {
-                        value: *v,
-                        kind: FloatKind::F64,
-                    };
-                    let out = func(&[arg])?;
-                    value_to_f64(out)
-                })
-                .collect();
-            Ok(Value::F64Array(Rc::new(RefCell::new(result?))))
-        }
-        Value::F32Array(arr) =>
-        {
-            let values = arr.borrow();
-            let result: Result<Vec<f32>, String> = values
-                .par_iter()
-                .map(|v| {
-                    let arg = Value::Float {
-                        value: *v as f64,
-                        kind: FloatKind::F32,
-                    };
-                    let out = func(&[arg])?;
-                    value_to_f64(out).map(|f| f as f32)
-                })
-                .collect();
-            Ok(Value::F32Array(Rc::new(RefCell::new(result?))))
-        }
-        Value::I64Array(arr) =>
-        {
-            let values = arr.borrow();
-            let result: Result<Vec<i64>, String> = values
-                .par_iter()
-                .map(|v| {
-                    let arg = Value::Integer {
-                        value: *v as i128,
-                        kind: IntKind::I64,
-                    };
-                    let out = func(&[arg])?;
-                    value_to_i64(out)
-                })
-                .collect();
-            Ok(Value::I64Array(Rc::new(RefCell::new(result?))))
-        }
-        Value::I32Array(arr) =>
-        {
-            let values = arr.borrow();
-            let result: Result<Vec<i32>, String> = values
-                .par_iter()
-                .map(|v| {
-                    let arg = Value::Integer {
-                        value: *v as i128,
-                        kind: IntKind::I32,
-                    };
-                    let out = func(&[arg])?;
-                    let i = value_to_i64(out)?;
-                    if i < i32::MIN as i64 || i > i32::MAX as i64
-                    {
-                        return Err("parallel.map result out of i32 range".to_string());
-                    }
-                    Ok(i as i32)
-                })
-                .collect();
-            Ok(Value::I32Array(Rc::new(RefCell::new(result?))))
-        }
-        _ => Err("parallel.map requires a numeric array".to_string()),
-    }
+    
+    Err("parallel.map only supports (array, native_function) for now".to_string())
 }
 
 fn native_parallel_each(args: &[Value]) -> Result<Value, String>
@@ -188,6 +212,7 @@ fn native_parallel_each(args: &[Value]) -> Result<Value, String>
 
 fn native_parallel_apply(args: &[Value]) -> Result<Value, String>
 {
+    // Legacy support only
     if args.len() != 2
     {
         return Err("parallel.apply expects array and native function".to_string());
@@ -265,12 +290,8 @@ fn native_parallel_apply(args: &[Value]) -> Result<Value, String>
 
 fn native_parallel_loop(args: &[Value]) -> Result<Value, String>
 {
-    if args.len() < 2 || args.len() > 3
-    {
-        return Err(
-            "parallel.loop expects count, function, and optional context".to_string()
-        );
-    }
+    let (func_arg, context_arg, new_order) = resolve_parallel_args(args)?;
+
     let n = match &args[0]
     {
         Value::Integer { value, .. } if *value >= 0 => *value as usize,
@@ -278,28 +299,18 @@ fn native_parallel_loop(args: &[Value]) -> Result<Value, String>
         _ => return Err("parallel.loop expects non-negative integer count".to_string()),
     };
 
-    // Prepare context
-    let context_sexpr = if args.len() == 3
+    let context_sexpr = if let Some(val) = context_arg
     {
-        Some(sexpr::value_to_sexpr(&args[2])?)
+        Some(sexpr::value_to_sexpr(val)?)
     }
     else
     {
         None
     };
 
-    // Prepare function (Native or User Function)
-    if let Value::NativeFunction(func) = &args[1]
+    if let Value::NativeFunction(func) = func_arg
     {
         let func = *func;
-        // Native path (Send-safe)
-        // BUT context_sexpr is SExpr. We need to convert back or pass original Value if it was simple?
-        // Wait, native functions expect Value.
-        // We can reconstruct value from SExpr in the thread.
-        
-        // However, for Native function, we don't need SExpr if we assume Native function handles Value creation inside thread?
-        // No, Value is !Send. We must pass Send data.
-        // So SExpr roundtrip is necessary even for native function arguments (context).
         
         let results: Result<Vec<Numeric>, String> = (0..n)
             .into_par_iter()
@@ -311,7 +322,11 @@ fn native_parallel_loop(args: &[Value]) -> Result<Value, String>
                 let out = if let Some(ctx_sexpr) = &context_sexpr
                 {
                     let ctx_val = sexpr::sexpr_to_value(ctx_sexpr)?;
-                    func(&[arg, ctx_val])?
+                    if new_order {
+                        func(&[ctx_val, arg])?
+                    } else {
+                        func(&[arg, ctx_val])?
+                    }
                 }
                 else
                 {
@@ -323,10 +338,9 @@ fn native_parallel_loop(args: &[Value]) -> Result<Value, String>
         return Ok(map_numeric_results(results?));
     }
     
-    // User Function path
-    if let Value::Function(_) = &args[1]
+    if let Value::Function(_) = func_arg
     {
-        let func_sexpr = sexpr::value_to_sexpr(&args[1])?;
+        let func_sexpr = sexpr::value_to_sexpr(func_arg)?;
         
         let results: Result<Vec<Numeric>, String> = (0..n)
             .into_par_iter()
@@ -336,10 +350,7 @@ fn native_parallel_loop(args: &[Value]) -> Result<Value, String>
                     kind: IntKind::I64,
                 };
                 
-                // Initialize thread-local interpreter
                 let mut interpreter = Interpreter::new();
-                
-                // Reconstruct function
                 let func_val = sexpr::sexpr_to_value(&func_sexpr)?;
                 
                 let out = if let Some(ctx_sexpr) = &context_sexpr
@@ -349,39 +360,53 @@ fn native_parallel_loop(args: &[Value]) -> Result<Value, String>
                     // Inject context into function environment if it's a Map or Struct
                     if let Value::Function(data) = &func_val
                     {
-                        let mut env = data.env.borrow_mut();
-                        env.is_partial = true; // Allow lookup from child scope (closure)
-                        match &ctx_val
                         {
-                            Value::Map(map) =>
+                            let mut env = data.env.borrow_mut();
+                            env.is_partial = true; // Allow lookup from child scope (closure)
+                            match &ctx_val
                             {
-                                for (key, val) in &map.borrow().data
+                                Value::Map(map) =>
                                 {
-                                    let sym = intern::intern_symbol(key.as_str());
-                                    env.define(sym, val.clone());
-                                }
-                            }
-                            Value::StructInstance(s) =>
-                            {
-                                let fields = s.fields.borrow();
-                                for (name, idx) in &s.ty.field_map
-                                {
-                                    if let Some(val) = fields.get(*idx)
+                                    for (key, val) in &map.borrow().data
                                     {
-                                        let sym = intern::intern_symbol(name.as_str());
+                                        let sym = intern::intern_symbol(key.as_str());
                                         env.define(sym, val.clone());
                                     }
                                 }
+                                Value::StructInstance(s) =>
+                                {
+                                    let fields = s.fields.borrow();
+                                    for (name, idx) in &s.ty.field_map
+                                    {
+                                        if let Some(val) = fields.get(*idx)
+                                        {
+                                            let sym = intern::intern_symbol(name.as_str());
+                                            env.define(sym, val.clone());
+                                        }
+                                    }
+                                }
+                                _ => {}
                             }
-                            _ => {}
                         }
-                    }
 
-                    // Call the function
-                    // We can use call_value_from_host or just call_value
-                    // But call_value is private?
-                    // call_value_from_host is public.
-                    interpreter.call_value_from_host(func_val, vec![arg, ctx_val])?
+                        let args = if data.params.len() == 1
+                        {
+                            vec![arg]
+                        }
+                        else if new_order
+                        {
+                            vec![ctx_val, arg]
+                        }
+                        else
+                        {
+                            vec![arg, ctx_val]
+                        };
+                        interpreter.call_value_from_host(func_val, args)?
+                    }
+                    else
+                    {
+                        return Err("Deserialized parallel function is invalid".to_string());
+                    }
                 }
                 else
                 {

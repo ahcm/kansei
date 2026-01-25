@@ -156,13 +156,15 @@ use std::parallel
 parallel = std::parallel
 
 # Using a closure with parallel.loop
-# parallel.loop(count, function, optional_context)
+# Preferred: parallel.loop(count, context, function)
+# The closure receives (context, index) as arguments.
 n = 10
 context = {"a": 5}
+
 # Context fields are automatically injected into the environment!
 # You can access 'a' directly.
-# The context object itself is also available as the second argument 'ctx'.
-results = parallel.loop(n, {|i, ctx| i + a }, context)
+# The context object itself is passed as the first argument 'ctx'.
+results = parallel.loop(n, context, {|ctx, i| i + a })
 # -> [5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
 
 # Thread Safety and Data Copying

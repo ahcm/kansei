@@ -11002,6 +11002,7 @@ pub struct Interpreter
     stack_pool: Vec<Vec<Value>>,
     bytecode_mode: BytecodeMode,
     autoload_std: bool,
+    env_seed_cache: FxHashMap<usize, Vec<(SymbolId, Value)>>,
     module_cache: FxHashMap<String, ModuleCacheEntry>,
     module_lookup_cache: FxHashMap<String, ModuleLookupEntry>,
     module_search_paths: Vec<PathBuf>,
@@ -11024,6 +11025,7 @@ impl Interpreter
             stack_pool: Vec::with_capacity(32),
             bytecode_mode: BytecodeMode::Simple,
             autoload_std: true,
+            env_seed_cache: FxHashMap::default(),
             module_cache: FxHashMap::default(),
             module_lookup_cache: FxHashMap::default(),
             module_search_paths,
@@ -15936,10 +15938,23 @@ impl Interpreter
         resolve_slots(&mut ast);
         let new_env = self.get_env(None, false);
         {
-            for (key, value) in env.data.iter()
+            let env_ptr = Rc::as_ptr(&env) as usize;
+            if !self.env_seed_cache.contains_key(&env_ptr)
             {
-                let name = intern::intern_symbol(key.as_str());
-                new_env.borrow_mut().define(name, env_clone_value(value));
+                let mut entries = Vec::with_capacity(env.data.len());
+                for (key, value) in env.data.iter()
+                {
+                    let name = intern::intern_symbol(key.as_str());
+                    entries.push((name, value.clone()));
+                }
+                self.env_seed_cache.insert(env_ptr, entries);
+            }
+            if let Some(cached) = self.env_seed_cache.get(&env_ptr)
+            {
+                for (name, value) in cached
+                {
+                    new_env.borrow_mut().define(*name, clone_frozen_value(value));
+                }
             }
         }
         if let Some(Value::Reference(reference)) = program

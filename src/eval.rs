@@ -12,7 +12,7 @@ use crate::value::{
     BinaryOpCache, BinaryOpCacheKind, BoundMethod, Builtin, CallSiteCache, EnvValue, Environment,
     FastRegFunction, FastRegInstruction, GlobalCache, IndexCache, Instruction, MapAccessCache,
     MapAccessCacheEntry, MapValue, RangeEnd, RegBinOp, RegFunction, RegInstruction, StructType,
-    Value, deep_clone_value, freeze_to_env, freeze_value,
+    Value, clone_frozen_value, deep_clone_value, freeze_to_env, freeze_value,
 };
 use crate::wasm::{
     WasmBackend, WasmFunction, WasmModule, WasmValue, WasmValueType, parse_wasm_backend,
@@ -785,7 +785,7 @@ fn map_values_array(map: &MapValue) -> Value
 
 fn env_clone_value(value: &Value) -> Value
 {
-    freeze_value(value).expect("env value must be freezeable")
+    clone_frozen_value(value)
 }
 
 fn env_keys_array(env: &EnvValue) -> Value

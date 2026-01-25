@@ -1042,6 +1042,90 @@ pub fn freeze_value(value: &Value) -> Result<Value, String>
     }
 }
 
+pub fn clone_frozen_value(value: &Value) -> Value
+{
+    match value
+    {
+        Value::Nil
+        | Value::Boolean(_)
+        | Value::Integer { .. }
+        | Value::Unsigned { .. }
+        | Value::Float { .. }
+        | Value::String(_)
+        | Value::Bytes(_)
+        | Value::NativeFunction(_)
+        | Value::HostFunction(_)
+        | Value::Ast(_)
+        | Value::Function(_) => value.clone(),
+        Value::Env(env) => Value::Env(env.clone()),
+        Value::Array(arr) =>
+        {
+            let mut out = Vec::with_capacity(arr.borrow().len());
+            for item in arr.borrow().iter()
+            {
+                out.push(clone_frozen_value(item));
+            }
+            Value::Array(Rc::new(RefCell::new(out)))
+        }
+        Value::F32Array(arr) =>
+        {
+            let vals = arr.borrow().clone();
+            Value::F32Array(Rc::new(RefCell::new(vals)))
+        }
+        Value::F64Array(arr) =>
+        {
+            let vals = arr.borrow().clone();
+            Value::F64Array(Rc::new(RefCell::new(vals)))
+        }
+        Value::I32Array(arr) =>
+        {
+            let vals = arr.borrow().clone();
+            Value::I32Array(Rc::new(RefCell::new(vals)))
+        }
+        Value::I64Array(arr) =>
+        {
+            let vals = arr.borrow().clone();
+            Value::I64Array(Rc::new(RefCell::new(vals)))
+        }
+        Value::ByteBuf(buf) =>
+        {
+            let vals = buf.borrow().clone();
+            Value::ByteBuf(Rc::new(RefCell::new(vals)))
+        }
+        Value::BytesView(view) =>
+        {
+            let data = bytes_view_to_vec(view);
+            Value::Bytes(Rc::new(data))
+        }
+        Value::StructType(ty) => Value::StructType(ty.clone()),
+        Value::StructInstance(inst) =>
+        {
+            let fields = inst.fields.borrow();
+            let mut frozen_fields = Vec::with_capacity(fields.len());
+            for item in fields.iter()
+            {
+                frozen_fields.push(clone_frozen_value(item));
+            }
+            Value::StructInstance(Rc::new(StructInstance {
+                ty: inst.ty.clone(),
+                fields: RefCell::new(frozen_fields),
+            }))
+        }
+        Value::Map(map) =>
+        {
+            let map_ref = map.borrow();
+            let mut data = FxHashMap::default();
+            for (key, val) in map_ref.data.iter()
+            {
+                data.insert(key.clone(), clone_frozen_value(val));
+            }
+            Value::Map(Rc::new(RefCell::new(MapValue::new(data))))
+        }
+        Value::Reference(r) => clone_frozen_value(&r.borrow()),
+        v => v.clone(),
+    }
+}
+
 pub fn freeze_to_env(value: &Value) -> Result<Rc<EnvValue>, String>
 {
     match value

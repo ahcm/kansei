@@ -1887,6 +1887,17 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<SymbolId>)
             collect_declarations(count, decls);
             collect_declarations(body, decls);
         }
+        ExprKind::Collect {
+            var, count, body, ..
+        } =>
+        {
+            if let Some(name) = var
+            {
+                decls.insert(name.clone());
+            }
+            collect_declarations(count, decls);
+            collect_declarations(body, decls);
+        }
         ExprKind::Array(elements) =>
         {
             for e in elements
@@ -2098,6 +2109,11 @@ fn resolve_functions(expr: &mut Expr)
             resolve_functions(body);
         }
         ExprKind::Loop { count, body, .. } =>
+        {
+            resolve_functions(count);
+            resolve_functions(body);
+        }
+        ExprKind::Collect { count, body, .. } =>
         {
             resolve_functions(count);
             resolve_functions(body);
@@ -4061,6 +4077,10 @@ fn find_compile_failure(expr: &Expr) -> Option<String>
         {
             return Some("loop variable not resolved to slot".to_string());
         }
+        ExprKind::Collect { var_slot: None, .. } =>
+        {
+            return Some("collect variable not resolved to slot".to_string());
+        }
         ExprKind::Loop {
             count,
             var_slot: Some(_),
@@ -4079,6 +4099,10 @@ fn find_compile_failure(expr: &Expr) -> Option<String>
                 );
             }
         },
+        ExprKind::Collect { .. } =>
+        {
+            return Some("collect not supported in bytecode".to_string());
+        }
         ExprKind::StructDef { .. } =>
         {
             return Some("struct definition not supported in bytecode".to_string());
@@ -4117,6 +4141,10 @@ fn find_compile_failure(expr: &Expr) -> Option<String>
             find_compile_failure(iterable).or_else(|| find_compile_failure(body))
         }
         ExprKind::Loop { count, body, .. } =>
+        {
+            find_compile_failure(count).or_else(|| find_compile_failure(body))
+        }
+        ExprKind::Collect { count, body, .. } =>
         {
             find_compile_failure(count).or_else(|| find_compile_failure(body))
         }
@@ -4254,6 +4282,11 @@ fn collect_function_exprs(
             collect_function_exprs(body, out);
         }
         ExprKind::Loop { count, body, .. } =>
+        {
+            collect_function_exprs(count, out);
+            collect_function_exprs(body, out);
+        }
+        ExprKind::Collect { count, body, .. } =>
         {
             collect_function_exprs(count, out);
             collect_function_exprs(body, out);
@@ -4926,6 +4959,20 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
             },
             line: expr.line,
         },
+        ExprKind::Collect {
+            count,
+            var,
+            var_slot,
+            body,
+        } => Expr {
+            kind: ExprKind::Collect {
+                count: Box::new(substitute(count, args)),
+                var: var.clone(),
+                var_slot: *var_slot,
+                body: Box::new(substitute(body, args)),
+            },
+            line: expr.line,
+        },
         ExprKind::Call {
             function,
             args: call_args,
@@ -5061,6 +5108,7 @@ fn expr_size(expr: &Expr) -> usize
         ExprKind::While { condition, body } => 1 + expr_size(condition) + expr_size(body),
         ExprKind::For { iterable, body, .. } => 1 + expr_size(iterable) + expr_size(body),
         ExprKind::Loop { count, body, .. } => 1 + expr_size(count) + expr_size(body),
+        ExprKind::Collect { count, body, .. } => 1 + expr_size(count) + expr_size(body),
         ExprKind::Call { function, args, .. } =>
         {
             1 + expr_size(function) + args.iter().map(expr_size).sum::<usize>()
@@ -5125,7 +5173,8 @@ fn is_reg_simple(expr: &Expr) -> bool
         ExprKind::If { .. }
         | ExprKind::While { .. }
         | ExprKind::For { .. }
-        | ExprKind::Loop { .. } => false,
+        | ExprKind::Loop { .. }
+        | ExprKind::Collect { .. } => false,
         ExprKind::Array(_)
         | ExprKind::ArrayGenerator { .. }
         | ExprKind::Map(_)
@@ -10768,6 +10817,7 @@ fn is_simple(expr: &Expr) -> bool
         ExprKind::While { condition, body } => is_simple(condition) && is_simple(body),
         ExprKind::For { iterable, body, .. } => is_simple(iterable) && is_simple(body),
         ExprKind::Loop { count, body, .. } => is_simple(count) && is_simple(body),
+        ExprKind::Collect { count, body, .. } => is_simple(count) && is_simple(body),
         ExprKind::BinaryOp { left, right, .. } => is_simple(left) && is_simple(right),
         ExprKind::Call {
             function,
@@ -10894,6 +10944,23 @@ fn resolve(expr: &mut Expr, slot_map: &FxHashMap<SymbolId, usize>)
             resolve(body, slot_map);
         }
         ExprKind::Loop {
+            var,
+            var_slot,
+            count,
+            body,
+        } =>
+        {
+            if let Some(name) = var
+            {
+                if let Some(s) = slot_map.get(name)
+                {
+                    *var_slot = Some(*s);
+                }
+            }
+            resolve(count, slot_map);
+            resolve(body, slot_map);
+        }
+        ExprKind::Collect {
             var,
             var_slot,
             count,
@@ -16006,38 +16073,70 @@ impl Interpreter
                     }),
                 }
             }
-            ExprKind::Loop {
-                count,
-                var,
-                var_slot,
-                body,
-            } =>
+        ExprKind::Loop {
+            count,
+            var,
+            var_slot,
+            body,
+        } =>
+        {
+            let count_val = self.eval(count, slots)?;
+            let n = number_to_usize(&count_val).ok_or_else(|| RuntimeError {
+                message: "Loop count must be a non-negative number".to_string(),
+                line,
+            })?;
+            let mut last_val = Value::Nil;
+            for idx in 0..n
             {
-                let count_val = self.eval(count, slots)?;
-                let n = number_to_usize(&count_val).ok_or_else(|| RuntimeError {
-                    message: "Loop count must be a non-negative number".to_string(),
-                    line,
-                })?;
-                let mut last_val = Value::Nil;
-                for idx in 0..n
+                if let Some(slot) = var_slot
                 {
-                    if let Some(slot) = var_slot
+                    if let Some(slot_val) = slots.get_mut(*slot)
                     {
-                        if let Some(slot_val) = slots.get_mut(*slot)
-                        {
-                            *slot_val = default_int(idx as i128);
-                        }
+                        *slot_val = default_int(idx as i128);
                     }
-                    else if let Some(name) = var
-                    {
-                        self.env
-                            .borrow_mut()
-                            .assign(*name, default_int(idx as i128));
-                    }
-                    last_val = self.eval(body, slots)?;
                 }
-                Ok(last_val)
+                else if let Some(name) = var
+                {
+                    self.env
+                        .borrow_mut()
+                        .assign(*name, default_int(idx as i128));
+                }
+                last_val = self.eval(body, slots)?;
             }
+            Ok(last_val)
+        }
+        ExprKind::Collect {
+            count,
+            var,
+            var_slot,
+            body,
+        } =>
+        {
+            let count_val = self.eval(count, slots)?;
+            let n = number_to_usize(&count_val).ok_or_else(|| RuntimeError {
+                message: "Collect count must be a non-negative number".to_string(),
+                line,
+            })?;
+            let mut out = Vec::with_capacity(n);
+            for idx in 0..n
+            {
+                if let Some(slot) = var_slot
+                {
+                    if let Some(slot_val) = slots.get_mut(*slot)
+                    {
+                        *slot_val = default_int(idx as i128);
+                    }
+                }
+                else if let Some(name) = var
+                {
+                    self.env
+                        .borrow_mut()
+                        .assign(*name, default_int(idx as i128));
+                }
+                out.push(self.eval(body, slots)?);
+            }
+            Ok(Value::Array(Rc::new(RefCell::new(out))))
+        }
             ExprKind::Block(statements) =>
             {
                 let mut last = Value::Nil;

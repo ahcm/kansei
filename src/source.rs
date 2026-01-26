@@ -173,6 +173,28 @@ fn format_stmt(expr: &Expr, indent: usize) -> String
             out.push_str("end");
             out
         }
+        ExprKind::Collect {
+            count, var, body, ..
+        } =>
+        {
+            let mut out = String::new();
+            out.push_str(&indent_str(indent));
+            out.push_str("collect ");
+            out.push_str(&format_expr(count, indent));
+            if let Some(var) = var
+            {
+                out.push(' ');
+                out.push('|');
+                out.push_str(intern::symbol_name(*var).as_str());
+                out.push('|');
+            }
+            out.push('\n');
+            out.push_str(&format_stmt(body, indent + 1));
+            out.push('\n');
+            out.push_str(&indent_str(indent));
+            out.push_str("end");
+            out
+        }
         ExprKind::StructDef { name, fields } =>
         {
             let mut out = String::new();
@@ -385,6 +407,7 @@ fn format_expr(expr: &Expr, indent: usize) -> String
         | ExprKind::While { .. }
         | ExprKind::For { .. }
         | ExprKind::Loop { .. }
+        | ExprKind::Collect { .. }
         | ExprKind::FunctionDef { .. }
         | ExprKind::MethodDef { .. }
         | ExprKind::AnonymousFunction { .. }

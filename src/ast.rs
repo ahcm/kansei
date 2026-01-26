@@ -186,6 +186,13 @@ pub enum ExprKind
         var_slot: Option<usize>,
         body: Box<Expr>,
     },
+    Collect
+    {
+        count: Box<Expr>,
+        var: Option<SymbolId>,
+        var_slot: Option<usize>,
+        body: Box<Expr>,
+    },
 
     FunctionDef
     {

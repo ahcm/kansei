@@ -614,6 +614,16 @@ loop 10 |i|
 end
 ```
 
+### Collect
+`collect` repeats a fixed number of times and returns an array of the block results.
+
+```ruby
+vals = collect 4 |i|
+  i * 2
+end
+# -> [0, 2, 4, 6]
+```
+
 ### For Loop
 Iterates over Arrays (values) or Maps (keys).
 ```ruby

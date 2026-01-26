@@ -798,6 +798,28 @@ pub fn expr_to_sexpr(expr: &Expr) -> SExpr
                 ],
             )
         }
+        ExprKind::Collect {
+            count,
+            var,
+            var_slot,
+            body,
+        } =>
+        {
+            let var_expr = var.map(symbol_to_atom).unwrap_or_else(|| atom("nil"));
+            let slot_expr = var_slot
+                .map(|s| atom(s.to_string()))
+                .unwrap_or_else(|| atom("nil"));
+            list(
+                "Collect",
+                vec![
+                    line_atom,
+                    expr_to_sexpr(count),
+                    var_expr,
+                    slot_expr,
+                    expr_to_sexpr(body),
+                ],
+            )
+        }
         ExprKind::FunctionDef {
             name,
             params,
@@ -1317,6 +1339,29 @@ fn parse_expr(expr: &SExpr) -> Result<Expr, String>
                 other => Some(parse_usize(other)?),
             };
             ExprKind::Loop {
+                count: Box::new(parse_expr(&items[2])?),
+                var,
+                var_slot,
+                body: Box::new(parse_expr(&items[5])?),
+            }
+        }
+        "Collect" =>
+        {
+            if items.len() != 6
+            {
+                return Err("Invalid Collect".to_string());
+            }
+            let var = match &items[3]
+            {
+                SExpr::Atom(s) if s == "nil" => None,
+                other => Some(parse_symbol(other)?),
+            };
+            let var_slot = match &items[4]
+            {
+                SExpr::Atom(s) if s == "nil" => None,
+                other => Some(parse_usize(other)?),
+            };
+            ExprKind::Collect {
                 count: Box::new(parse_expr(&items[2])?),
                 var,
                 var_slot,

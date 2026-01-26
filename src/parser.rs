@@ -601,6 +601,7 @@ impl Parser
             Token::While => self.parse_while(),
             Token::For => self.parse_for(),
             Token::Loop => self.parse_loop(),
+            Token::Collect => self.parse_collect(),
             Token::Use => self.parse_use(),
             Token::Import => self.parse_import(),
             Token::Load => self.parse_load(),
@@ -1343,6 +1344,44 @@ impl Parser
 
         self.make_expr(
             ExprKind::Loop {
+                count: Box::new(count),
+                var,
+                var_slot: None,
+                body: Box::new(body),
+            },
+            line,
+        )
+    }
+
+    fn parse_collect(&mut self) -> Expr
+    {
+        let line = self.current_token.line;
+        self.eat(); // eat 'collect'
+
+        let count = self.parse_expression();
+
+        let var = if self.current_token.token == Token::Pipe
+        {
+            self.eat(); // |
+            let name = match &self.current_token.token
+            {
+                Token::Identifier(n) => intern::intern_symbol_owned(n.clone()),
+                _ => panic!("Expected collect variable name at line {}", self.current_token.line),
+            };
+            self.eat();
+            self.expect(Token::Pipe);
+            Some(name)
+        }
+        else
+        {
+            None
+        };
+
+        let body = self.parse_block();
+        self.expect(Token::End);
+
+        self.make_expr(
+            ExprKind::Collect {
                 count: Box::new(count),
                 var,
                 var_slot: None,

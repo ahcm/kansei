@@ -28,3 +28,9 @@ puts results
 collect_env = %{"val": 3}
 results = std::collect(4, collect_env, {|i| i + val})
 puts results
+
+# Test collect keyword
+results = collect 4 |i|
+  i * 5
+end
+puts results

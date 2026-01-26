@@ -19,3 +19,12 @@ puts results
 collect_env = %{"val": 7}
 results = parallel.collect(4, collect_env, {|i| i + val})
 puts results
+
+# Test std.collect (sequential)
+results = std::collect(4, {|i| i * 4})
+puts results
+
+# Test std.collect(n, context, function) with Env injection
+collect_env = %{"val": 3}
+results = std::collect(4, collect_env, {|i| i + val})
+puts results

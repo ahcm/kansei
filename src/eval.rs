@@ -188,6 +188,138 @@ fn native_float128_sqrt(args: &[Value]) -> Result<Value, String>
     Ok(make_float(value.sqrt(), FloatKind::F128))
 }
 
+fn resolve_collect_args(args: &[Value]) -> Result<(&Value, Option<&Value>, bool), String>
+{
+    if args.len() < 2 || args.len() > 3
+    {
+        return Err("std.collect expects count, function, and optional context".to_string());
+    }
+    let mut func_arg = &args[1];
+    let mut context_arg = if args.len() == 3
+    {
+        Some(&args[2])
+    }
+    else
+    {
+        None
+    };
+    let mut new_order = false;
+
+    if !matches!(func_arg, Value::Function(_) | Value::NativeFunction(_))
+    {
+        if args.len() == 3 && matches!(&args[2], Value::Function(_) | Value::NativeFunction(_))
+        {
+            func_arg = &args[2];
+            context_arg = Some(&args[1]);
+            new_order = true;
+        }
+        else
+        {
+            return Err("std.collect expects a function as 2nd or 3rd argument".to_string());
+        }
+    }
+    Ok((func_arg, context_arg, new_order))
+}
+
+fn native_collect(args: &[Value]) -> Result<Value, String>
+{
+    let (func_arg, context_arg, new_order) = resolve_collect_args(args)?;
+
+    let n = match &args[0]
+    {
+        Value::Integer { value, .. } if *value >= 0 => *value as usize,
+        Value::Unsigned { value, .. } => *value as usize,
+        _ => return Err("std.collect expects non-negative integer count".to_string()),
+    };
+
+    if let Value::NativeFunction(func) = func_arg
+    {
+        let func = *func;
+        let mut out = Vec::with_capacity(n);
+        for idx in 0..n
+        {
+            let arg = Value::Integer {
+                value: idx as i128,
+                kind: IntKind::I64,
+            };
+            let val = if let Some(ctx) = context_arg
+            {
+                let ctx_val = ctx.clone();
+                if new_order
+                {
+                    func(&[ctx_val, arg])?
+                }
+                else
+                {
+                    func(&[arg, ctx_val])?
+                }
+            }
+            else
+            {
+                func(&[arg])?
+            };
+            out.push(val);
+        }
+        return Ok(Value::Array(Rc::new(RefCell::new(out))));
+    }
+
+    if let Value::Function(_) = func_arg
+    {
+        let func_val = deep_clone_value(func_arg);
+        let ctx_val = context_arg.cloned();
+
+        if let (Some(ctx_val), Value::Function(data)) = (&ctx_val, &func_val)
+        {
+            if let Value::Env(env_val) = ctx_val
+            {
+                let mut env = data.env.borrow_mut();
+                env.is_partial = true;
+                for (key, val) in &env_val.data
+                {
+                    let sym = intern::intern_symbol(key.as_str());
+                    env.define(sym, clone_frozen_value(val));
+                }
+            }
+        }
+
+        let mut interpreter = Interpreter::new();
+        interpreter.set_autoload_std(false);
+
+        let mut out = Vec::with_capacity(n);
+        for idx in 0..n
+        {
+            let arg = Value::Integer {
+                value: idx as i128,
+                kind: IntKind::I64,
+            };
+            let args = if let (Some(ctx_val), Value::Function(data)) = (&ctx_val, &func_val)
+            {
+                if data.params.len() == 1
+                {
+                    vec![arg]
+                }
+                else if new_order
+                {
+                    vec![ctx_val.clone(), arg]
+                }
+                else
+                {
+                    vec![arg, ctx_val.clone()]
+                }
+            }
+            else
+            {
+                vec![arg]
+            };
+            let val = interpreter.call_value_from_host(func_val.clone(), args)?;
+            out.push(val);
+        }
+        return Ok(Value::Array(Rc::new(RefCell::new(out))));
+    }
+
+    Err("std.collect expects a native function or a user function".to_string())
+}
+
 fn signed_int_min(kind: IntKind) -> i128
 {
     match kind
@@ -1230,6 +1362,7 @@ fn build_std_module() -> Value
     std_map.insert(intern::intern("simd"), build_simd_module());
     std_map.insert(intern::intern("kansei"), build_kansei_module());
     std_map.insert(intern::intern("parallel"), build_parallel_module());
+    std_map.insert(intern::intern("collect"), Value::NativeFunction(native_collect));
     Value::Map(Rc::new(RefCell::new(MapValue::new(std_map))))
 }
 

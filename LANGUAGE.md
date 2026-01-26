@@ -187,7 +187,8 @@ Available functions:
 - `std::parallel::map(array, fn)` -> array of results
 - `std::parallel::each(array, fn)` -> array of results
 - `std::parallel::apply(array, fn)` -> original array (used for side effects)
-- `std::parallel::loop(count, fn, context = nil)` -> array of results
+- `std::parallel::loop(count, fn, context = nil)` -> numeric array of results
+- `std::parallel::collect(count, fn, context = nil)` -> array of results
 
 
 ### std::kansei

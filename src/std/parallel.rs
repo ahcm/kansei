@@ -432,6 +432,140 @@ fn native_parallel_loop(args: &[Value]) -> Result<Value, String>
     Err("parallel.loop expects a native function or a user function".to_string())
 }
 
+fn native_parallel_collect(args: &[Value]) -> Result<Value, String>
+{
+    let (func_arg, context_arg, new_order) = resolve_parallel_args(args)?;
+
+    let n = match &args[0]
+    {
+        Value::Integer { value, .. } if *value >= 0 => *value as usize,
+        Value::Unsigned { value, .. } => *value as usize,
+        _ => return Err("parallel.collect expects non-negative integer count".to_string()),
+    };
+
+    let context_sexpr = if let Some(val) = context_arg
+    {
+        Some(sexpr::value_to_sexpr(val)?)
+    }
+    else
+    {
+        None
+    };
+
+    if let Value::NativeFunction(func) = func_arg
+    {
+        let func = *func;
+        let results: Result<Vec<String>, String> = (0..n)
+            .into_par_iter()
+            .map(|idx| {
+                let arg = Value::Integer {
+                    value: idx as i128,
+                    kind: IntKind::I64,
+                };
+                let out = if let Some(ctx_sexpr) = &context_sexpr
+                {
+                    let ctx_val = sexpr::sexpr_to_value(ctx_sexpr)?;
+                    if new_order
+                    {
+                        func(&[ctx_val, arg])?
+                    }
+                    else
+                    {
+                        func(&[arg, ctx_val])?
+                    }
+                }
+                else
+                {
+                    func(&[arg])?
+                };
+                let sexpr = sexpr::value_to_sexpr(&out)?;
+                Ok(sexpr.to_string())
+            })
+            .collect();
+        let mut out = Vec::with_capacity(n);
+        for item in results?
+        {
+            let sexpr = sexpr::parse_sexpr(&item)?;
+            out.push(sexpr::sexpr_to_value(&sexpr)?);
+        }
+        return Ok(Value::Array(Rc::new(RefCell::new(out))));
+    }
+
+    if let Value::Function(_) = func_arg
+    {
+        let func_sexpr = sexpr::value_to_sexpr(func_arg)?;
+
+        let results: Result<Vec<String>, String> = (0..n)
+            .into_par_iter()
+            .map(|idx| {
+                let arg = Value::Integer {
+                    value: idx as i128,
+                    kind: IntKind::I64,
+                };
+
+                let mut interpreter = Interpreter::new();
+                interpreter.set_autoload_std(false);
+                let func_val = sexpr::sexpr_to_value(&func_sexpr)?;
+
+                let out = if let Some(ctx_sexpr) = &context_sexpr
+                {
+                    let ctx_val = sexpr::sexpr_to_value(ctx_sexpr)?;
+
+                    // Inject context into function environment if it's an Env
+                    if let Value::Function(data) = &func_val
+                    {
+                        {
+                            let mut env = data.env.borrow_mut();
+                            env.is_partial = true;
+                            if let Value::Env(env_val) = &ctx_val
+                            {
+                                for (key, val) in &env_val.data
+                                {
+                                    let sym = intern::intern_symbol(key.as_str());
+                                    env.define(sym, clone_frozen_value(val));
+                                }
+                            }
+                        }
+
+                        let args = if data.params.len() == 1
+                        {
+                            vec![arg]
+                        }
+                        else if new_order
+                        {
+                            vec![ctx_val, arg]
+                        }
+                        else
+                        {
+                            vec![arg, ctx_val]
+                        };
+                        interpreter.call_value_from_host(func_val, args)?
+                    }
+                    else
+                    {
+                        return Err("Deserialized parallel function is invalid".to_string());
+                    }
+                }
+                else
+                {
+                    interpreter.call_value_from_host(func_val, vec![arg])?
+                };
+                let sexpr = sexpr::value_to_sexpr(&out)?;
+                Ok(sexpr.to_string())
+            })
+            .collect();
+        let mut out = Vec::with_capacity(n);
+        for item in results?
+        {
+            let sexpr = sexpr::parse_sexpr(&item)?;
+            out.push(sexpr::sexpr_to_value(&sexpr)?);
+        }
+        return Ok(Value::Array(Rc::new(RefCell::new(out))));
+    }
+
+    Err("parallel.collect expects a native function or a user function".to_string())
+}
+
 pub fn build_parallel_module() -> Value
 {
     let mut map = FxHashMap::default();
@@ -439,5 +573,6 @@ pub fn build_parallel_module() -> Value
     map.insert(intern::intern("apply"), Value::NativeFunction(native_parallel_apply));
     map.insert(intern::intern("map"), Value::NativeFunction(native_parallel_map));
     map.insert(intern::intern("loop"), Value::NativeFunction(native_parallel_loop));
+    map.insert(intern::intern("collect"), Value::NativeFunction(native_parallel_collect));
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
 }

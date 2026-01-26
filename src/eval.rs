@@ -12,7 +12,7 @@ use crate::value::{
     BinaryOpCache, BinaryOpCacheKind, BoundMethod, Builtin, CallSiteCache, EnvValue, Environment,
     FastRegFunction, FastRegInstruction, GlobalCache, IndexCache, Instruction, MapAccessCache,
     MapAccessCacheEntry, MapValue, RangeEnd, RegBinOp, RegFunction, RegInstruction, StructType,
-    Value, clone_frozen_value, deep_clone_value, freeze_to_env, freeze_value,
+    Value, clone_frozen_value, deep_clone_value, freeze_to_env,
 };
 use crate::wasm::{
     WasmBackend, WasmFunction, WasmModule, WasmValue, WasmValueType, parse_wasm_backend,

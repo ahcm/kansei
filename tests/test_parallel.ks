@@ -10,3 +10,12 @@ puts results
 parallel_env = %{"val": 10}
 results = parallel.loop(4, parallel_env, {|i| i + val})
 puts results
+
+# Test parallel.collect (n, function)
+results = parallel.collect(4, {|i| i * 3})
+puts results
+
+# Test parallel.collect(n, context, function) with Env injection
+collect_env = %{"val": 7}
+results = parallel.collect(4, collect_env, {|i| i + val})
+puts results

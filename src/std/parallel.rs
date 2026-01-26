@@ -8,13 +8,6 @@ use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-#[derive(Clone, Copy)]
-enum Numeric
-{
-    Int(i64),
-    Float(f64),
-}
-
 fn value_to_i64(value: Value) -> Result<i64, String>
 {
     match value
@@ -42,60 +35,12 @@ fn value_to_f64(value: Value) -> Result<f64, String>
     }
 }
 
-fn value_to_numeric(value: Value) -> Result<Numeric, String>
-{
-    match value
-    {
-        Value::Float { value, .. } => Ok(Numeric::Float(value)),
-        Value::Integer { value, .. } => Ok(Numeric::Int(value as i64)),
-        Value::Unsigned { value, .. } => Ok(Numeric::Int(value as i64)),
-        _ => Err("parallel expects numeric result".to_string()),
-    }
-}
-
 fn get_native_function(value: &Value) -> Result<fn(&[Value]) -> Result<Value, String>, String>
 {
     match value
     {
         Value::NativeFunction(func) => Ok(*func),
         _ => Err("parallel requires a native function".to_string()),
-    }
-}
-
-fn map_numeric_results(results: Vec<Numeric>) -> Value
-{
-    let mut all_int = true;
-    for item in &results
-    {
-        if matches!(item, Numeric::Float(_))
-        {
-            all_int = false;
-            break;
-        }
-    }
-    if all_int
-    {
-        let vals: Vec<i64> = results
-            .into_iter()
-            .map(|v| match v
-            {
-                Numeric::Int(i) => i,
-                Numeric::Float(f) => f as i64,
-            })
-            .collect();
-        Value::I64Array(Rc::new(RefCell::new(vals)))
-    }
-    else
-    {
-        let vals: Vec<f64> = results
-            .into_iter()
-            .map(|v| match v
-            {
-                Numeric::Int(i) => i as f64,
-                Numeric::Float(f) => f,
-            })
-            .collect();
-        Value::F64Array(Rc::new(RefCell::new(vals)))
     }
 }
 
@@ -492,14 +437,14 @@ fn native_parallel_loop(args: &[Value]) -> Result<Value, String>
     {
         let func = *func;
 
-        let results: Result<Vec<Numeric>, String> = (0..n)
+        let result: Result<(), String> = (0..n)
             .into_par_iter()
-            .map(|idx| {
+            .try_for_each(|idx| {
                 let arg = Value::Integer {
                     value: idx as i128,
                     kind: IntKind::I64,
                 };
-                let out = if let Some(ctx_sexpr) = &context_sexpr
+                let _ = if let Some(ctx_sexpr) = &context_sexpr
                 {
                     let ctx_val = sexpr::sexpr_to_value(ctx_sexpr)?;
                     if new_order
@@ -515,19 +460,19 @@ fn native_parallel_loop(args: &[Value]) -> Result<Value, String>
                 {
                     func(&[arg])?
                 };
-                value_to_numeric(out)
-            })
-            .collect();
-        return Ok(map_numeric_results(results?));
+                Ok(())
+            });
+        result?;
+        return Ok(Value::Nil);
     }
 
     if let Value::Function(_) = func_arg
     {
         let func_sexpr = sexpr::value_to_sexpr(func_arg)?;
 
-        let results: Result<Vec<Numeric>, String> = (0..n)
+        let result: Result<(), String> = (0..n)
             .into_par_iter()
-            .map(|idx| {
+            .try_for_each(|idx| {
                 let arg = Value::Integer {
                     value: idx as i128,
                     kind: IntKind::I64,
@@ -537,7 +482,7 @@ fn native_parallel_loop(args: &[Value]) -> Result<Value, String>
                 interpreter.set_autoload_std(false);
                 let func_val = sexpr::sexpr_to_value(&func_sexpr)?;
 
-                let out = if let Some(ctx_sexpr) = &context_sexpr
+                let _ = if let Some(ctx_sexpr) = &context_sexpr
                 {
                     let ctx_val = sexpr::sexpr_to_value(ctx_sexpr)?;
 
@@ -585,10 +530,10 @@ fn native_parallel_loop(args: &[Value]) -> Result<Value, String>
                 {
                     interpreter.call_value_from_host(func_val, vec![arg])?
                 };
-                value_to_numeric(out)
-            })
-            .collect();
-        return Ok(map_numeric_results(results?));
+                Ok(())
+            });
+        result?;
+        return Ok(Value::Nil);
     }
 
     Err("parallel.loop expects a native function or a user function".to_string())

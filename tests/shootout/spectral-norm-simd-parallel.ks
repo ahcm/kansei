@@ -15,22 +15,24 @@ parallel = std::parallel
 # row[j] = eval_A(i, j)
 @file
 fn compute_A_row(i, n)
-  # parallel.loop(n, context, function)
+  # parallel.collect(n, context, function)
   # function receives (context, index) => (i, j)
-  parallel.loop(n, i, fn(i, j)
+  buf = [0.0; n]
+  parallel.collect(n, i, fn(i, j)
     1.0 / ((i + j) * (i + j + 1) / 2 + i + 1)
-  end)
+  end, buf)
 end
 
 # Precompute row i of matrix A^T (which is column i of A)
 # row[j] = eval_A(j, i)
 @file
 fn compute_At_row(i, n)
-  # parallel.loop(n, context, function)
+  # parallel.collect(n, context, function)
   # function receives (context, index) => (i, j)
-  parallel.loop(n, i, fn(i, j)
+  buf = [0.0; n]
+  parallel.collect(n, i, fn(i, j)
     1.0 / ((j + i) * (j + i + 1) / 2 + j + 1)
-  end)
+  end, buf)
 end
 
 @file

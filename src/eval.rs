@@ -4316,9 +4316,11 @@ fn compile_expr(
                     end,
                     body: Rc::new(body_code),
                 });
-                if !want_value
+                code.push(Instruction::Pop);
+                if want_value
                 {
-                    code.push(Instruction::Pop);
+                    let idx = push_const(consts, Value::Nil);
+                    code.push(Instruction::LoadConstIdx(idx));
                 }
             }
             else
@@ -16542,7 +16544,6 @@ impl Interpreter
                 message: "Loop count must be a non-negative number".to_string(),
                 line,
             })?;
-            let mut last_val = Value::Nil;
             for idx in 0..n
             {
                 if let Some(slot) = var_slot
@@ -16558,9 +16559,9 @@ impl Interpreter
                         .borrow_mut()
                         .assign(*name, default_int(idx as i128));
                 }
-                last_val = self.eval(body, slots)?;
+                let _ = self.eval(body, slots)?;
             }
-            Ok(last_val)
+            Ok(Value::Nil)
         }
         ExprKind::Collect {
             count,

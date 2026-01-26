@@ -1,15 +1,18 @@
 use std::parallel
 parallel = std::parallel
 
-# Test classic parallel.loop (n, function)
-results = parallel.loop(4, {|i| i * 2})
-# Order: [0, 2, 4, 6] (order not guaranteed but values should match)
+# Test classic parallel.collect (n, function)
+results = parallel.collect(4, {|i| i * 2})
 puts results
 
-# Test new order parallel.loop(n, context, function) -> closure(ctx, i)
+# Test new order parallel.collect(n, context, function) -> closure(ctx, i)
 parallel_env = %{"val": 10}
-results = parallel.loop(4, parallel_env, {|i| i + val})
+results = parallel.collect(4, parallel_env, {|i| i + val})
 puts results
+
+# parallel.loop returns nil
+result = parallel.loop(4, {|i| i * 2})
+puts result
 
 # Test parallel.collect (n, function)
 results = parallel.collect(4, {|i| i * 3})

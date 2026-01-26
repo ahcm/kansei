@@ -161,8 +161,8 @@ parameters and local logic.
 use std::parallel
 parallel = std::parallel
 
-# Using a closure with parallel.loop
-# Preferred: parallel.loop(count, context, function)
+# Using a closure with parallel.collect
+# Preferred: parallel.collect(count, context, function)
 # The closure receives (context, index) as arguments.
 n = 10
 
@@ -170,7 +170,7 @@ n = 10
 # You can access 'a' directly.
 # The Env object itself is passed as the first argument 'ctx'.
 context = %{ "a": 5 }
-results = parallel.loop(n, context, {|ctx, i| i + a })
+results = parallel.collect(n, context, {|ctx, i| i + a })
 # -> [5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
 # If context is a Map or Struct, fields are not injected; use ctx.
 
@@ -190,7 +190,7 @@ Available functions:
 - `std::parallel::map(array, fn)` -> array of results
 - `std::parallel::each(array, fn)` -> array of results
 - `std::parallel::apply(array, fn)` -> original array (used for side effects)
-- `std::parallel::loop(count, fn, context = nil)` -> numeric array of results
+- `std::parallel::loop(count, fn, context = nil)` -> nil (side effects only)
 - `std::parallel::collect(count, fn, context = nil, into = nil)` -> array of results
 
 
@@ -602,7 +602,7 @@ end
 ```
 
 ### Loop
-`loop` repeats a fixed number of times. You can optionally name the index variable.
+`loop` repeats a fixed number of times for side effects. You can optionally name the index variable.
 
 ```ruby
 loop 3

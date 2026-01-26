@@ -188,42 +188,89 @@ fn native_float128_sqrt(args: &[Value]) -> Result<Value, String>
     Ok(make_float(value.sqrt(), FloatKind::F128))
 }
 
-fn resolve_collect_args(args: &[Value]) -> Result<(&Value, Option<&Value>, bool), String>
+fn is_collect_into_array(value: &Value) -> bool
 {
-    if args.len() < 2 || args.len() > 3
-    {
-        return Err("std.collect expects count, function, and optional context".to_string());
-    }
-    let mut func_arg = &args[1];
-    let mut context_arg = if args.len() == 3
-    {
-        Some(&args[2])
-    }
-    else
-    {
-        None
-    };
-    let mut new_order = false;
+    matches!(
+        value,
+        Value::Array(_)
+            | Value::F64Array(_)
+            | Value::F32Array(_)
+            | Value::I64Array(_)
+            | Value::I32Array(_)
+    )
+}
 
-    if !matches!(func_arg, Value::Function(_) | Value::NativeFunction(_))
+fn resolve_collect_args(
+    args: &[Value],
+) -> Result<(&Value, Option<&Value>, Option<&Value>, bool), String>
+{
+    if args.len() < 2 || args.len() > 4
     {
-        if args.len() == 3 && matches!(&args[2], Value::Function(_) | Value::NativeFunction(_))
+        return Err("std.collect expects count, function, optional context, and optional into"
+            .to_string());
+    }
+    let mut func_idx = None;
+    for (idx, arg) in args.iter().enumerate().skip(1)
+    {
+        if matches!(arg, Value::Function(_) | Value::NativeFunction(_))
         {
-            func_arg = &args[2];
-            context_arg = Some(&args[1]);
-            new_order = true;
+            func_idx = Some(idx);
+            break;
         }
-        else
+    }
+
+    let func_idx = match func_idx
+    {
+        Some(idx) => idx,
+        None =>
         {
             return Err("std.collect expects a function as 2nd or 3rd argument".to_string());
         }
+    };
+
+    let mut context_arg = None;
+    let mut into_arg = None;
+    let mut new_order = false;
+
+    if func_idx == 1
+    {
+        if args.len() == 3
+        {
+            if is_collect_into_array(&args[2])
+            {
+                into_arg = Some(&args[2]);
+            }
+            else
+            {
+                context_arg = Some(&args[2]);
+            }
+        }
+        else if args.len() == 4
+        {
+            context_arg = Some(&args[2]);
+            into_arg = Some(&args[3]);
+        }
     }
-    Ok((func_arg, context_arg, new_order))
+    else if func_idx == 2
+    {
+        context_arg = Some(&args[1]);
+        new_order = true;
+        if args.len() == 4
+        {
+            into_arg = Some(&args[3]);
+        }
+    }
+    else
+    {
+        return Err("std.collect expects function as 2nd or 3rd argument".to_string());
+    }
+
+    Ok((&args[func_idx], context_arg, into_arg, new_order))
 }
 
 fn native_collect(args: &[Value]) -> Result<Value, String>
 {
-    let (func_arg, context_arg, new_order) = resolve_collect_args(args)?;
+    let (func_arg, context_arg, into_arg, new_order) = resolve_collect_args(args)?;
 
     let n = match &args[0]
     {
@@ -235,6 +282,186 @@ fn native_collect(args: &[Value]) -> Result<Value, String>
     if let Value::NativeFunction(func) = func_arg
     {
         let func = *func;
+        if let Some(into) = into_arg
+        {
+            match into
+            {
+                Value::Array(arr) =>
+                {
+                    if arr.borrow().len() != n
+                    {
+                        return Err("std.collect into array length mismatch".to_string());
+                    }
+                    for idx in 0..n
+                    {
+                        let arg = Value::Integer {
+                            value: idx as i128,
+                            kind: IntKind::I64,
+                        };
+                        let val = if let Some(ctx) = context_arg
+                        {
+                            let ctx_val = ctx.clone();
+                            if new_order
+                            {
+                                func(&[ctx_val, arg])?
+                            }
+                            else
+                            {
+                                func(&[arg, ctx_val])?
+                            }
+                        }
+                        else
+                        {
+                            func(&[arg])?
+                        };
+                        arr.borrow_mut()[idx] = val;
+                    }
+                    return Ok(Value::Array(arr.clone()));
+                }
+                Value::F64Array(arr) =>
+                {
+                    if arr.borrow().len() != n
+                    {
+                        return Err("std.collect into array length mismatch".to_string());
+                    }
+                    for idx in 0..n
+                    {
+                        let arg = Value::Integer {
+                            value: idx as i128,
+                            kind: IntKind::I64,
+                        };
+                        let val = if let Some(ctx) = context_arg
+                        {
+                            let ctx_val = ctx.clone();
+                            if new_order
+                            {
+                                func(&[ctx_val, arg])?
+                            }
+                            else
+                            {
+                                func(&[arg, ctx_val])?
+                            }
+                        }
+                        else
+                        {
+                            func(&[arg])?
+                        };
+                        let num = int_value_as_f64(&val)
+                            .ok_or_else(|| "std.collect into F64Array expects numeric results".to_string())?;
+                        arr.borrow_mut()[idx] = num;
+                    }
+                    return Ok(Value::F64Array(arr.clone()));
+                }
+                Value::F32Array(arr) =>
+                {
+                    if arr.borrow().len() != n
+                    {
+                        return Err("std.collect into array length mismatch".to_string());
+                    }
+                    for idx in 0..n
+                    {
+                        let arg = Value::Integer {
+                            value: idx as i128,
+                            kind: IntKind::I64,
+                        };
+                        let val = if let Some(ctx) = context_arg
+                        {
+                            let ctx_val = ctx.clone();
+                            if new_order
+                            {
+                                func(&[ctx_val, arg])?
+                            }
+                            else
+                            {
+                                func(&[arg, ctx_val])?
+                            }
+                        }
+                        else
+                        {
+                            func(&[arg])?
+                        };
+                        let num = int_value_as_f64(&val)
+                            .ok_or_else(|| "std.collect into F32Array expects numeric results".to_string())?;
+                        arr.borrow_mut()[idx] = num as f32;
+                    }
+                    return Ok(Value::F32Array(arr.clone()));
+                }
+                Value::I64Array(arr) =>
+                {
+                    if arr.borrow().len() != n
+                    {
+                        return Err("std.collect into array length mismatch".to_string());
+                    }
+                    for idx in 0..n
+                    {
+                        let arg = Value::Integer {
+                            value: idx as i128,
+                            kind: IntKind::I64,
+                        };
+                        let val = if let Some(ctx) = context_arg
+                        {
+                            let ctx_val = ctx.clone();
+                            if new_order
+                            {
+                                func(&[ctx_val, arg])?
+                            }
+                            else
+                            {
+                                func(&[arg, ctx_val])?
+                            }
+                        }
+                        else
+                        {
+                            func(&[arg])?
+                        };
+                        let num = int_value_as_i64(&val)
+                            .ok_or_else(|| "std.collect into I64Array expects integer results".to_string())?;
+                        arr.borrow_mut()[idx] = num;
+                    }
+                    return Ok(Value::I64Array(arr.clone()));
+                }
+                Value::I32Array(arr) =>
+                {
+                    if arr.borrow().len() != n
+                    {
+                        return Err("std.collect into array length mismatch".to_string());
+                    }
+                    for idx in 0..n
+                    {
+                        let arg = Value::Integer {
+                            value: idx as i128,
+                            kind: IntKind::I64,
+                        };
+                        let val = if let Some(ctx) = context_arg
+                        {
+                            let ctx_val = ctx.clone();
+                            if new_order
+                            {
+                                func(&[ctx_val, arg])?
+                            }
+                            else
+                            {
+                                func(&[arg, ctx_val])?
+                            }
+                        }
+                        else
+                        {
+                            func(&[arg])?
+                        };
+                        let num = int_value_as_i64(&val)
+                            .ok_or_else(|| "std.collect into I32Array expects integer results".to_string())?;
+                        if num < i32::MIN as i64 || num > i32::MAX as i64
+                        {
+                            return Err("std.collect into I32Array result out of range".to_string());
+                        }
+                        arr.borrow_mut()[idx] = num as i32;
+                    }
+                    return Ok(Value::I32Array(arr.clone()));
+                }
+                _ => return Err("std.collect into expects an array".to_string()),
+            }
+        }
+
         let mut out = Vec::with_capacity(n);
         for idx in 0..n
         {
@@ -284,6 +511,206 @@ fn native_collect(args: &[Value]) -> Result<Value, String>
 
         let mut interpreter = Interpreter::new();
         interpreter.set_autoload_std(false);
+
+        if let Some(into) = into_arg
+        {
+            match into
+            {
+                Value::Array(arr) =>
+                {
+                    if arr.borrow().len() != n
+                    {
+                        return Err("std.collect into array length mismatch".to_string());
+                    }
+                    for idx in 0..n
+                    {
+                        let arg = Value::Integer {
+                            value: idx as i128,
+                            kind: IntKind::I64,
+                        };
+                        let args = if let (Some(ctx_val), Value::Function(data)) = (&ctx_val, &func_val)
+                        {
+                            if data.params.len() == 1
+                            {
+                                vec![arg]
+                            }
+                            else if new_order
+                            {
+                                vec![ctx_val.clone(), arg]
+                            }
+                            else
+                            {
+                                vec![arg, ctx_val.clone()]
+                            }
+                        }
+                        else
+                        {
+                            vec![arg]
+                        };
+                        let val = interpreter.call_value_from_host(func_val.clone(), args)?;
+                        arr.borrow_mut()[idx] = val;
+                    }
+                    return Ok(Value::Array(arr.clone()));
+                }
+                Value::F64Array(arr) =>
+                {
+                    if arr.borrow().len() != n
+                    {
+                        return Err("std.collect into array length mismatch".to_string());
+                    }
+                    for idx in 0..n
+                    {
+                        let arg = Value::Integer {
+                            value: idx as i128,
+                            kind: IntKind::I64,
+                        };
+                        let args = if let (Some(ctx_val), Value::Function(data)) = (&ctx_val, &func_val)
+                        {
+                            if data.params.len() == 1
+                            {
+                                vec![arg]
+                            }
+                            else if new_order
+                            {
+                                vec![ctx_val.clone(), arg]
+                            }
+                            else
+                            {
+                                vec![arg, ctx_val.clone()]
+                            }
+                        }
+                        else
+                        {
+                            vec![arg]
+                        };
+                        let val = interpreter.call_value_from_host(func_val.clone(), args)?;
+                        let num = int_value_as_f64(&val)
+                            .ok_or_else(|| "std.collect into F64Array expects numeric results".to_string())?;
+                        arr.borrow_mut()[idx] = num;
+                    }
+                    return Ok(Value::F64Array(arr.clone()));
+                }
+                Value::F32Array(arr) =>
+                {
+                    if arr.borrow().len() != n
+                    {
+                        return Err("std.collect into array length mismatch".to_string());
+                    }
+                    for idx in 0..n
+                    {
+                        let arg = Value::Integer {
+                            value: idx as i128,
+                            kind: IntKind::I64,
+                        };
+                        let args = if let (Some(ctx_val), Value::Function(data)) = (&ctx_val, &func_val)
+                        {
+                            if data.params.len() == 1
+                            {
+                                vec![arg]
+                            }
+                            else if new_order
+                            {
+                                vec![ctx_val.clone(), arg]
+                            }
+                            else
+                            {
+                                vec![arg, ctx_val.clone()]
+                            }
+                        }
+                        else
+                        {
+                            vec![arg]
+                        };
+                        let val = interpreter.call_value_from_host(func_val.clone(), args)?;
+                        let num = int_value_as_f64(&val)
+                            .ok_or_else(|| "std.collect into F32Array expects numeric results".to_string())?;
+                        arr.borrow_mut()[idx] = num as f32;
+                    }
+                    return Ok(Value::F32Array(arr.clone()));
+                }
+                Value::I64Array(arr) =>
+                {
+                    if arr.borrow().len() != n
+                    {
+                        return Err("std.collect into array length mismatch".to_string());
+                    }
+                    for idx in 0..n
+                    {
+                        let arg = Value::Integer {
+                            value: idx as i128,
+                            kind: IntKind::I64,
+                        };
+                        let args = if let (Some(ctx_val), Value::Function(data)) = (&ctx_val, &func_val)
+                        {
+                            if data.params.len() == 1
+                            {
+                                vec![arg]
+                            }
+                            else if new_order
+                            {
+                                vec![ctx_val.clone(), arg]
+                            }
+                            else
+                            {
+                                vec![arg, ctx_val.clone()]
+                            }
+                        }
+                        else
+                        {
+                            vec![arg]
+                        };
+                        let val = interpreter.call_value_from_host(func_val.clone(), args)?;
+                        let num = int_value_as_i64(&val)
+                            .ok_or_else(|| "std.collect into I64Array expects integer results".to_string())?;
+                        arr.borrow_mut()[idx] = num;
+                    }
+                    return Ok(Value::I64Array(arr.clone()));
+                }
+                Value::I32Array(arr) =>
+                {
+                    if arr.borrow().len() != n
+                    {
+                        return Err("std.collect into array length mismatch".to_string());
+                    }
+                    for idx in 0..n
+                    {
+                        let arg = Value::Integer {
+                            value: idx as i128,
+                            kind: IntKind::I64,
+                        };
+                        let args = if let (Some(ctx_val), Value::Function(data)) = (&ctx_val, &func_val)
+                        {
+                            if data.params.len() == 1
+                            {
+                                vec![arg]
+                            }
+                            else if new_order
+                            {
+                                vec![ctx_val.clone(), arg]
+                            }
+                            else
+                            {
+                                vec![arg, ctx_val.clone()]
+                            }
+                        }
+                        else
+                        {
+                            vec![arg]
+                        };
+                        let val = interpreter.call_value_from_host(func_val.clone(), args)?;
+                        let num = int_value_as_i64(&val)
+                            .ok_or_else(|| "std.collect into I32Array expects integer results".to_string())?;
+                        if num < i32::MIN as i64 || num > i32::MAX as i64
+                        {
+                            return Err("std.collect into I32Array result out of range".to_string());
+                        }
+                        arr.borrow_mut()[idx] = num as i32;
+                    }
+                    return Ok(Value::I32Array(arr.clone()));
+                }
+                _ => return Err("std.collect into expects an array".to_string()),
+            }
+        }
 
         let mut out = Vec::with_capacity(n);
         for idx in 0..n
@@ -1888,7 +2315,7 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<SymbolId>)
             collect_declarations(body, decls);
         }
         ExprKind::Collect {
-            var, count, body, ..
+            var, count, into, body, ..
         } =>
         {
             if let Some(name) = var
@@ -1896,6 +2323,10 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<SymbolId>)
                 decls.insert(name.clone());
             }
             collect_declarations(count, decls);
+            if let Some(into) = into
+            {
+                collect_declarations(into, decls);
+            }
             collect_declarations(body, decls);
         }
         ExprKind::Array(elements) =>
@@ -2113,9 +2544,13 @@ fn resolve_functions(expr: &mut Expr)
             resolve_functions(count);
             resolve_functions(body);
         }
-        ExprKind::Collect { count, body, .. } =>
+        ExprKind::Collect { count, into, body, .. } =>
         {
             resolve_functions(count);
+            if let Some(into) = into
+            {
+                resolve_functions(into);
+            }
             resolve_functions(body);
         }
         ExprKind::Call {
@@ -4144,9 +4579,11 @@ fn find_compile_failure(expr: &Expr) -> Option<String>
         {
             find_compile_failure(count).or_else(|| find_compile_failure(body))
         }
-        ExprKind::Collect { count, body, .. } =>
+        ExprKind::Collect { count, into, body, .. } =>
         {
-            find_compile_failure(count).or_else(|| find_compile_failure(body))
+            find_compile_failure(count)
+                .or_else(|| into.as_ref().and_then(|e| find_compile_failure(e)))
+                .or_else(|| find_compile_failure(body))
         }
         ExprKind::Call {
             function,
@@ -4286,9 +4723,13 @@ fn collect_function_exprs(
             collect_function_exprs(count, out);
             collect_function_exprs(body, out);
         }
-        ExprKind::Collect { count, body, .. } =>
+        ExprKind::Collect { count, into, body, .. } =>
         {
             collect_function_exprs(count, out);
+            if let Some(into) = into
+            {
+                collect_function_exprs(into, out);
+            }
             collect_function_exprs(body, out);
         }
         ExprKind::Call {
@@ -4961,12 +5402,14 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
         },
         ExprKind::Collect {
             count,
+            into,
             var,
             var_slot,
             body,
         } => Expr {
             kind: ExprKind::Collect {
                 count: Box::new(substitute(count, args)),
+                into: into.as_ref().map(|expr| Box::new(substitute(expr, args))),
                 var: var.clone(),
                 var_slot: *var_slot,
                 body: Box::new(substitute(body, args)),
@@ -5108,7 +5551,11 @@ fn expr_size(expr: &Expr) -> usize
         ExprKind::While { condition, body } => 1 + expr_size(condition) + expr_size(body),
         ExprKind::For { iterable, body, .. } => 1 + expr_size(iterable) + expr_size(body),
         ExprKind::Loop { count, body, .. } => 1 + expr_size(count) + expr_size(body),
-        ExprKind::Collect { count, body, .. } => 1 + expr_size(count) + expr_size(body),
+        ExprKind::Collect { count, into, body, .. } =>
+        {
+            let into_size = into.as_ref().map_or(0, |expr| expr_size(expr));
+            1 + expr_size(count) + into_size + expr_size(body)
+        }
         ExprKind::Call { function, args, .. } =>
         {
             1 + expr_size(function) + args.iter().map(expr_size).sum::<usize>()
@@ -10817,7 +11264,11 @@ fn is_simple(expr: &Expr) -> bool
         ExprKind::While { condition, body } => is_simple(condition) && is_simple(body),
         ExprKind::For { iterable, body, .. } => is_simple(iterable) && is_simple(body),
         ExprKind::Loop { count, body, .. } => is_simple(count) && is_simple(body),
-        ExprKind::Collect { count, body, .. } => is_simple(count) && is_simple(body),
+        ExprKind::Collect { count, into, body, .. } =>
+        {
+            let into_simple = into.as_ref().map_or(true, |expr| is_simple(expr));
+            is_simple(count) && into_simple && is_simple(body)
+        }
         ExprKind::BinaryOp { left, right, .. } => is_simple(left) && is_simple(right),
         ExprKind::Call {
             function,
@@ -10964,7 +11415,9 @@ fn resolve(expr: &mut Expr, slot_map: &FxHashMap<SymbolId, usize>)
             var,
             var_slot,
             count,
+            into,
             body,
+            ..
         } =>
         {
             if let Some(name) = var
@@ -10975,6 +11428,10 @@ fn resolve(expr: &mut Expr, slot_map: &FxHashMap<SymbolId, usize>)
                 }
             }
             resolve(count, slot_map);
+            if let Some(into) = into
+            {
+                resolve(into, slot_map);
+            }
             resolve(body, slot_map);
         }
         ExprKind::Call {
@@ -16107,6 +16564,7 @@ impl Interpreter
         }
         ExprKind::Collect {
             count,
+            into,
             var,
             var_slot,
             body,
@@ -16117,25 +16575,215 @@ impl Interpreter
                 message: "Collect count must be a non-negative number".to_string(),
                 line,
             })?;
-            let mut out = Vec::with_capacity(n);
-            for idx in 0..n
+            let into_val = if let Some(expr) = into
             {
-                if let Some(slot) = var_slot
-                {
-                    if let Some(slot_val) = slots.get_mut(*slot)
-                    {
-                        *slot_val = default_int(idx as i128);
-                    }
-                }
-                else if let Some(name) = var
-                {
-                    self.env
-                        .borrow_mut()
-                        .assign(*name, default_int(idx as i128));
-                }
-                out.push(self.eval(body, slots)?);
+                Some(self.eval(expr, slots)?)
             }
-            Ok(Value::Array(Rc::new(RefCell::new(out))))
+            else
+            {
+                None
+            };
+
+            match into_val
+            {
+                Some(Value::Array(arr)) =>
+                {
+                    if arr.borrow().len() != n
+                    {
+                        return Err(RuntimeError {
+                            message: "Collect into array length mismatch".to_string(),
+                            line,
+                        });
+                    }
+                    for idx in 0..n
+                    {
+                        if let Some(slot) = var_slot
+                        {
+                            if let Some(slot_val) = slots.get_mut(*slot)
+                            {
+                                *slot_val = default_int(idx as i128);
+                            }
+                        }
+                        else if let Some(name) = var
+                        {
+                            self.env
+                                .borrow_mut()
+                                .assign(*name, default_int(idx as i128));
+                        }
+                        let val = self.eval(body, slots)?;
+                        arr.borrow_mut()[idx] = val;
+                    }
+                    Ok(Value::Array(arr))
+                }
+                Some(Value::F64Array(arr)) =>
+                {
+                    if arr.borrow().len() != n
+                    {
+                        return Err(RuntimeError {
+                            message: "Collect into array length mismatch".to_string(),
+                            line,
+                        });
+                    }
+                    for idx in 0..n
+                    {
+                        if let Some(slot) = var_slot
+                        {
+                            if let Some(slot_val) = slots.get_mut(*slot)
+                            {
+                                *slot_val = default_int(idx as i128);
+                            }
+                        }
+                        else if let Some(name) = var
+                        {
+                            self.env
+                                .borrow_mut()
+                                .assign(*name, default_int(idx as i128));
+                        }
+                        let val = self.eval(body, slots)?;
+                        let num = int_value_as_f64(&val).ok_or_else(|| RuntimeError {
+                            message: "Collect into F64Array expects numeric results".to_string(),
+                            line,
+                        })?;
+                        arr.borrow_mut()[idx] = num;
+                    }
+                    Ok(Value::F64Array(arr))
+                }
+                Some(Value::F32Array(arr)) =>
+                {
+                    if arr.borrow().len() != n
+                    {
+                        return Err(RuntimeError {
+                            message: "Collect into array length mismatch".to_string(),
+                            line,
+                        });
+                    }
+                    for idx in 0..n
+                    {
+                        if let Some(slot) = var_slot
+                        {
+                            if let Some(slot_val) = slots.get_mut(*slot)
+                            {
+                                *slot_val = default_int(idx as i128);
+                            }
+                        }
+                        else if let Some(name) = var
+                        {
+                            self.env
+                                .borrow_mut()
+                                .assign(*name, default_int(idx as i128));
+                        }
+                        let val = self.eval(body, slots)?;
+                        let num = int_value_as_f64(&val).ok_or_else(|| RuntimeError {
+                            message: "Collect into F32Array expects numeric results".to_string(),
+                            line,
+                        })?;
+                        arr.borrow_mut()[idx] = num as f32;
+                    }
+                    Ok(Value::F32Array(arr))
+                }
+                Some(Value::I64Array(arr)) =>
+                {
+                    if arr.borrow().len() != n
+                    {
+                        return Err(RuntimeError {
+                            message: "Collect into array length mismatch".to_string(),
+                            line,
+                        });
+                    }
+                    for idx in 0..n
+                    {
+                        if let Some(slot) = var_slot
+                        {
+                            if let Some(slot_val) = slots.get_mut(*slot)
+                            {
+                                *slot_val = default_int(idx as i128);
+                            }
+                        }
+                        else if let Some(name) = var
+                        {
+                            self.env
+                                .borrow_mut()
+                                .assign(*name, default_int(idx as i128));
+                        }
+                        let val = self.eval(body, slots)?;
+                        let num = int_value_as_i64(&val).ok_or_else(|| RuntimeError {
+                            message: "Collect into I64Array expects integer results".to_string(),
+                            line,
+                        })?;
+                        arr.borrow_mut()[idx] = num;
+                    }
+                    Ok(Value::I64Array(arr))
+                }
+                Some(Value::I32Array(arr)) =>
+                {
+                    if arr.borrow().len() != n
+                    {
+                        return Err(RuntimeError {
+                            message: "Collect into array length mismatch".to_string(),
+                            line,
+                        });
+                    }
+                    for idx in 0..n
+                    {
+                        if let Some(slot) = var_slot
+                        {
+                            if let Some(slot_val) = slots.get_mut(*slot)
+                            {
+                                *slot_val = default_int(idx as i128);
+                            }
+                        }
+                        else if let Some(name) = var
+                        {
+                            self.env
+                                .borrow_mut()
+                                .assign(*name, default_int(idx as i128));
+                        }
+                        let val = self.eval(body, slots)?;
+                        let num = int_value_as_i64(&val).ok_or_else(|| RuntimeError {
+                            message: "Collect into I32Array expects integer results".to_string(),
+                            line,
+                        })?;
+                        if num < i32::MIN as i64 || num > i32::MAX as i64
+                        {
+                            return Err(RuntimeError {
+                                message: "Collect into I32Array result out of range".to_string(),
+                                line,
+                            });
+                        }
+                        arr.borrow_mut()[idx] = num as i32;
+                    }
+                    Ok(Value::I32Array(arr))
+                }
+                Some(_) =>
+                {
+                    Err(RuntimeError {
+                        message: "Collect into expects an array".to_string(),
+                        line,
+                    })
+                }
+                None =>
+                {
+                    let mut out = Vec::with_capacity(n);
+                    for idx in 0..n
+                    {
+                        if let Some(slot) = var_slot
+                        {
+                            if let Some(slot_val) = slots.get_mut(*slot)
+                            {
+                                *slot_val = default_int(idx as i128);
+                            }
+                        }
+                        else if let Some(name) = var
+                        {
+                            self.env
+                                .borrow_mut()
+                                .assign(*name, default_int(idx as i128));
+                        }
+                        out.push(self.eval(body, slots)?);
+                    }
+                    Ok(Value::Array(Rc::new(RefCell::new(out))))
+                }
+            }
         }
             ExprKind::Block(statements) =>
             {

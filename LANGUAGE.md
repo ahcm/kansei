@@ -145,7 +145,7 @@ simd.sum([1,2,3,4])  # -> 10
 The `::` operator accesses module members, similar to map dot access.
 
 ### std
-- `std::collect(count, fn, context = nil)` -> array of results (sequential)
+- `std::collect(count, fn, context = nil, into = nil)` -> array of results (sequential)
 
 ### std::parallel
 `std::parallel` provides parallel helpers backed by Rayon.
@@ -191,7 +191,7 @@ Available functions:
 - `std::parallel::each(array, fn)` -> array of results
 - `std::parallel::apply(array, fn)` -> original array (used for side effects)
 - `std::parallel::loop(count, fn, context = nil)` -> numeric array of results
-- `std::parallel::collect(count, fn, context = nil)` -> array of results
+- `std::parallel::collect(count, fn, context = nil, into = nil)` -> array of results
 
 
 ### std::kansei
@@ -615,13 +615,19 @@ end
 ```
 
 ### Collect
-`collect` repeats a fixed number of times and returns an array of the block results.
+`collect` repeats a fixed number of times and returns an array of the block results. Use `into` to
+fill a pre-allocated array.
 
 ```ruby
 vals = collect 4 |i|
   i * 2
 end
 # -> [0, 2, 4, 6]
+
+buf = [0.0; 4]
+collect 4 into buf |i|
+  i * 2.0
+end
 ```
 
 ### For Loop

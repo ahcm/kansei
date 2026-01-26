@@ -1360,6 +1360,16 @@ impl Parser
 
         let count = self.parse_expression();
 
+        let into = if self.current_token.token == Token::Into
+        {
+            self.eat(); // eat 'into'
+            Some(Box::new(self.parse_expression()))
+        }
+        else
+        {
+            None
+        };
+
         let var = if self.current_token.token == Token::Pipe
         {
             self.eat(); // |
@@ -1383,6 +1393,7 @@ impl Parser
         self.make_expr(
             ExprKind::Collect {
                 count: Box::new(count),
+                into,
                 var,
                 var_slot: None,
                 body: Box::new(body),

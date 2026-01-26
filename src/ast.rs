@@ -189,6 +189,7 @@ pub enum ExprKind
     Collect
     {
         count: Box<Expr>,
+        into: Option<Box<Expr>>,
         var: Option<SymbolId>,
         var_slot: Option<usize>,
         body: Box<Expr>,

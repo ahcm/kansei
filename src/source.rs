@@ -174,13 +174,22 @@ fn format_stmt(expr: &Expr, indent: usize) -> String
             out
         }
         ExprKind::Collect {
-            count, var, body, ..
+            count,
+            into,
+            var,
+            body,
+            ..
         } =>
         {
             let mut out = String::new();
             out.push_str(&indent_str(indent));
             out.push_str("collect ");
             out.push_str(&format_expr(count, indent));
+            if let Some(into) = into
+            {
+                out.push_str(" into ");
+                out.push_str(&format_expr(into, indent));
+            }
             if let Some(var) = var
             {
                 out.push(' ');

@@ -99,6 +99,99 @@ fn map_numeric_results(results: Vec<Numeric>) -> Value
     }
 }
 
+fn is_collect_into_array(value: &Value) -> bool
+{
+    matches!(
+        value,
+        Value::Array(_)
+            | Value::F64Array(_)
+            | Value::F32Array(_)
+            | Value::I64Array(_)
+            | Value::I32Array(_)
+    )
+}
+
+fn fill_collect_into(into: &Value, values: Vec<Value>) -> Result<Value, String>
+{
+    match into
+    {
+        Value::Array(arr) =>
+        {
+            if arr.borrow().len() != values.len()
+            {
+                return Err("parallel.collect into array length mismatch".to_string());
+            }
+            let mut arr_mut = arr.borrow_mut();
+            for (idx, val) in values.into_iter().enumerate()
+            {
+                arr_mut[idx] = val;
+            }
+            Ok(Value::Array(arr.clone()))
+        }
+        Value::F64Array(arr) =>
+        {
+            if arr.borrow().len() != values.len()
+            {
+                return Err("parallel.collect into array length mismatch".to_string());
+            }
+            let mut arr_mut = arr.borrow_mut();
+            for (idx, val) in values.into_iter().enumerate()
+            {
+                let num = value_to_f64(val)?;
+                arr_mut[idx] = num;
+            }
+            Ok(Value::F64Array(arr.clone()))
+        }
+        Value::F32Array(arr) =>
+        {
+            if arr.borrow().len() != values.len()
+            {
+                return Err("parallel.collect into array length mismatch".to_string());
+            }
+            let mut arr_mut = arr.borrow_mut();
+            for (idx, val) in values.into_iter().enumerate()
+            {
+                let num = value_to_f64(val)? as f32;
+                arr_mut[idx] = num;
+            }
+            Ok(Value::F32Array(arr.clone()))
+        }
+        Value::I64Array(arr) =>
+        {
+            if arr.borrow().len() != values.len()
+            {
+                return Err("parallel.collect into array length mismatch".to_string());
+            }
+            let mut arr_mut = arr.borrow_mut();
+            for (idx, val) in values.into_iter().enumerate()
+            {
+                let num = value_to_i64(val)?;
+                arr_mut[idx] = num;
+            }
+            Ok(Value::I64Array(arr.clone()))
+        }
+        Value::I32Array(arr) =>
+        {
+            if arr.borrow().len() != values.len()
+            {
+                return Err("parallel.collect into array length mismatch".to_string());
+            }
+            let mut arr_mut = arr.borrow_mut();
+            for (idx, val) in values.into_iter().enumerate()
+            {
+                let num = value_to_i64(val)?;
+                if num < i32::MIN as i64 || num > i32::MAX as i64
+                {
+                    return Err("parallel.collect into I32Array result out of range".to_string());
+                }
+                arr_mut[idx] = num as i32;
+            }
+            Ok(Value::I32Array(arr.clone()))
+        }
+        _ => Err("parallel.collect into expects an array".to_string()),
+    }
+}
+
 fn resolve_parallel_args(args: &[Value]) -> Result<(&Value, Option<&Value>, bool), String>
 {
     if args.len() < 2 || args.len() > 3
@@ -130,6 +223,75 @@ fn resolve_parallel_args(args: &[Value]) -> Result<(&Value, Option<&Value>, bool
         }
     }
     Ok((func_arg, context_arg, new_order))
+}
+
+fn resolve_parallel_collect_args(
+    args: &[Value],
+) -> Result<(&Value, Option<&Value>, Option<&Value>, bool), String>
+{
+    if args.len() < 2 || args.len() > 4
+    {
+        return Err(
+            "parallel.collect expects count, function, optional context, and optional into"
+                .to_string(),
+        );
+    }
+    let mut func_idx = None;
+    for (idx, arg) in args.iter().enumerate().skip(1)
+    {
+        if matches!(arg, Value::Function(_) | Value::NativeFunction(_))
+        {
+            func_idx = Some(idx);
+            break;
+        }
+    }
+    let func_idx = match func_idx
+    {
+        Some(idx) => idx,
+        None =>
+        {
+            return Err("parallel.collect expects a function as 2nd or 3rd argument".to_string());
+        }
+    };
+
+    let mut context_arg = None;
+    let mut into_arg = None;
+    let mut new_order = false;
+
+    if func_idx == 1
+    {
+        if args.len() == 3
+        {
+            if is_collect_into_array(&args[2])
+            {
+                into_arg = Some(&args[2]);
+            }
+            else
+            {
+                context_arg = Some(&args[2]);
+            }
+        }
+        else if args.len() == 4
+        {
+            context_arg = Some(&args[2]);
+            into_arg = Some(&args[3]);
+        }
+    }
+    else if func_idx == 2
+    {
+        context_arg = Some(&args[1]);
+        new_order = true;
+        if args.len() == 4
+        {
+            into_arg = Some(&args[3]);
+        }
+    }
+    else
+    {
+        return Err("parallel.collect expects function as 2nd or 3rd argument".to_string());
+    }
+
+    Ok((&args[func_idx], context_arg, into_arg, new_order))
 }
 
 fn native_parallel_map(args: &[Value]) -> Result<Value, String>
@@ -434,7 +596,7 @@ fn native_parallel_loop(args: &[Value]) -> Result<Value, String>
 
 fn native_parallel_collect(args: &[Value]) -> Result<Value, String>
 {
-    let (func_arg, context_arg, new_order) = resolve_parallel_args(args)?;
+    let (func_arg, context_arg, into_arg, new_order) = resolve_parallel_collect_args(args)?;
 
     let n = match &args[0]
     {
@@ -451,6 +613,27 @@ fn native_parallel_collect(args: &[Value]) -> Result<Value, String>
     {
         None
     };
+
+    if let Some(into) = into_arg
+    {
+        if !is_collect_into_array(into)
+        {
+            return Err("parallel.collect into expects an array".to_string());
+        }
+        let len_ok = match into
+        {
+            Value::Array(arr) => arr.borrow().len() == n,
+            Value::F64Array(arr) => arr.borrow().len() == n,
+            Value::F32Array(arr) => arr.borrow().len() == n,
+            Value::I64Array(arr) => arr.borrow().len() == n,
+            Value::I32Array(arr) => arr.borrow().len() == n,
+            _ => false,
+        };
+        if !len_ok
+        {
+            return Err("parallel.collect into array length mismatch".to_string());
+        }
+    }
 
     if let Value::NativeFunction(func) = func_arg
     {
@@ -487,6 +670,10 @@ fn native_parallel_collect(args: &[Value]) -> Result<Value, String>
         {
             let sexpr = sexpr::parse_sexpr(&item)?;
             out.push(sexpr::sexpr_to_value(&sexpr)?);
+        }
+        if let Some(into) = into_arg
+        {
+            return fill_collect_into(into, out);
         }
         return Ok(Value::Array(Rc::new(RefCell::new(out))));
     }
@@ -559,6 +746,10 @@ fn native_parallel_collect(args: &[Value]) -> Result<Value, String>
         {
             let sexpr = sexpr::parse_sexpr(&item)?;
             out.push(sexpr::sexpr_to_value(&sexpr)?);
+        }
+        if let Some(into) = into_arg
+        {
+            return fill_collect_into(into, out);
         }
         return Ok(Value::Array(Rc::new(RefCell::new(out))));
     }

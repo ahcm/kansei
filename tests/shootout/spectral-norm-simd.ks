@@ -14,21 +14,17 @@ end
 # Precompute row i of matrix A as an F64Array
 @file
 fn compute_A_row(i, n)
-  row = [0.0; n]
-  loop n |j|
-    row[j] = eval_A(i, j)
+  collect n into [0.0;n] |j|
+    1.0 / ((i + j) * (i + j + 1) / 2 + i + 1)
   end
-  row
 end
 
 # Precompute row i of matrix A^T (which is column i of A)
 @file
 fn compute_At_row(i, n)
-  row = [0.0; n]
-  loop n |j|
-    row[j] = eval_A(j, i)
+  collect n into [0.0;n] |j|
+    1.0 / ((j + i) * (j + i + 1) / 2 + j + 1)
   end
-  row
 end
 
 @file
@@ -40,8 +36,8 @@ end
 
 @file
 fn eval_At_times_u_simd(n, u, au, At_rows)
-  loop n |i|
-    au[i] = simd.dot(At_rows[i], u)
+  collect n into au |i|
+    simd.dot(At_rows[i], u)
   end
 end
 
@@ -54,11 +50,14 @@ end
 
 fn main(n)
   # Precompute matrix rows for SIMD dot products
-  A_rows = []
-  At_rows = []
-  loop n |i|
-    A_rows = A_rows + [compute_A_row(i, n)]
-    At_rows = At_rows + [compute_At_row(i, n)]
+  A_rows = [[0.0; n];n]
+  At_rows = [[0.0; n];n]
+  
+  collect n into A_rows |i|
+    compute_A_row(i, n)
+  end
+  collect n into At_rows |i|
+    compute_At_row(i, n)
   end
 
   u = [1.0; n]

@@ -775,6 +775,9 @@ pub enum Builtin
 {
     Puts,
     Print,
+    Eputs,
+    Eprint,
+    Log,
     Len,
     ReadFile,
     WriteFile,

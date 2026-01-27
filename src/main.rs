@@ -51,6 +51,7 @@ fn main() -> rustyline::Result<()>
     let mut bytecode_mode = eval::BytecodeMode::Simple;
     let mut script_path: Option<String> = None;
     let mut evaluate_source: Option<String> = None;
+    let mut log_path: Option<PathBuf> = None;
     let mut script_args: Vec<String> = Vec::new();
 
     let mut idx = 1;
@@ -77,6 +78,16 @@ fn main() -> rustyline::Result<()>
                 idx += 1;
                 let src = args[idx].clone();
                 append_eval_source(&mut evaluate_source, src);
+            }
+            "-l" | "--log" =>
+            {
+                if idx + 1 >= args.len()
+                {
+                    eprintln!("-l/--log requires a file path.");
+                    return Ok(());
+                }
+                idx += 1;
+                log_path = Some(PathBuf::from(&args[idx]));
             }
             "--bytecode" =>
             {
@@ -131,9 +142,25 @@ fn main() -> rustyline::Result<()>
                 }
                 if !handled
                 {
+                    if let Some(rest) = arg.strip_prefix("-l=")
+                    {
+                        log_path = Some(PathBuf::from(rest));
+                        handled = true;
+                    }
+                }
+                if !handled
+                {
                     if let Some(rest) = arg.strip_prefix("--evaluate=")
                     {
                         append_eval_source(&mut evaluate_source, rest.to_string());
+                        handled = true;
+                    }
+                }
+                if !handled
+                {
+                    if let Some(rest) = arg.strip_prefix("--log=")
+                    {
+                        log_path = Some(PathBuf::from(rest));
                         handled = true;
                     }
                 }
@@ -172,6 +199,14 @@ fn main() -> rustyline::Result<()>
 
     let mut interpreter = eval::Interpreter::new();
     interpreter.set_bytecode_mode(bytecode_mode);
+    if let Some(path) = log_path.as_ref()
+    {
+        if let Err(e) = interpreter.set_log_file(path)
+        {
+            eprintln!("Error opening log file '{}': {}", path.display(), e);
+            std::process::exit(1);
+        }
+    }
 
     // Prepare program.args
     let args_val = value::Value::Array(Rc::new(RefCell::new(
@@ -456,7 +491,8 @@ fn print_usage(bin: &str)
       --dump-ast        Dump AST
       --dump-ast-sexpr  Dump AST as S-Expr
       --dump-bytecode   Dump bytecode
-      --bytecode <mode> Bytecode mode: off|simple|advanced"
+      --bytecode <mode> Bytecode mode: off|simple|advanced
+  -l, --log <path>      Write log output to a file (default: stderr)"
     );
 }
 

@@ -676,6 +676,9 @@ impl Parser
                 let name_str = intern::symbol_name(name);
                 if name_str.as_str() == "puts"
                     || name_str.as_str() == "print"
+                    || name_str.as_str() == "eputs"
+                    || name_str.as_str() == "eprint"
+                    || name_str.as_str() == "log"
                     || name_str.as_str() == "write_file"
                     || name_str.as_str() == "read_file"
                 {

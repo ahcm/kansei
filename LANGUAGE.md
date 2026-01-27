@@ -579,6 +579,9 @@ environment, pass it to `std::parallel` or `std::kansei::ast::eval_in`.
 ## Built-in Functions
 - `puts(val)`: Print value with newline.
 - `print(val)`: Print value without newline.
+- `eputs(val)`: Print value with newline to stderr.
+- `eprint(val)`: Print value without newline to stderr.
+- `log(val)`: Print value with newline to the log device (stderr by default, or `-l/--log`).
 - `len(obj)`: Return length of String, Array, Map, or Env.
 - `read_file(path)`: Read file content as string.
 - `write_file(path, content)`: Write string to file.

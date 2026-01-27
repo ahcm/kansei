@@ -22,7 +22,9 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::env;
 use std::fs;
+use std::fs::OpenOptions;
 use std::io::{self, Write};
+use std::io::BufWriter;
 use std::path::PathBuf;
 use std::process::Command;
 use std::rc::Rc;
@@ -3072,6 +3074,9 @@ fn builtin_from_symbol(name: SymbolId) -> Option<Builtin>
     {
         "puts" => Some(Builtin::Puts),
         "print" => Some(Builtin::Print),
+        "eputs" => Some(Builtin::Eputs),
+        "eprint" => Some(Builtin::Eprint),
+        "log" => Some(Builtin::Log),
         "len" => Some(Builtin::Len),
         "read_file" => Some(Builtin::ReadFile),
         "write_file" => Some(Builtin::WriteFile),
@@ -11776,6 +11781,53 @@ struct ExportSpec
     line: usize,
 }
 
+enum LogTarget
+{
+    Stderr,
+    File(BufWriter<fs::File>),
+}
+
+impl LogTarget
+{
+    fn write_line(&mut self, msg: &str) -> io::Result<()>
+    {
+        match self
+        {
+            Self::Stderr =>
+            {
+                let mut stderr = io::stderr();
+                stderr.write_all(msg.as_bytes())?;
+                stderr.write_all(b"\n")?;
+                stderr.flush()
+            }
+            Self::File(writer) =>
+            {
+                writer.write_all(msg.as_bytes())?;
+                writer.write_all(b"\n")?;
+                writer.flush()
+            }
+        }
+    }
+
+    fn write(&mut self, msg: &str) -> io::Result<()>
+    {
+        match self
+        {
+            Self::Stderr =>
+            {
+                let mut stderr = io::stderr();
+                stderr.write_all(msg.as_bytes())?;
+                stderr.flush()
+            }
+            Self::File(writer) =>
+            {
+                writer.write_all(msg.as_bytes())?;
+                writer.flush()
+            }
+        }
+    }
+}
+
 pub struct Interpreter
 {
     // Current environment (scope)
@@ -11795,6 +11847,7 @@ pub struct Interpreter
     module_lookup_cache: FxHashMap<String, ModuleLookupEntry>,
     module_search_paths: Vec<PathBuf>,
     wasm_search_paths: Vec<PathBuf>,
+    log_target: LogTarget,
 }
 
 impl Interpreter
@@ -11818,6 +11871,7 @@ impl Interpreter
             module_lookup_cache: FxHashMap::default(),
             module_search_paths,
             wasm_search_paths,
+            log_target: LogTarget::Stderr,
         }
     }
 
@@ -11836,6 +11890,13 @@ impl Interpreter
         self.module_search_paths = default_module_search_paths(Some(path));
         self.wasm_search_paths = default_wasm_search_paths(Some(path));
         self.module_lookup_cache.clear();
+    }
+
+    pub fn set_log_file(&mut self, path: &std::path::Path) -> io::Result<()>
+    {
+        let file = OpenOptions::new().create(true).append(true).open(path)?;
+        self.log_target = LogTarget::File(BufWriter::new(file));
+        Ok(())
     }
 
     fn get_local_value(&self, name: SymbolId) -> Option<Value>
@@ -12632,6 +12693,40 @@ impl Interpreter
                 {
                     print!("{}", arg);
                     io::stdout().flush().unwrap();
+                    last = arg.clone();
+                }
+                Ok(last)
+            }
+            Builtin::Eputs =>
+            {
+                let mut last = Value::Nil;
+                let mut stderr = io::stderr();
+                for arg in args
+                {
+                    writeln!(stderr, "{}", arg).unwrap();
+                    last = arg.clone();
+                }
+                Ok(last)
+            }
+            Builtin::Eprint =>
+            {
+                let mut last = Value::Nil;
+                let mut stderr = io::stderr();
+                for arg in args
+                {
+                    write!(stderr, "{}", arg).unwrap();
+                    stderr.flush().unwrap();
+                    last = arg.clone();
+                }
+                Ok(last)
+            }
+            Builtin::Log =>
+            {
+                let mut last = Value::Nil;
+                for arg in args
+                {
+                    let msg = arg.to_string();
+                    self.log_target.write_line(&msg).unwrap();
                     last = arg.clone();
                 }
                 Ok(last)

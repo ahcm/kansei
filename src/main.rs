@@ -12,6 +12,7 @@ mod source;
 mod value;
 mod wasm;
 mod pm;
+mod lsp;
 
 use directories::ProjectDirs;
 use rustc_hash::FxHashMap;
@@ -503,7 +504,8 @@ Commands:
   {bin} fmt <path>      Format .ks files in place
   {bin} check <path>    Parse .ks files and exit non-zero on errors
   {bin} test <path>     Run .ks files and compare against .out/.err if present
-  {bin} install [path]  Install modules from kansei.toml or local paths"
+  {bin} install [path]  Install modules from kansei.toml or local paths
+  {bin} lsp             Start language server on stdio"
     );
 }
 
@@ -722,6 +724,11 @@ fn handle_subcommand(args: &[String]) -> Option<i32>
         "install" =>
         {
             let code = pm::run_install(&args[2..]);
+            Some(code)
+        }
+        "lsp" =>
+        {
+            let code = lsp::run_lsp();
             Some(code)
         }
         _ => None,

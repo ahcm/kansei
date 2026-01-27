@@ -23,6 +23,7 @@ CLI helpers:
 - `kansei check <path>` parses `.ks` files and exits non-zero on errors
 - `kansei test <path>` runs `.ks` files and compares against `.out`/`.err` if present
 - `kansei install [path]` installs dependencies from `kansei.toml` or local module paths
+- `kansei lsp` starts a minimal Language Server over stdio (diagnostics only)
 ---
 Have fun and may the force be with you!
 

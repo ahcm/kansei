@@ -151,6 +151,10 @@ simd.sum([1,2,3,4])  # -> 10
 The `::` operator accesses module members, similar to map dot access.
 
 ## std
+- `std::collect(count, fn, context = nil, into = nil)` -> array of results (sequential)
+- `std::f64(x)`, `std::f32(x)`, `std::i64(x)`, `std::i32(x)`, `std::u64(x)`, `std::u32(x)` -> casts
+These cast helpers are also available as globals (`f64(x)` etc).
+Integer casts do not accept floats (rounding not specified); out-of-range values error.
 
 ### std::parallel
 `std::parallel` provides parallel helpers backed by Rayon.

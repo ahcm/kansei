@@ -188,6 +188,60 @@ fn native_float128_sqrt(args: &[Value]) -> Result<Value, String>
     Ok(make_float(value.sqrt(), FloatKind::F128))
 }
 
+fn native_f64(args: &[Value]) -> Result<Value, String>
+{
+    if args.len() != 1
+    {
+        return Err("f64 expects 1 argument".to_string());
+    }
+    cast_f64_value(&args[0])
+}
+
+fn native_f32(args: &[Value]) -> Result<Value, String>
+{
+    if args.len() != 1
+    {
+        return Err("f32 expects 1 argument".to_string());
+    }
+    cast_f32_value(&args[0])
+}
+
+fn native_i64(args: &[Value]) -> Result<Value, String>
+{
+    if args.len() != 1
+    {
+        return Err("i64 expects 1 argument".to_string());
+    }
+    cast_i64_value(&args[0])
+}
+
+fn native_i32(args: &[Value]) -> Result<Value, String>
+{
+    if args.len() != 1
+    {
+        return Err("i32 expects 1 argument".to_string());
+    }
+    cast_i32_value(&args[0])
+}
+
+fn native_u64(args: &[Value]) -> Result<Value, String>
+{
+    if args.len() != 1
+    {
+        return Err("u64 expects 1 argument".to_string());
+    }
+    cast_u64_value(&args[0])
+}
+
+fn native_u32(args: &[Value]) -> Result<Value, String>
+{
+    if args.len() != 1
+    {
+        return Err("u32 expects 1 argument".to_string());
+    }
+    cast_u32_value(&args[0])
+}
+
 fn is_collect_into_array(value: &Value) -> bool
 {
     matches!(
@@ -1790,6 +1844,12 @@ fn build_std_module() -> Value
     std_map.insert(intern::intern("kansei"), build_kansei_module());
     std_map.insert(intern::intern("parallel"), build_parallel_module());
     std_map.insert(intern::intern("collect"), Value::NativeFunction(native_collect));
+    std_map.insert(intern::intern("f64"), Value::NativeFunction(native_f64));
+    std_map.insert(intern::intern("f32"), Value::NativeFunction(native_f32));
+    std_map.insert(intern::intern("i64"), Value::NativeFunction(native_i64));
+    std_map.insert(intern::intern("i32"), Value::NativeFunction(native_i32));
+    std_map.insert(intern::intern("u64"), Value::NativeFunction(native_u64));
+    std_map.insert(intern::intern("u32"), Value::NativeFunction(native_u32));
     Value::Map(Rc::new(RefCell::new(MapValue::new(std_map))))
 }
 
@@ -2198,6 +2258,186 @@ fn make_signed_int(value: i128, kind: IntKind) -> Value
 fn make_unsigned_int(value: u128, kind: IntKind) -> Value
 {
     Value::Unsigned { value, kind }
+}
+
+fn cast_f64_value(value: &Value) -> Result<Value, String>
+{
+    match value
+    {
+        Value::Float { value, .. } =>
+        {
+            Ok(Value::Float {
+                value: *value,
+                kind: FloatKind::F64,
+            })
+        }
+        Value::Integer { value, .. } =>
+        {
+            Ok(Value::Float {
+                value: *value as f64,
+                kind: FloatKind::F64,
+            })
+        }
+        Value::Unsigned { value, .. } =>
+        {
+            Ok(Value::Float {
+                value: *value as f64,
+                kind: FloatKind::F64,
+            })
+        }
+        Value::String(s) => s
+            .parse::<f64>()
+            .map(|value| Value::Float {
+                value,
+                kind: FloatKind::F64,
+            })
+            .map_err(|_| "f64 expects a numeric string".to_string()),
+        _ => Err("f64 expects a number or numeric string".to_string()),
+    }
+}
+
+fn cast_f32_value(value: &Value) -> Result<Value, String>
+{
+    match value
+    {
+        Value::Float { value, .. } =>
+        {
+            Ok(Value::Float {
+                value: *value as f32 as f64,
+                kind: FloatKind::F32,
+            })
+        }
+        Value::Integer { value, .. } =>
+        {
+            Ok(Value::Float {
+                value: *value as f32 as f64,
+                kind: FloatKind::F32,
+            })
+        }
+        Value::Unsigned { value, .. } =>
+        {
+            Ok(Value::Float {
+                value: *value as f32 as f64,
+                kind: FloatKind::F32,
+            })
+        }
+        Value::String(s) => s
+            .parse::<f32>()
+            .map(|value| Value::Float {
+                value: value as f64,
+                kind: FloatKind::F32,
+            })
+            .map_err(|_| "f32 expects a numeric string".to_string()),
+        _ => Err("f32 expects a number or numeric string".to_string()),
+    }
+}
+
+fn cast_i64_value(value: &Value) -> Result<Value, String>
+{
+    match value
+    {
+        Value::Integer { value, .. } => i64::try_from(*value)
+            .map(|value| make_signed_int(value as i128, IntKind::I64))
+            .map_err(|_| "i64 out of range".to_string()),
+        Value::Unsigned { value, .. } => i64::try_from(*value)
+            .map(|value| make_signed_int(value as i128, IntKind::I64))
+            .map_err(|_| "i64 out of range".to_string()),
+        Value::String(s) => s
+            .parse::<i64>()
+            .map(|value| make_signed_int(value as i128, IntKind::I64))
+            .map_err(|_| "i64 expects an integer string".to_string()),
+        Value::Float { .. } =>
+        {
+            Err("i64 does not accept float values (rounding not specified)".to_string())
+        }
+        _ => Err("i64 expects an integer or integer string".to_string()),
+    }
+}
+
+fn cast_i32_value(value: &Value) -> Result<Value, String>
+{
+    match value
+    {
+        Value::Integer { value, .. } => i32::try_from(*value)
+            .map(|value| make_signed_int(value as i128, IntKind::I32))
+            .map_err(|_| "i32 out of range".to_string()),
+        Value::Unsigned { value, .. } => i32::try_from(*value)
+            .map(|value| make_signed_int(value as i128, IntKind::I32))
+            .map_err(|_| "i32 out of range".to_string()),
+        Value::String(s) => s
+            .parse::<i32>()
+            .map(|value| make_signed_int(value as i128, IntKind::I32))
+            .map_err(|_| "i32 expects an integer string".to_string()),
+        Value::Float { .. } =>
+        {
+            Err("i32 does not accept float values (rounding not specified)".to_string())
+        }
+        _ => Err("i32 expects an integer or integer string".to_string()),
+    }
+}
+
+fn cast_u64_value(value: &Value) -> Result<Value, String>
+{
+    match value
+    {
+        Value::Unsigned { value, .. } =>
+        {
+            Ok(make_unsigned_int(*value, IntKind::U64))
+        }
+        Value::Integer { value, .. } =>
+        {
+            if *value < 0
+            {
+                return Err("u64 out of range".to_string());
+            }
+            u64::try_from(*value)
+                .map(|value| make_unsigned_int(value as u128, IntKind::U64))
+                .map_err(|_| "u64 out of range".to_string())
+        }
+        Value::String(s) => s
+            .parse::<u64>()
+            .map(|value| make_unsigned_int(value as u128, IntKind::U64))
+            .map_err(|_| "u64 expects an unsigned integer string".to_string()),
+        Value::Float { .. } =>
+        {
+            Err("u64 does not accept float values (rounding not specified)".to_string())
+        }
+        _ => Err("u64 expects an integer or integer string".to_string()),
+    }
+}
+
+fn cast_u32_value(value: &Value) -> Result<Value, String>
+{
+    match value
+    {
+        Value::Unsigned { value, .. } =>
+        {
+            if *value > u32::MAX as u128
+            {
+                return Err("u32 out of range".to_string());
+            }
+            Ok(make_unsigned_int(*value, IntKind::U32))
+        }
+        Value::Integer { value, .. } =>
+        {
+            if *value < 0
+            {
+                return Err("u32 out of range".to_string());
+            }
+            u32::try_from(*value)
+                .map(|value| make_unsigned_int(value as u128, IntKind::U32))
+                .map_err(|_| "u32 out of range".to_string())
+        }
+        Value::String(s) => s
+            .parse::<u32>()
+            .map(|value| make_unsigned_int(value as u128, IntKind::U32))
+            .map_err(|_| "u32 expects an unsigned integer string".to_string()),
+        Value::Float { .. } =>
+        {
+            Err("u32 does not accept float values (rounding not specified)".to_string())
+        }
+        _ => Err("u32 expects an integer or integer string".to_string()),
+    }
 }
 
 fn int_value_as_f64(value: &Value) -> Option<f64>
@@ -2694,6 +2934,12 @@ fn builtin_from_symbol(name: SymbolId) -> Option<Builtin>
         "read_file" => Some(Builtin::ReadFile),
         "write_file" => Some(Builtin::WriteFile),
         "typeof" => Some(Builtin::Typeof),
+        "f64" => Some(Builtin::F64),
+        "f32" => Some(Builtin::F32),
+        "i64" => Some(Builtin::I64),
+        "i32" => Some(Builtin::I32),
+        "u64" => Some(Builtin::U64),
+        "u32" => Some(Builtin::U32),
         _ => None,
     }
 }
@@ -12657,6 +12903,36 @@ impl Interpreter
                 };
                 Ok(Value::String(intern::intern(type_name)))
             }
+            Builtin::F64 =>
+            {
+                let val = args.get(0).cloned().unwrap_or(Value::Nil);
+                cast_f64_value(&val).map_err(|message| RuntimeError { message, line: 0 })
+            }
+            Builtin::F32 =>
+            {
+                let val = args.get(0).cloned().unwrap_or(Value::Nil);
+                cast_f32_value(&val).map_err(|message| RuntimeError { message, line: 0 })
+            }
+            Builtin::I64 =>
+            {
+                let val = args.get(0).cloned().unwrap_or(Value::Nil);
+                cast_i64_value(&val).map_err(|message| RuntimeError { message, line: 0 })
+            }
+            Builtin::I32 =>
+            {
+                let val = args.get(0).cloned().unwrap_or(Value::Nil);
+                cast_i32_value(&val).map_err(|message| RuntimeError { message, line: 0 })
+            }
+            Builtin::U64 =>
+            {
+                let val = args.get(0).cloned().unwrap_or(Value::Nil);
+                cast_u64_value(&val).map_err(|message| RuntimeError { message, line: 0 })
+            }
+            Builtin::U32 =>
+            {
+                let val = args.get(0).cloned().unwrap_or(Value::Nil);
+                cast_u32_value(&val).map_err(|message| RuntimeError { message, line: 0 })
+            }
         }
     }
 
@@ -15715,6 +15991,42 @@ impl Interpreter
                         {
                             let val = self.eval(&args[0], slots)?;
                             return self.call_builtin(&Builtin::Typeof, &[val]);
+                        }
+                        "f64" =>
+                        {
+                            let val = self.eval(&args[0], slots)?;
+                            return cast_f64_value(&val)
+                                .map_err(|message| RuntimeError { message, line });
+                        }
+                        "f32" =>
+                        {
+                            let val = self.eval(&args[0], slots)?;
+                            return cast_f32_value(&val)
+                                .map_err(|message| RuntimeError { message, line });
+                        }
+                        "i64" =>
+                        {
+                            let val = self.eval(&args[0], slots)?;
+                            return cast_i64_value(&val)
+                                .map_err(|message| RuntimeError { message, line });
+                        }
+                        "i32" =>
+                        {
+                            let val = self.eval(&args[0], slots)?;
+                            return cast_i32_value(&val)
+                                .map_err(|message| RuntimeError { message, line });
+                        }
+                        "u64" =>
+                        {
+                            let val = self.eval(&args[0], slots)?;
+                            return cast_u64_value(&val)
+                                .map_err(|message| RuntimeError { message, line });
+                        }
+                        "u32" =>
+                        {
+                            let val = self.eval(&args[0], slots)?;
+                            return cast_u32_value(&val)
+                                .map_err(|message| RuntimeError { message, line });
                         }
                         _ =>
                         {}

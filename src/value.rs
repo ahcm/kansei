@@ -779,6 +779,12 @@ pub enum Builtin
     ReadFile,
     WriteFile,
     Typeof,
+    F64,
+    F32,
+    I64,
+    I32,
+    U64,
+    U32,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -598,9 +598,12 @@ environment, pass it to `std::parallel` or `std::kansei::ast::eval_in`.
 - `eputs(val)`: Print value with newline to stderr.
 - `eprint(val)`: Print value without newline to stderr.
 - `log(val)`: Print value with newline to the log device (stderr by default, or `-l/--log`).
+- `typeof(val)`: Return the runtime type name as a string.
 - `len(obj)`: Return length of String, Array, Map, or Env.
 - `read_file(path)`: Read file content as string.
 - `write_file(path, content)`: Write string to file.
+- `f64(val)`, `f32(val)`, `i64(val)`, `i32(val)`, `u64(val)`, `u32(val)`: Cast helpers (same as `std::f64` etc).
+- `error expr`: Raise a runtime error.
 
 ## Format Strings
 Prefix a string with `f` to interpolate expressions, similar to Rust formatting.
@@ -677,6 +680,11 @@ puts IO.cwd()
 IO.mkdirs("tmp/nested")
 IO.remove("out.txt")
 ```
+
+### std::File
+`std::File` mirrors `std::IO` and provides the same filesystem helpers:
+`read`, `write`, `append`, `read_bytes`, `write_bytes`, `append_bytes`,
+`exists`, `remove`, `mkdirs`, `copy`, `cwd`.
 
 ### std::lib::clap
 `std::lib::clap` provides a small CLI parsing helper:
@@ -884,6 +892,13 @@ Flate2 = std::lib::Flate2
 
 compressed = Flate2.compress("hello")
 puts Flate2.decompress(compressed)
+```
+
+### std::lib::Egui
+`std::lib::Egui` provides a lightweight UI module.
+```ruby
+use std::lib::Egui
+Egui = std::lib::Egui
 ```
 
 ### std::lib::Image

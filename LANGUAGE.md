@@ -729,11 +729,29 @@ IO.append_bytes("out.bin", bytes)
 IO.write_lines("lines.txt", ["a", "b"])
 lines = IO.read_lines("lines.txt")
 puts IO.glob("tests/**/*.ks")
+puts IO.walk("tests")
+puts IO.watch("tmp", 500)
 
 puts IO.exists("out.txt")
 puts IO.cwd()
 IO.mkdirs("tmp/nested")
 IO.remove("out.txt")
+```
+
+### std::OS
+`std::OS` provides basic process and environment helpers:
+```ruby
+use std::OS
+OS = std::OS
+
+puts OS.env("HOME")
+OS.set_env("KANS", "1")
+OS.unset_env("KANS")
+OS.sleep(100)
+
+res = OS.run("echo", ["hi"])
+puts res.status
+puts res.stdout
 ```
 
 ### std::File

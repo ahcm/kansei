@@ -6,7 +6,7 @@ use crate::intern;
 use crate::intern::{SymbolId, symbol_name};
 use crate::kansei_std::{
     build_file_module, build_io_module, build_kansei_module, build_lib_module,
-    build_log_module, build_parallel_module, build_simd_module, build_wasm_module,
+    build_log_module, build_os_module, build_parallel_module, build_simd_module, build_wasm_module,
 };
 use crate::value::{
     BinaryOpCache, BinaryOpCacheKind, BoundMethod, Builtin, CallSiteCache, EnvValue, Environment,
@@ -1966,6 +1966,7 @@ fn build_std_module() -> Value
     std_map.insert(intern::intern("Float64"), build_float64_module());
     std_map.insert(intern::intern("Float128"), build_float128_module());
     std_map.insert(intern::intern("IO"), build_io_module());
+    std_map.insert(intern::intern("OS"), build_os_module());
     std_map.insert(intern::intern("log"), build_log_module());
     std_map.insert(intern::intern("File"), build_file_module());
     std_map.insert(intern::intern("lib"), build_lib_module());

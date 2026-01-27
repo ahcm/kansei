@@ -1,6 +1,7 @@
 use crate::intern;
 use crate::value::{MapValue, Value};
 use glob::glob;
+use notify::{RecursiveMode, Watcher};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::env;
@@ -8,6 +9,8 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 fn io_path_arg(args: &[Value], idx: usize, name: &str) -> Result<String, String>
 {
@@ -125,6 +128,100 @@ fn native_io_glob(args: &[Value]) -> Result<Value, String>
     Ok(Value::Array(Rc::new(RefCell::new(results))))
 }
 
+fn native_io_walk(args: &[Value]) -> Result<Value, String>
+{
+    let root = io_path_arg(args, 0, "IO.walk")?;
+    let mut results = Vec::new();
+    fn walk_dir(path: &Path, out: &mut Vec<Value>)
+    {
+        if let Ok(entries) = fs::read_dir(path)
+        {
+            for entry in entries.flatten()
+            {
+                let entry_path = entry.path();
+                out.push(Value::String(intern::intern_owned(
+                    entry_path.to_string_lossy().to_string(),
+                )));
+                if entry_path.is_dir()
+                {
+                    walk_dir(&entry_path, out);
+                }
+            }
+        }
+    }
+    let root_path = Path::new(&root);
+    if root_path.exists()
+    {
+        walk_dir(root_path, &mut results);
+    }
+    Ok(Value::Array(Rc::new(RefCell::new(results))))
+}
+
+fn native_io_watch(args: &[Value]) -> Result<Value, String>
+{
+    let path = io_path_arg(args, 0, "IO.watch")?;
+    let timeout_ms = match args.get(1)
+    {
+        None | Some(Value::Nil) => 1000u64,
+        Some(Value::Integer { value, .. }) => *value as u64,
+        Some(Value::Unsigned { value, .. }) => *value as u64,
+        _ => return Err("IO.watch expects timeout_ms as integer".to_string()),
+    };
+    let recursive = match args.get(2)
+    {
+        None | Some(Value::Nil) => true,
+        Some(Value::Boolean(val)) => *val,
+        _ => return Err("IO.watch expects recursive as boolean".to_string()),
+    };
+
+    let (tx, rx) = mpsc::channel();
+    let mut watcher = notify::recommended_watcher(move |res| {
+        let _ = tx.send(res);
+    })
+    .map_err(|e| format!("IO.watch failed: {e}"))?;
+
+    let mode = if recursive
+    {
+        RecursiveMode::Recursive
+    }
+    else
+    {
+        RecursiveMode::NonRecursive
+    };
+    watcher
+        .watch(Path::new(&path), mode)
+        .map_err(|e| format!("IO.watch failed: {e}"))?;
+
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    let mut results = Vec::new();
+    loop
+    {
+        let now = Instant::now();
+        if now >= deadline
+        {
+            break;
+        }
+        let remaining = deadline.saturating_duration_since(now);
+        match rx.recv_timeout(remaining)
+        {
+            Ok(Ok(event)) =>
+            {
+                for path in event.paths
+                {
+                    results.push(Value::String(intern::intern_owned(
+                        path.to_string_lossy().to_string(),
+                    )));
+                }
+            }
+            Ok(Err(_)) => {}
+            Err(mpsc::RecvTimeoutError::Timeout) => break,
+            Err(_) => break,
+        }
+    }
+
+    Ok(Value::Array(Rc::new(RefCell::new(results))))
+}
+
 fn native_io_append(args: &[Value]) -> Result<Value, String>
 {
     let path = io_path_arg(args, 0, "IO.append")?;
@@ -227,6 +324,8 @@ pub fn build_io_module() -> Value
     io_map.insert(intern::intern("read_lines"), Value::NativeFunction(native_io_read_lines));
     io_map.insert(intern::intern("write_lines"), Value::NativeFunction(native_io_write_lines));
     io_map.insert(intern::intern("glob"), Value::NativeFunction(native_io_glob));
+    io_map.insert(intern::intern("walk"), Value::NativeFunction(native_io_walk));
+    io_map.insert(intern::intern("watch"), Value::NativeFunction(native_io_watch));
     io_map.insert(intern::intern("append"), Value::NativeFunction(native_io_append));
     io_map.insert(intern::intern("read_bytes"), Value::NativeFunction(native_io_read_bytes));
     io_map.insert(intern::intern("write_bytes"), Value::NativeFunction(native_io_write_bytes));

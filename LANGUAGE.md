@@ -163,6 +163,22 @@ puts wasm.list()               # ["Math"]
 puts wasm.call("Math", "sum", [1, 2, 3])
 ```
 
+Typed calls using a manifest spec:
+```ruby
+spec = {
+  "functions": [
+    { "name": "sum", "params": ["i32[]"], "result": "i32" },
+    { "name": "hello", "params": ["string"], "result": "string" }
+  ]
+}
+
+puts wasm.validate(spec, "sum", [1, 2, 3]) # true/false
+puts wasm.call_typed("Math", "sum", spec, [1, 2, 3])
+```
+
+Supported types: `i32`, `i64`, `u32`, `u64`, `f32`, `f64`, `bool`, `string`,
+`i32[]`, `u32[]`, `f64[]`, `any`, `void`.
+
 ### std::Int64 std::Int128 std::Uint64 std::Uint128 std::Float32 std::Float64 std::Float128
 
 Somewhat redundant to the shortform modules (e.g. std::f64() but many more operations.

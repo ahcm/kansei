@@ -136,7 +136,11 @@ fn native_simd_dot(args: &[Value]) -> Result<Value, String>
             let b_vec = b.borrow();
             if a_vec.len() != b_vec.len()
             {
-                return Err("simd.dot requires arrays of equal length".to_string());
+                return Err(format!(
+                    "simd.dot requires arrays of equal length {} vs {}",
+                    a_vec.len(),
+                    b_vec.len()
+                ));
             }
             let len = a_vec.len();
             let simd_len = len / SIMD_LANES * SIMD_LANES;
@@ -163,7 +167,11 @@ fn native_simd_dot(args: &[Value]) -> Result<Value, String>
             let b_vec = b.borrow();
             if a_vec.len() != b_vec.len()
             {
-                return Err("simd.dot requires arrays of equal length".to_string());
+                return Err(format!(
+                    "simd.dot requires arrays of equal length {} vs {}",
+                    a_vec.len(),
+                    b_vec.len()
+                ));
             }
             let len = a_vec.len();
             let simd_len = len / SIMD_LANES * SIMD_LANES;
@@ -190,7 +198,11 @@ fn native_simd_dot(args: &[Value]) -> Result<Value, String>
             let b_vec = b.borrow();
             if a_vec.len() != b_vec.len()
             {
-                return Err("simd.dot requires arrays of equal length".to_string());
+                return Err(format!(
+                    "simd.dot requires arrays of equal length {} vs {}",
+                    a_vec.len(),
+                    b_vec.len()
+                ));
             }
             let len = a_vec.len();
             let simd_len = len / SIMD_LANES * SIMD_LANES;
@@ -217,7 +229,11 @@ fn native_simd_dot(args: &[Value]) -> Result<Value, String>
             let b_vec = b.borrow();
             if a_vec.len() != b_vec.len()
             {
-                return Err("simd.dot requires arrays of equal length".to_string());
+                return Err(format!(
+                    "simd.dot requires arrays of equal length {} vs {}",
+                    a_vec.len(),
+                    b_vec.len()
+                ));
             }
             let len = a_vec.len();
             let simd_len = len / SIMD_LANES * SIMD_LANES;
@@ -268,7 +284,11 @@ where
             let b_vec = b.borrow();
             if a_vec.len() != b_vec.len()
             {
-                return Err("SIMD operations require arrays of equal length".to_string());
+                return Err(format!(
+                    "SIMD operations require arrays of equal length {} vs {}",
+                    a_vec.len(),
+                    b_vec.len()
+                ));
             }
             let mut result = Vec::with_capacity(a_vec.len());
             let (a_prefix, a_simd, a_suffix) = a_vec.as_simd::<SIMD_LANES>();
@@ -302,7 +322,11 @@ where
             let b_vec = b.borrow();
             if a_vec.len() != b_vec.len()
             {
-                return Err("SIMD operations require arrays of equal length".to_string());
+                return Err(format!(
+                    "SIMD operations require arrays of equal length {} vs {}",
+                    a_vec.len(),
+                    b_vec.len()
+                ));
             }
             let mut result = Vec::with_capacity(a_vec.len());
             let (a_prefix, a_simd, a_suffix) = a_vec.as_simd::<SIMD_LANES>();
@@ -336,7 +360,11 @@ where
             let b_vec = b.borrow();
             if a_vec.len() != b_vec.len()
             {
-                return Err("SIMD operations require arrays of equal length".to_string());
+                return Err(format!(
+                    "SIMD operations require arrays of equal length {} vs {}",
+                    a_vec.len(),
+                    b_vec.len()
+                ));
             }
             let mut result = Vec::with_capacity(a_vec.len());
             let (a_prefix, a_simd, a_suffix) = a_vec.as_simd::<SIMD_LANES>();
@@ -367,7 +395,11 @@ where
             let b_vec = b.borrow();
             if a_vec.len() != b_vec.len()
             {
-                return Err("SIMD operations require arrays of equal length".to_string());
+                return Err(format!(
+                    "SIMD operations require arrays of equal length {} vs {}",
+                    a_vec.len(),
+                    b_vec.len()
+                ));
             }
             let mut result = Vec::with_capacity(a_vec.len());
             let (a_prefix, a_simd, a_suffix) = a_vec.as_simd::<SIMD_LANES>();

@@ -15,56 +15,45 @@ parallel = std::parallel
 # row[j] = eval_A(i, j)
 @file
 fn compute_A_row(i, n)
-  # parallel.collect(n, context, function)
-  # function receives (context, index) => (i, j)
-  buf = [0.0; n]
-  parallel.collect(n, i, fn(i, j)
-    1.0 / ((i + j) * (i + j + 1) / 2 + i + 1)
-  end, buf)
+  j = collect n into [0.0; n] |j| j * 1.0 end
+  #j = [{|j| j * 1.0};n]
+  i_arr = [i * 1.0; n]
+  ones = [1.0; n]
+  two = [2.0; n]
+  ij = simd.add(i_arr, j)
+  ij1 = simd.add(ij, ones)
+  prod = simd.mul(ij, ij1)
+  half = simd.div(prod, two)
+  denom = simd.add(half, simd.add(i_arr, ones))
+  simd.div(ones, denom)
 end
 
 # Precompute row i of matrix A^T (which is column i of A)
 # row[j] = eval_A(j, i)
 @file
 fn compute_At_row(i, n)
-  # parallel.collect(n, context, function)
-  # function receives (context, index) => (i, j)
-  buf = [0.0; n]
-  parallel.collect(n, i, fn(i, j)
-    1.0 / ((j + i) * (j + i + 1) / 2 + j + 1)
-  end, buf)
-end
-
-@file
-fn eval_A_times_u_simd(n, u, au, A_rows)
-  loop n |i|
-    au[i] = simd.dot(A_rows[i], u)
-  end
-end
-
-@file
-fn eval_At_times_u_simd(n, u, au, At_rows)
-  loop n |i|
-    au[i] = simd.dot(At_rows[i], u)
-  end
+  j = collect n into [0.0; n] |j| j * 1.0 end
+  i_arr = [i * 1.0; n]
+  ones = [1.0; n]
+  two = [2.0; n]
+  ij = simd.add(j, i_arr)
+  ij1 = simd.add(ij, ones)
+  prod = simd.mul(ij, ij1)
+  half = simd.div(prod, two)
+  denom = simd.add(half, simd.add(j, ones))
+  simd.div(ones, denom)
 end
 
 @file
 fn eval_AtA_times_u_simd(n, u, atAu, A_rows, At_rows)
-  v = [0.0; n]
-  eval_A_times_u_simd(n, u, v, A_rows)
-  eval_At_times_u_simd(n, v, atAu, At_rows)
+  v = collect n into [0.0;n] |i| simd.dot(A_rows[i], u) end
+  collect n into atAu |i| simd.dot(At_rows[i], v) end
 end
 
 fn main(n)
   # Precompute matrix rows for SIMD dot products
-  A_rows = []
-  At_rows = []
-  
-  loop n |i|
-    A_rows = A_rows + [compute_A_row(i, n)]
-    At_rows = At_rows + [compute_At_row(i, n)]
-  end
+  A_rows  = collect n |i| compute_A_row(i,n) end
+  At_rows = collect n |i| compute_At_row(i, n) end  
 
   u = [1.0; n]
   v = [0.0; n]
@@ -80,12 +69,14 @@ fn main(n)
 
   use std::Float64
   Float64 = std::Float64
+
   res = Float64.sqrt(vBv / vv)
   puts f"{res:.9}"
 end
 
-n = program.args[0]
 use std::Int64
 Int64 = std::Int64
+
+n = program.args[0]
 n = Int64::parse(n)
 main(n)

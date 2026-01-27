@@ -272,23 +272,27 @@ where
             }
             let mut result = Vec::with_capacity(a_vec.len());
             let (a_prefix, a_simd, a_suffix) = a_vec.as_simd::<SIMD_LANES>();
-            let (b_prefix, b_simd, b_suffix) = b_vec.as_simd::<SIMD_LANES>();
 
             // Handle prefix (unaligned start)
-            for (x, y) in a_prefix.iter().zip(b_prefix.iter())
+            let prefix_len = a_prefix.len();
+            for i in 0..prefix_len
             {
-                result.push(f64_op(Simd::splat(*x), Simd::splat(*y))[0]);
+                result.push(f64_op(Simd::splat(a_vec[i]), Simd::splat(b_vec[i]))[0]);
             }
             // SIMD main loop
-            for (va, vb) in a_simd.iter().zip(b_simd.iter())
+            for (chunk_idx, va) in a_simd.iter().enumerate()
             {
-                let r = f64_op(*va, *vb);
+                let start = prefix_len + chunk_idx * SIMD_LANES;
+                let vb = Simd::<f64, SIMD_LANES>::from_slice(&b_vec[start..start + SIMD_LANES]);
+                let r = f64_op(*va, vb);
                 result.extend_from_slice(r.as_array());
             }
             // Handle suffix (unaligned end)
-            for (x, y) in a_suffix.iter().zip(b_suffix.iter())
+            let suffix_len = a_suffix.len();
+            let suffix_start = a_vec.len() - suffix_len;
+            for i in suffix_start..a_vec.len()
             {
-                result.push(f64_op(Simd::splat(*x), Simd::splat(*y))[0]);
+                result.push(f64_op(Simd::splat(a_vec[i]), Simd::splat(b_vec[i]))[0]);
             }
             Ok(Value::F64Array(Rc::new(RefCell::new(result))))
         }
@@ -302,23 +306,27 @@ where
             }
             let mut result = Vec::with_capacity(a_vec.len());
             let (a_prefix, a_simd, a_suffix) = a_vec.as_simd::<SIMD_LANES>();
-            let (b_prefix, b_simd, b_suffix) = b_vec.as_simd::<SIMD_LANES>();
 
             // Handle prefix
-            for (x, y) in a_prefix.iter().zip(b_prefix.iter())
+            let prefix_len = a_prefix.len();
+            for i in 0..prefix_len
             {
-                result.push(i64_op(Simd::splat(*x), Simd::splat(*y))[0]);
+                result.push(i64_op(Simd::splat(a_vec[i]), Simd::splat(b_vec[i]))[0]);
             }
             // SIMD main loop
-            for (va, vb) in a_simd.iter().zip(b_simd.iter())
+            for (chunk_idx, va) in a_simd.iter().enumerate()
             {
-                let r = i64_op(*va, *vb);
+                let start = prefix_len + chunk_idx * SIMD_LANES;
+                let vb = Simd::<i64, SIMD_LANES>::from_slice(&b_vec[start..start + SIMD_LANES]);
+                let r = i64_op(*va, vb);
                 result.extend_from_slice(r.as_array());
             }
             // Handle suffix
-            for (x, y) in a_suffix.iter().zip(b_suffix.iter())
+            let suffix_len = a_suffix.len();
+            let suffix_start = a_vec.len() - suffix_len;
+            for i in suffix_start..a_vec.len()
             {
-                result.push(i64_op(Simd::splat(*x), Simd::splat(*y))[0]);
+                result.push(i64_op(Simd::splat(a_vec[i]), Simd::splat(b_vec[i]))[0]);
             }
             Ok(Value::I64Array(Rc::new(RefCell::new(result))))
         }
@@ -332,20 +340,24 @@ where
             }
             let mut result = Vec::with_capacity(a_vec.len());
             let (a_prefix, a_simd, a_suffix) = a_vec.as_simd::<SIMD_LANES>();
-            let (b_prefix, b_simd, b_suffix) = b_vec.as_simd::<SIMD_LANES>();
 
-            for (x, y) in a_prefix.iter().zip(b_prefix.iter())
+            let prefix_len = a_prefix.len();
+            for i in 0..prefix_len
             {
-                result.push(f32_op(Simd::splat(*x), Simd::splat(*y))[0]);
+                result.push(f32_op(Simd::splat(a_vec[i]), Simd::splat(b_vec[i]))[0]);
             }
-            for (va, vb) in a_simd.iter().zip(b_simd.iter())
+            for (chunk_idx, va) in a_simd.iter().enumerate()
             {
-                let r = f32_op(*va, *vb);
+                let start = prefix_len + chunk_idx * SIMD_LANES;
+                let vb = Simd::<f32, SIMD_LANES>::from_slice(&b_vec[start..start + SIMD_LANES]);
+                let r = f32_op(*va, vb);
                 result.extend_from_slice(r.as_array());
             }
-            for (x, y) in a_suffix.iter().zip(b_suffix.iter())
+            let suffix_len = a_suffix.len();
+            let suffix_start = a_vec.len() - suffix_len;
+            for i in suffix_start..a_vec.len()
             {
-                result.push(f32_op(Simd::splat(*x), Simd::splat(*y))[0]);
+                result.push(f32_op(Simd::splat(a_vec[i]), Simd::splat(b_vec[i]))[0]);
             }
             Ok(Value::F32Array(Rc::new(RefCell::new(result))))
         }
@@ -359,20 +371,24 @@ where
             }
             let mut result = Vec::with_capacity(a_vec.len());
             let (a_prefix, a_simd, a_suffix) = a_vec.as_simd::<SIMD_LANES>();
-            let (b_prefix, b_simd, b_suffix) = b_vec.as_simd::<SIMD_LANES>();
 
-            for (x, y) in a_prefix.iter().zip(b_prefix.iter())
+            let prefix_len = a_prefix.len();
+            for i in 0..prefix_len
             {
-                result.push(i32_op(Simd::splat(*x), Simd::splat(*y))[0]);
+                result.push(i32_op(Simd::splat(a_vec[i]), Simd::splat(b_vec[i]))[0]);
             }
-            for (va, vb) in a_simd.iter().zip(b_simd.iter())
+            for (chunk_idx, va) in a_simd.iter().enumerate()
             {
-                let r = i32_op(*va, *vb);
+                let start = prefix_len + chunk_idx * SIMD_LANES;
+                let vb = Simd::<i32, SIMD_LANES>::from_slice(&b_vec[start..start + SIMD_LANES]);
+                let r = i32_op(*va, vb);
                 result.extend_from_slice(r.as_array());
             }
-            for (x, y) in a_suffix.iter().zip(b_suffix.iter())
+            let suffix_len = a_suffix.len();
+            let suffix_start = a_vec.len() - suffix_len;
+            for i in suffix_start..a_vec.len()
             {
-                result.push(i32_op(Simd::splat(*x), Simd::splat(*y))[0]);
+                result.push(i32_op(Simd::splat(a_vec[i]), Simd::splat(b_vec[i]))[0]);
             }
             Ok(Value::I32Array(Rc::new(RefCell::new(result))))
         }

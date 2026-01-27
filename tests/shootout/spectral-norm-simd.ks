@@ -10,9 +10,9 @@ simd = std::simd
 # row[j] = eval_A(i, j)
 @file
 fn compute_A_row(i, n)
-  j = collect n into [0.0; n] |j| j * 1.0 end
-  #j = [{|j| j * 1.0};n]
-  i_arr = [i * 1.0; n]
+  j = collect n into [0.0; n] |j| f64(j) end
+  #j = [{|j| f64(j)};n]
+  i_arr = [f64(i); n]
   ones = [1.0; n]
   two = [2.0; n]
   ij = simd.add(i_arr, j)
@@ -27,8 +27,8 @@ end
 # row[j] = eval_A(j, i)
 @file
 fn compute_At_row(i, n)
-  j = collect n into [0.0; n] |j| j * 1.0 end
-  i_arr = [i * 1.0; n]
+  j = collect n into [0.0; n] |j| f64(j) end
+  i_arr = [f64(i); n]
   ones = [1.0; n]
   two = [2.0; n]
   ij = simd.add(j, i_arr)
@@ -63,15 +63,10 @@ fn main(n)
   vv = simd.dot(v, v)
 
   use std::Float64
-  Float64 = std::Float64
-
-  res = Float64.sqrt(vBv / vv)
+  res = std::Float64.sqrt(vBv / vv)
   puts f"{res:.9}"
 end
 
-use std::Int64
-Int64 = std::Int64
-
 n = program.args[0]
-n = Int64::parse(n)
+n = i64(n)
 main(n)

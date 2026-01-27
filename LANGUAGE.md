@@ -122,6 +122,22 @@ cargo build --no-default-features --features lib-math,lib-regex
 
 The `::` operator accesses module members, similar to map dot access.
 
+### std::log
+`std::log` configures the `log(...)` builtin. The log target defaults to stderr.
+
+```ruby
+use std::log
+log = std::log
+
+log.set("app.log")                 # append (default)
+log.set("app.log", "truncate")     # overwrite
+log.set("app.log", "rotate", 1024) # rotate to app.log.1 when size >= 1024 bytes
+log.stderr()                       # back to stderr
+
+log.format("{timestamp} {message}") # timestamp is seconds.millis since UNIX epoch
+log.flush(false)                    # disable flush on every log call
+```
+
 ### std::f64(x), std::f32(x), std::i64(x), std::i32(x)`, std::u64(x), std::u32(x)
 - `std::f64(x)`, `std::f32(x)`, `std::i64(x)`, `std::i32(x)`, `std::u64(x)`, `std::u32(x)` -> casts
 These cast helpers are also availableo as globals (`f64(x)` etc).

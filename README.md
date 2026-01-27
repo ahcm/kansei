@@ -16,6 +16,7 @@ puts "Add 10 to 5: " + add10(5)
 ```
 
 Logging defaults to stderr via `log(...)` and can be redirected with `-l/--log <path>`.
+Use `std::log` to change log target/format at runtime.
 ---
 Have fun and may the force be with you!
 

@@ -6,7 +6,7 @@ use crate::intern;
 use crate::intern::{SymbolId, symbol_name};
 use crate::kansei_std::{
     build_file_module, build_io_module, build_kansei_module, build_lib_module,
-    build_parallel_module, build_simd_module,
+    build_log_module, build_parallel_module, build_simd_module,
 };
 use crate::value::{
     BinaryOpCache, BinaryOpCacheKind, BoundMethod, Builtin, CallSiteCache, EnvValue, Environment,
@@ -30,7 +30,7 @@ use std::process::Command;
 use std::rc::Rc;
 use std::simd::Simd;
 use std::simd::num::SimdFloat;
-use std::time::SystemTime;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone)]
 pub struct RuntimeTraceFrame
@@ -1966,6 +1966,7 @@ fn build_std_module() -> Value
     std_map.insert(intern::intern("Float64"), build_float64_module());
     std_map.insert(intern::intern("Float128"), build_float128_module());
     std_map.insert(intern::intern("IO"), build_io_module());
+    std_map.insert(intern::intern("log"), build_log_module());
     std_map.insert(intern::intern("File"), build_file_module());
     std_map.insert(intern::intern("lib"), build_lib_module());
     std_map.insert(intern::intern("simd"), build_simd_module());
@@ -11787,9 +11788,16 @@ enum LogTarget
     File(BufWriter<fs::File>),
 }
 
+pub enum LogFileMode
+{
+    Append,
+    Truncate,
+    Rotate { max_bytes: u64 },
+}
+
 impl LogTarget
 {
-    fn write_line(&mut self, msg: &str) -> io::Result<()>
+    fn write_line(&mut self, msg: &str, flush: bool) -> io::Result<()>
     {
         match self
         {
@@ -11798,18 +11806,26 @@ impl LogTarget
                 let mut stderr = io::stderr();
                 stderr.write_all(msg.as_bytes())?;
                 stderr.write_all(b"\n")?;
-                stderr.flush()
+                if flush
+                {
+                    stderr.flush()?;
+                }
+                Ok(())
             }
             Self::File(writer) =>
             {
                 writer.write_all(msg.as_bytes())?;
                 writer.write_all(b"\n")?;
-                writer.flush()
+                if flush
+                {
+                    writer.flush()?;
+                }
+                Ok(())
             }
         }
     }
 
-    fn write(&mut self, msg: &str) -> io::Result<()>
+    fn write(&mut self, msg: &str, flush: bool) -> io::Result<()>
     {
         match self
         {
@@ -11817,14 +11833,69 @@ impl LogTarget
             {
                 let mut stderr = io::stderr();
                 stderr.write_all(msg.as_bytes())?;
-                stderr.flush()
+                if flush
+                {
+                    stderr.flush()?;
+                }
+                Ok(())
             }
             Self::File(writer) =>
             {
                 writer.write_all(msg.as_bytes())?;
-                writer.flush()
+                if flush
+                {
+                    writer.flush()?;
+                }
+                Ok(())
             }
         }
+    }
+}
+
+fn rotate_log_file(path: &std::path::Path, max_bytes: u64) -> io::Result<()>
+{
+    if max_bytes == 0
+    {
+        return Ok(());
+    }
+    let metadata = match fs::metadata(path)
+    {
+        Ok(meta) => meta,
+        Err(_) => return Ok(()),
+    };
+    if metadata.len() < max_bytes
+    {
+        return Ok(());
+    }
+    let rotated_path = PathBuf::from(format!("{}.1", path.display()));
+    if rotated_path.exists()
+    {
+        fs::remove_file(&rotated_path)?;
+    }
+    fs::rename(path, rotated_path)?;
+    Ok(())
+}
+
+fn format_log_message(format: &str, message: &str) -> String
+{
+    let timestamp = current_log_timestamp();
+    format
+        .replace("{timestamp}", &timestamp)
+        .replace("{message}", message)
+}
+
+fn current_log_timestamp() -> String
+{
+    let now = SystemTime::now();
+    match now.duration_since(UNIX_EPOCH)
+    {
+        Ok(duration) =>
+        {
+            let secs = duration.as_secs();
+            let millis = duration.subsec_millis();
+            format!("{secs}.{millis:03}")
+        }
+        Err(_) => "0.000".to_string(),
     }
 }
 
@@ -11848,6 +11919,8 @@ pub struct Interpreter
     module_search_paths: Vec<PathBuf>,
     wasm_search_paths: Vec<PathBuf>,
     log_target: LogTarget,
+    log_format: String,
+    log_flush: bool,
 }
 
 impl Interpreter
@@ -11872,6 +11945,8 @@ impl Interpreter
             module_search_paths,
             wasm_search_paths,
             log_target: LogTarget::Stderr,
+            log_format: "{message}".to_string(),
+            log_flush: true,
         }
     }
 
@@ -11894,9 +11969,50 @@ impl Interpreter
 
     pub fn set_log_file(&mut self, path: &std::path::Path) -> io::Result<()>
     {
-        let file = OpenOptions::new().create(true).append(true).open(path)?;
+        self.set_log_file_with_mode(path, LogFileMode::Append)
+    }
+
+    pub fn set_log_file_with_mode(
+        &mut self,
+        path: &std::path::Path,
+        mode: LogFileMode,
+    ) -> io::Result<()>
+    {
+        if let LogFileMode::Rotate { max_bytes } = mode
+        {
+            rotate_log_file(path, max_bytes)?;
+        }
+        let mut options = OpenOptions::new();
+        options.create(true);
+        match mode
+        {
+            LogFileMode::Append | LogFileMode::Rotate { .. } =>
+            {
+                options.append(true);
+            }
+            LogFileMode::Truncate =>
+            {
+                options.truncate(true).write(true);
+            }
+        }
+        let file = options.open(path)?;
         self.log_target = LogTarget::File(BufWriter::new(file));
         Ok(())
+    }
+
+    pub fn set_log_stderr(&mut self)
+    {
+        self.log_target = LogTarget::Stderr;
+    }
+
+    pub fn set_log_format(&mut self, format: String)
+    {
+        self.log_format = format;
+    }
+
+    pub fn set_log_flush(&mut self, flush: bool)
+    {
+        self.log_flush = flush;
     }
 
     fn get_local_value(&self, name: SymbolId) -> Option<Value>
@@ -12726,7 +12842,12 @@ impl Interpreter
                 for arg in args
                 {
                     let msg = arg.to_string();
-                    self.log_target.write_line(&msg).unwrap();
+                    let formatted = format_log_message(&self.log_format, &msg);
+                    self.log_target
+                        .write_line(&formatted, self.log_flush)
+                        .map_err(|err| {
+                            RuntimeError::simple(format!("log write failed: {err}"), 0)
+                        })?;
                     last = arg.clone();
                 }
                 Ok(last)

@@ -45,6 +45,10 @@ fn native_program_exit(args: &[value::Value]) -> Result<value::Value, String>
 fn main() -> rustyline::Result<()>
 {
     let args: Vec<String> = env::args().collect();
+    if let Some(code) = handle_subcommand(&args)
+    {
+        std::process::exit(code);
+    }
     let mut dump_ast = false;
     let mut dump_ast_sexpr = false;
     let mut dump_bytecode = false;
@@ -492,7 +496,12 @@ fn print_usage(bin: &str)
       --dump-ast-sexpr  Dump AST as S-Expr
       --dump-bytecode   Dump bytecode
       --bytecode <mode> Bytecode mode: off|simple|advanced
-  -l, --log <path>      Write log output to a file (default: stderr)"
+  -l, --log <path>      Write log output to a file (default: stderr)
+
+Commands:
+  {bin} fmt <path>      Format .ks files in place
+  {bin} check <path>    Parse .ks files and exit non-zero on errors
+  {bin} test <path>     Run .ks files and compare against .out/.err if present"
     );
 }
 
@@ -671,4 +680,281 @@ fn is_balanced(input: &str) -> bool
         Ok(depth) => depth <= 0,
         Err(_) => true, // If lexer crashed, let parser handle (and crash/report) it
     }
+}
+
+fn handle_subcommand(args: &[String]) -> Option<i32>
+{
+    if args.len() < 2
+    {
+        return None;
+    }
+    match args[1].as_str()
+    {
+        "fmt" =>
+        {
+            if args.len() < 3
+            {
+                eprintln!("fmt expects a file or directory path.");
+                return Some(2);
+            }
+            Some(run_fmt(&args[2..]))
+        }
+        "check" =>
+        {
+            if args.len() < 3
+            {
+                eprintln!("check expects a file or directory path.");
+                return Some(2);
+            }
+            Some(run_check(&args[2..]))
+        }
+        "test" =>
+        {
+            if args.len() < 3
+            {
+                eprintln!("test expects a file or directory path.");
+                return Some(2);
+            }
+            Some(run_tests(&args[2..]))
+        }
+        _ => None,
+    }
+}
+
+fn collect_ks_files(path: &std::path::Path, out: &mut Vec<PathBuf>)
+{
+    if path.is_dir()
+    {
+        if let Ok(entries) = fs::read_dir(path)
+        {
+            for entry in entries.flatten()
+            {
+                collect_ks_files(&entry.path(), out);
+            }
+        }
+    }
+    else if path.extension().and_then(|s| s.to_str()) == Some("ks")
+    {
+        out.push(path.to_path_buf());
+    }
+}
+
+fn parse_source_string(source: &str) -> Result<ast::Expr, String>
+{
+    let parse_result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        let lexer = lexer::Lexer::new(source);
+        let mut parser = parser::Parser::new(lexer);
+        parser.parse()
+    }));
+    match parse_result
+    {
+        Ok(ast) => Ok(ast),
+        Err(e) =>
+        {
+            if let Some(s) = e.downcast_ref::<&str>()
+            {
+                Err(s.to_string())
+            }
+            else if let Some(s) = e.downcast_ref::<String>()
+            {
+                Err(s.clone())
+            }
+            else
+            {
+                Err("Syntax Error".to_string())
+            }
+        }
+    }
+}
+
+fn run_fmt(paths: &[String]) -> i32
+{
+    let mut files = Vec::new();
+    for path in paths
+    {
+        collect_ks_files(std::path::Path::new(path), &mut files);
+    }
+    if files.is_empty()
+    {
+        eprintln!("fmt found no .ks files.");
+        return 1;
+    }
+    let mut failures = 0;
+    let mut formatted = 0;
+    for file in files
+    {
+        let content = match fs::read_to_string(&file)
+        {
+            Ok(content) => content,
+            Err(e) =>
+            {
+                eprintln!("fmt failed to read {}: {}", file.display(), e);
+                failures += 1;
+                continue;
+            }
+        };
+        match parse_source_string(&content)
+        {
+            Ok(ast) =>
+            {
+                let formatted_source = source::expr_to_source(&ast);
+                if formatted_source != content
+                {
+                    if let Err(e) = fs::write(&file, formatted_source)
+                    {
+                        eprintln!("fmt failed to write {}: {}", file.display(), e);
+                        failures += 1;
+                        continue;
+                    }
+                    formatted += 1;
+                }
+            }
+            Err(err) =>
+            {
+                eprintln!("fmt parse error in {}: {}", file.display(), err);
+                failures += 1;
+            }
+        }
+    }
+    if failures > 0
+    {
+        1
+    }
+    else
+    {
+        if formatted > 0
+        {
+            println!("formatted {} file(s)", formatted);
+        }
+        0
+    }
+}
+
+fn run_check(paths: &[String]) -> i32
+{
+    let mut files = Vec::new();
+    for path in paths
+    {
+        collect_ks_files(std::path::Path::new(path), &mut files);
+    }
+    if files.is_empty()
+    {
+        eprintln!("check found no .ks files.");
+        return 1;
+    }
+    let mut failures = 0;
+    for file in files
+    {
+        let content = match fs::read_to_string(&file)
+        {
+            Ok(content) => content,
+            Err(e) =>
+            {
+                eprintln!("check failed to read {}: {}", file.display(), e);
+                failures += 1;
+                continue;
+            }
+        };
+        if let Err(err) = parse_source_string(&content)
+        {
+            eprintln!("check parse error in {}: {}", file.display(), err);
+            failures += 1;
+        }
+    }
+    if failures > 0 { 1 } else { 0 }
+}
+
+fn run_tests(paths: &[String]) -> i32
+{
+    let mut files = Vec::new();
+    for path in paths
+    {
+        collect_ks_files(std::path::Path::new(path), &mut files);
+    }
+    if files.is_empty()
+    {
+        eprintln!("test found no .ks files.");
+        return 1;
+    }
+
+    let exe = match env::current_exe()
+    {
+        Ok(exe) => exe,
+        Err(e) =>
+        {
+            eprintln!("test failed to resolve current executable: {}", e);
+            return 1;
+        }
+    };
+
+    let mut failures = 0;
+    for file in files
+    {
+        let output = match process::Command::new(&exe).arg(&file).output()
+        {
+            Ok(output) => output,
+            Err(e) =>
+            {
+                eprintln!("test failed to run {}: {}", file.display(), e);
+                failures += 1;
+                continue;
+            }
+        };
+        if !output.status.success()
+        {
+            eprintln!("test failed (non-zero exit): {}", file.display());
+            failures += 1;
+            continue;
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let out_path = file.with_extension("out");
+        let err_path = file.with_extension("err");
+
+        if out_path.exists()
+        {
+            match fs::read_to_string(&out_path)
+            {
+                Ok(expected) =>
+                {
+                    if expected != stdout
+                    {
+                        eprintln!("test stdout mismatch: {}", file.display());
+                        failures += 1;
+                        continue;
+                    }
+                }
+                Err(e) =>
+                {
+                    eprintln!("test failed to read {}: {}", out_path.display(), e);
+                    failures += 1;
+                    continue;
+                }
+            }
+        }
+        if err_path.exists()
+        {
+            match fs::read_to_string(&err_path)
+            {
+                Ok(expected) =>
+                {
+                    if expected != stderr
+                    {
+                        eprintln!("test stderr mismatch: {}", file.display());
+                        failures += 1;
+                        continue;
+                    }
+                }
+                Err(e) =>
+                {
+                    eprintln!("test failed to read {}: {}", err_path.display(), e);
+                    failures += 1;
+                    continue;
+                }
+            }
+        }
+    }
+
+    if failures > 0 { 1 } else { 0 }
 }

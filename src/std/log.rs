@@ -97,6 +97,60 @@ fn native_log_flush(interpreter: &mut Interpreter, args: &[Value]) -> Result<Val
     Ok(Value::Nil)
 }
 
+fn native_log_level(interpreter: &mut Interpreter, args: &[Value]) -> Result<Value, String>
+{
+    let level = match args.get(0)
+    {
+        Some(Value::String(s)) => s.as_str(),
+        _ => return Err("log.level expects a string".to_string()),
+    };
+    interpreter.set_log_level_str(level)?;
+    Ok(Value::Nil)
+}
+
+fn native_log_get(interpreter: &mut Interpreter, _args: &[Value]) -> Result<Value, String>
+{
+    let (target, mode, format, flush, level) = interpreter.log_config();
+    let mut map = FxHashMap::default();
+    map.insert(intern::intern("target"), Value::String(intern::intern_owned(target)));
+    map.insert(intern::intern("mode"), Value::String(intern::intern_owned(mode)));
+    map.insert(intern::intern("format"), Value::String(intern::intern_owned(format)));
+    map.insert(intern::intern("flush"), Value::Boolean(flush));
+    map.insert(intern::intern("level"), Value::String(intern::intern_owned(level)));
+    Ok(Value::Map(Rc::new(RefCell::new(MapValue::new(map)))))
+}
+
+fn native_log_emit(
+    interpreter: &mut Interpreter,
+    args: &[Value],
+    level: &'static str,
+) -> Result<Value, String>
+{
+    let mut last = Value::Nil;
+    for arg in args
+    {
+        let msg = arg.to_string();
+        interpreter.log_with_level(level, &msg)?;
+        last = arg.clone();
+    }
+    Ok(last)
+}
+
+fn native_log_info(interpreter: &mut Interpreter, args: &[Value]) -> Result<Value, String>
+{
+    native_log_emit(interpreter, args, "info")
+}
+
+fn native_log_warn(interpreter: &mut Interpreter, args: &[Value]) -> Result<Value, String>
+{
+    native_log_emit(interpreter, args, "warn")
+}
+
+fn native_log_error(interpreter: &mut Interpreter, args: &[Value]) -> Result<Value, String>
+{
+    native_log_emit(interpreter, args, "error")
+}
+
 pub fn build_log_module() -> Value
 {
     let mut map = FxHashMap::default();
@@ -112,6 +166,23 @@ pub fn build_log_module() -> Value
     map.insert(
         intern::intern("flush"),
         Value::HostFunction(native_log_flush as HostFunction),
+    );
+    map.insert(
+        intern::intern("level"),
+        Value::HostFunction(native_log_level as HostFunction),
+    );
+    map.insert(intern::intern("get"), Value::HostFunction(native_log_get as HostFunction));
+    map.insert(
+        intern::intern("info"),
+        Value::HostFunction(native_log_info as HostFunction),
+    );
+    map.insert(
+        intern::intern("warn"),
+        Value::HostFunction(native_log_warn as HostFunction),
+    );
+    map.insert(
+        intern::intern("error"),
+        Value::HostFunction(native_log_error as HostFunction),
     );
     Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
 }

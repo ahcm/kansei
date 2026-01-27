@@ -778,6 +778,8 @@ pub enum Builtin
     Eputs,
     Eprint,
     Log,
+    Assert,
+    AssertEq,
     Len,
     ReadFile,
     WriteFile,

@@ -20,6 +20,7 @@ polars = { version = "0.39.2", default-features = false, features = ["csv"] }
 clap = { version = "4.5.4", default-features = false, features = ["std"] }
 serde_json = "1.0.117"
 regex = "1.10.6"
+glob = "0.3.1"
 chrono = { version = "0.4.38", default-features = false, features = ["clock"] }
 rand = "0.8.5"
 rayon = "1.10.0"

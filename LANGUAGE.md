@@ -134,8 +134,16 @@ log.set("app.log", "truncate")     # overwrite
 log.set("app.log", "rotate", 1024) # rotate to app.log.1 when size >= 1024 bytes
 log.stderr()                       # back to stderr
 
-log.format("{timestamp} {message}") # timestamp is seconds.millis since UNIX epoch
-log.flush(false)                    # disable flush on every log call
+log.format("{timestamp} {level} {message}") # timestamp is seconds.millis since UNIX epoch
+log.flush(false)                            # disable flush on every log call
+log.level("warn")                           # filter below warn (info/debug)
+
+log.info("hello")
+log.warn("watch out")
+log.error("boom")
+
+cfg = log.get()
+puts cfg.level
 ```
 
 ### std::f64(x), std::f32(x), std::i64(x), std::i32(x)`, std::u64(x), std::u32(x)
@@ -143,6 +151,17 @@ log.flush(false)                    # disable flush on every log call
 These cast helpers are also availableo as globals (`f64(x)` etc).
 Integer casts do not accept floats (use rounding) Out-of-range values will error.
 These work also with strings, e.g. `f64("1.0")`
+
+### std::wasm
+Helpers around wasm modules loaded with `load wasm::Name`.
+```ruby
+use std::wasm
+wasm = std::wasm
+
+load wasm::Math
+puts wasm.list()               # ["Math"]
+puts wasm.call("Math", "sum", [1, 2, 3])
+```
 
 ### std::Int64 std::Int128 std::Uint64 std::Uint128 std::Float32 std::Float64 std::Float128
 
@@ -604,6 +623,8 @@ environment, pass it to `std::parallel` or `std::kansei::ast::eval_in`.
 - `write_file(path, content)`: Write string to file.
 - `f64(val)`, `f32(val)`, `i64(val)`, `i32(val)`, `u64(val)`, `u32(val)`: Cast helpers (same as `std::f64` etc).
 - `error expr`: Raise a runtime error.
+- `assert(cond, msg = nil)`: Raise a runtime error if condition is falsey.
+- `assert_eq(a, b, msg = nil)`: Raise a runtime error if values differ.
 
 ## Format Strings
 Prefix a string with `f` to interpolate expressions, similar to Rust formatting.
@@ -674,6 +695,9 @@ puts IO.read("out.txt")
 bytes = IO.read_bytes("out.txt")
 IO.write_bytes("out.bin", bytes)
 IO.append_bytes("out.bin", bytes)
+IO.write_lines("lines.txt", ["a", "b"])
+lines = IO.read_lines("lines.txt")
+puts IO.glob("tests/**/*.ks")
 
 puts IO.exists("out.txt")
 puts IO.cwd()
@@ -899,7 +923,33 @@ puts Flate2.decompress(compressed)
 ```ruby
 use std::lib::Egui
 Egui = std::lib::Egui
+
+clicked = false
+name = "Ada"
+value = 0.0
+
+fn ui(ctx)
+  ctx.label("Hello")
+  if ctx.button("Click")
+    clicked = true
+  end
+  ctx.checkbox("Clicked?", &clicked)
+  ctx.text_input(&name)
+  ctx.slider(&value, 0, 10, "Value")
+  ctx.separator()
+end
+
+Egui.run("Demo", 640, 480, ui)
 ```
+
+UI helpers:
+- `ctx.label(text)`
+- `ctx.heading(text)`
+- `ctx.separator()`
+- `ctx.button(text)` -> bool
+- `ctx.checkbox(label, &bool)` -> bool (writes back on change)
+- `ctx.slider(&num, min, max, label = nil)` -> bool (writes back on change)
+- `ctx.text_input(&string)` -> bool (writes back on change)
 
 ### std::lib::Image
 ```ruby

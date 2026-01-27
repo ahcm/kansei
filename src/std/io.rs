@@ -1,5 +1,6 @@
 use crate::intern;
 use crate::value::{MapValue, Value};
+use glob::glob;
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::env;
@@ -65,6 +66,63 @@ fn native_io_write(args: &[Value]) -> Result<Value, String>
         Ok(()) => Ok(Value::Boolean(true)),
         Err(_) => Ok(Value::Boolean(false)),
     }
+}
+
+fn native_io_read_lines(args: &[Value]) -> Result<Value, String>
+{
+    let path = io_path_arg(args, 0, "IO.read_lines")?;
+    match fs::read_to_string(&path)
+    {
+        Ok(content) =>
+        {
+            let lines = content
+                .lines()
+                .map(|line| Value::String(intern::intern_owned(line.to_string())))
+                .collect();
+            Ok(Value::Array(Rc::new(RefCell::new(lines))))
+        }
+        Err(_) => Ok(Value::Nil),
+    }
+}
+
+fn native_io_write_lines(args: &[Value]) -> Result<Value, String>
+{
+    let path = io_path_arg(args, 0, "IO.write_lines")?;
+    let lines_val = args.get(1).cloned().unwrap_or(Value::Nil);
+    let joined = match lines_val
+    {
+        Value::Array(arr) =>
+        {
+            arr.borrow()
+                .iter()
+                .map(|val| val.to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+        _ => return Err("IO.write_lines expects an array".to_string()),
+    };
+    match fs::write(&path, joined)
+    {
+        Ok(()) => Ok(Value::Boolean(true)),
+        Err(_) => Ok(Value::Boolean(false)),
+    }
+}
+
+fn native_io_glob(args: &[Value]) -> Result<Value, String>
+{
+    let pattern = io_path_arg(args, 0, "IO.glob")?;
+    let mut results = Vec::new();
+    let entries = glob(&pattern).map_err(|e| format!("IO.glob invalid pattern: {e}"))?;
+    for entry in entries
+    {
+        if let Ok(path) = entry
+        {
+            results.push(Value::String(intern::intern_owned(
+                path.to_string_lossy().to_string(),
+            )));
+        }
+    }
+    Ok(Value::Array(Rc::new(RefCell::new(results))))
 }
 
 fn native_io_append(args: &[Value]) -> Result<Value, String>
@@ -166,6 +224,9 @@ pub fn build_io_module() -> Value
     let mut io_map = FxHashMap::default();
     io_map.insert(intern::intern("read"), Value::NativeFunction(native_io_read));
     io_map.insert(intern::intern("write"), Value::NativeFunction(native_io_write));
+    io_map.insert(intern::intern("read_lines"), Value::NativeFunction(native_io_read_lines));
+    io_map.insert(intern::intern("write_lines"), Value::NativeFunction(native_io_write_lines));
+    io_map.insert(intern::intern("glob"), Value::NativeFunction(native_io_glob));
     io_map.insert(intern::intern("append"), Value::NativeFunction(native_io_append));
     io_map.insert(intern::intern("read_bytes"), Value::NativeFunction(native_io_read_bytes));
     io_map.insert(intern::intern("write_bytes"), Value::NativeFunction(native_io_write_bytes));

@@ -37,5 +37,21 @@ if rotated != "old"
   error "log rotation content mismatch"
 end
 
+log.set(path, "truncate")
+log.format("{level}:{message}")
+log.level("warn")
+log.info("skip")
+log.warn("ok")
+
+content2 = IO.read(path)
+if content2 != "warn:ok\n"
+  error "log level filter mismatch: " + content2
+end
+
+cfg = log.get()
+if cfg.level != "warn"
+  error "log.get level mismatch"
+end
+
 IO.remove(path)
 IO.remove(rotated_path)

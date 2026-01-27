@@ -17,6 +17,11 @@ puts "Add 10 to 5: " + add10(5)
 
 Logging defaults to stderr via `log(...)` and can be redirected with `-l/--log <path>`.
 Use `std::log` to change log target/format at runtime.
+
+CLI helpers:
+- `kansei fmt <path>` formats `.ks` files in place
+- `kansei check <path>` parses `.ks` files and exits non-zero on errors
+- `kansei test <path>` runs `.ks` files and compares against `.out`/`.err` if present
 ---
 Have fun and may the force be with you!
 

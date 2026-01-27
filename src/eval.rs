@@ -6,7 +6,7 @@ use crate::intern;
 use crate::intern::{SymbolId, symbol_name};
 use crate::kansei_std::{
     build_file_module, build_io_module, build_kansei_module, build_lib_module,
-    build_log_module, build_parallel_module, build_simd_module,
+    build_log_module, build_parallel_module, build_simd_module, build_wasm_module,
 };
 use crate::value::{
     BinaryOpCache, BinaryOpCacheKind, BoundMethod, Builtin, CallSiteCache, EnvValue, Environment,
@@ -1972,6 +1972,7 @@ fn build_std_module() -> Value
     std_map.insert(intern::intern("simd"), build_simd_module());
     std_map.insert(intern::intern("kansei"), build_kansei_module());
     std_map.insert(intern::intern("parallel"), build_parallel_module());
+    std_map.insert(intern::intern("wasm"), build_wasm_module());
     std_map.insert(intern::intern("collect"), Value::NativeFunction(native_collect));
     std_map.insert(intern::intern("f64"), Value::NativeFunction(native_f64));
     std_map.insert(intern::intern("f32"), Value::NativeFunction(native_f32));
@@ -3078,6 +3079,8 @@ fn builtin_from_symbol(name: SymbolId) -> Option<Builtin>
         "eputs" => Some(Builtin::Eputs),
         "eprint" => Some(Builtin::Eprint),
         "log" => Some(Builtin::Log),
+        "assert" => Some(Builtin::Assert),
+        "assert_eq" => Some(Builtin::AssertEq),
         "len" => Some(Builtin::Len),
         "read_file" => Some(Builtin::ReadFile),
         "write_file" => Some(Builtin::WriteFile),
@@ -11795,6 +11798,41 @@ pub enum LogFileMode
     Rotate { max_bytes: u64 },
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum LogLevel
+{
+    Error = 0,
+    Warn = 1,
+    Info = 2,
+    Debug = 3,
+}
+
+impl LogLevel
+{
+    fn as_str(self) -> &'static str
+    {
+        match self
+        {
+            LogLevel::Error => "error",
+            LogLevel::Warn => "warn",
+            LogLevel::Info => "info",
+            LogLevel::Debug => "debug",
+        }
+    }
+
+    fn from_str(value: &str) -> Option<Self>
+    {
+        match value
+        {
+            "error" => Some(LogLevel::Error),
+            "warn" => Some(LogLevel::Warn),
+            "info" => Some(LogLevel::Info),
+            "debug" => Some(LogLevel::Debug),
+            _ => None,
+        }
+    }
+}
+
 impl LogTarget
 {
     fn write_line(&mut self, msg: &str, flush: bool) -> io::Result<()>
@@ -11876,11 +11914,12 @@ fn rotate_log_file(path: &std::path::Path, max_bytes: u64) -> io::Result<()>
     Ok(())
 }
 
-fn format_log_message(format: &str, message: &str) -> String
+fn format_log_message(format: &str, level: LogLevel, message: &str) -> String
 {
     let timestamp = current_log_timestamp();
     format
         .replace("{timestamp}", &timestamp)
+        .replace("{level}", level.as_str())
         .replace("{message}", message)
 }
 
@@ -11921,6 +11960,9 @@ pub struct Interpreter
     log_target: LogTarget,
     log_format: String,
     log_flush: bool,
+    log_min_level: LogLevel,
+    log_target_desc: String,
+    log_mode_desc: String,
 }
 
 impl Interpreter
@@ -11947,6 +11989,9 @@ impl Interpreter
             log_target: LogTarget::Stderr,
             log_format: "{message}".to_string(),
             log_flush: true,
+            log_min_level: LogLevel::Info,
+            log_target_desc: "stderr".to_string(),
+            log_mode_desc: "stderr".to_string(),
         }
     }
 
@@ -11997,12 +12042,21 @@ impl Interpreter
         }
         let file = options.open(path)?;
         self.log_target = LogTarget::File(BufWriter::new(file));
+        self.log_target_desc = path.to_string_lossy().to_string();
+        self.log_mode_desc = match mode
+        {
+            LogFileMode::Append => "append".to_string(),
+            LogFileMode::Truncate => "truncate".to_string(),
+            LogFileMode::Rotate { max_bytes } => format!("rotate:{max_bytes}"),
+        };
         Ok(())
     }
 
     pub fn set_log_stderr(&mut self)
     {
         self.log_target = LogTarget::Stderr;
+        self.log_target_desc = "stderr".to_string();
+        self.log_mode_desc = "stderr".to_string();
     }
 
     pub fn set_log_format(&mut self, format: String)
@@ -12013,6 +12067,85 @@ impl Interpreter
     pub fn set_log_flush(&mut self, flush: bool)
     {
         self.log_flush = flush;
+    }
+
+    pub fn set_log_level(&mut self, level: LogLevel)
+    {
+        self.log_min_level = level;
+    }
+
+    pub fn set_log_level_str(&mut self, level: &str) -> Result<(), String>
+    {
+        let parsed = LogLevel::from_str(level)
+            .ok_or_else(|| "log.level expects: error|warn|info|debug".to_string())?;
+        self.set_log_level(parsed);
+        Ok(())
+    }
+
+    pub fn log_with_level(&mut self, level: &str, message: &str) -> Result<(), String>
+    {
+        let parsed = LogLevel::from_str(level)
+            .ok_or_else(|| "log level must be: error|warn|info|debug".to_string())?;
+        self.write_log(parsed, message)
+            .map_err(|err| err.message)
+    }
+
+    pub fn log_config(&self) -> (String, String, String, bool, String)
+    {
+        (
+            self.log_target_desc.clone(),
+            self.log_mode_desc.clone(),
+            self.log_format.clone(),
+            self.log_flush,
+            self.log_min_level.as_str().to_string(),
+        )
+    }
+
+    pub fn get_global_value(&self, name: SymbolId) -> Option<Value>
+    {
+        self.env.borrow().get(name)
+    }
+
+    pub fn list_wasm_modules(&self) -> Vec<String>
+    {
+        let wasm_sym = intern::intern_symbol("wasm");
+        match self.env.borrow().get(wasm_sym)
+        {
+            Some(Value::Map(map)) =>
+            {
+                let map_ref = map.borrow();
+                map_ref
+                    .data
+                    .keys()
+                    .map(|key| key.as_str().to_string())
+                    .collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    pub fn call_wasm_function_public(
+        &mut self,
+        func: Rc<WasmFunction>,
+        args: Vec<Value>,
+    ) -> Result<Value, String>
+    {
+        let mut arg_vals = smallvec::SmallVec::<[Value; 8]>::new();
+        arg_vals.extend(args);
+        self.call_wasm_function(func, arg_vals, 0)
+            .map_err(|err| err.message)
+    }
+
+    fn write_log(&mut self, level: LogLevel, message: &str) -> Result<(), RuntimeError>
+    {
+        if level > self.log_min_level
+        {
+            return Ok(());
+        }
+        let formatted = format_log_message(&self.log_format, level, message);
+        self.log_target
+            .write_line(&formatted, self.log_flush)
+            .map_err(|err| RuntimeError::simple(format!("log write failed: {err}"), 0))
     }
 
     fn get_local_value(&self, name: SymbolId) -> Option<Value>
@@ -12842,15 +12975,46 @@ impl Interpreter
                 for arg in args
                 {
                     let msg = arg.to_string();
-                    let formatted = format_log_message(&self.log_format, &msg);
-                    self.log_target
-                        .write_line(&formatted, self.log_flush)
-                        .map_err(|err| {
-                            RuntimeError::simple(format!("log write failed: {err}"), 0)
-                        })?;
+                    self.write_log(LogLevel::Info, &msg)?;
                     last = arg.clone();
                 }
                 Ok(last)
+            }
+            Builtin::Assert =>
+            {
+                let condition = args.get(0).cloned().unwrap_or(Value::Nil);
+                let passed = !matches!(condition, Value::Boolean(false) | Value::Nil);
+                if passed
+                {
+                    Ok(condition)
+                }
+                else
+                {
+                    let msg = match args.get(1)
+                    {
+                        Some(val) => val.to_string(),
+                        None => "assertion failed".to_string(),
+                    };
+                    Err(RuntimeError::simple(msg, 0))
+                }
+            }
+            Builtin::AssertEq =>
+            {
+                let left = args.get(0).cloned().unwrap_or(Value::Nil);
+                let right = args.get(1).cloned().unwrap_or(Value::Nil);
+                if left == right
+                {
+                    Ok(left)
+                }
+                else
+                {
+                    let msg = match args.get(2)
+                    {
+                        Some(val) => val.to_string(),
+                        None => format!("assert_eq failed: {} != {}", left, right),
+                    };
+                    Err(RuntimeError::simple(msg, 0))
+                }
             }
             Builtin::Len =>
             {

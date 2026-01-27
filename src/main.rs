@@ -305,7 +305,7 @@ fn run_file(
                 {}
                 Ok(Err(e)) =>
                 {
-                    eprintln!("Error at line {}: {}", e.line, e.message);
+                    eprintln!("{}", format_runtime_error(&e));
                     std::process::exit(1);
                 }
                 Err(_) =>
@@ -380,7 +380,7 @@ fn run_source(
                 {}
                 Ok(Err(e)) =>
                 {
-                    eprintln!("Error at line {}: {}", e.line, e.message);
+                    eprintln!("{}", format_runtime_error(&e));
                     std::process::exit(1);
                 }
                 Err(_) =>
@@ -423,6 +423,28 @@ fn append_eval_source(target: &mut Option<String>, src: String)
             *target = Some(src);
         }
     }
+}
+
+fn format_runtime_error(err: &eval::RuntimeError) -> String
+{
+    let mut out = String::new();
+    if err.column > 0
+    {
+        out.push_str(&format!(
+            "Error at line {}:{}: {}",
+            err.line, err.column, err.message
+        ));
+    }
+    else
+    {
+        out.push_str(&format!("Error at line {}: {}", err.line, err.message));
+    }
+    if !err.source.is_empty()
+    {
+        out.push('\n');
+        out.push_str(err.source.as_str());
+    }
+    out
 }
 
 fn print_usage(bin: &str)
@@ -531,7 +553,7 @@ fn run_repl(mut interpreter: eval::Interpreter) -> rustyline::Result<()>
                                         println!("=> {}", result.inspect());
                                     }
                                 }
-                                Ok(Err(e)) => println!("Error at line {}: {}", e.line, e.message),
+                                Ok(Err(e)) => println!("{}", format_runtime_error(&e)),
                                 Err(_) => println!("Unexpected Runtime Panic"),
                             }
                         }

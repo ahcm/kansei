@@ -412,6 +412,32 @@ fn format_expr(expr: &Expr, indent: usize) -> String
                 "return".to_string()
             }
         }
+        ExprKind::ErrorRaise(expr) => format!("error {}", format_expr(expr, indent)),
+        ExprKind::Result {
+            body,
+            else_expr,
+            else_binding,
+            ..
+        } =>
+        {
+            let mut out = String::new();
+            out.push_str("result ");
+            out.push_str(&format_braced_block(body, indent));
+            out.push_str(" else ");
+            if let Some(name) = else_binding
+            {
+                out.push('|');
+                out.push_str(intern::symbol_name(*name).as_str());
+                out.push('|');
+                out.push(' ');
+                out.push_str(&format_braced_block(else_expr, indent));
+            }
+            else
+            {
+                out.push_str(&format_expr(else_expr, indent));
+            }
+            out
+        }
         ExprKind::If { .. }
         | ExprKind::While { .. }
         | ExprKind::For { .. }
@@ -585,6 +611,16 @@ fn format_closure(closure: &Closure, indent: usize) -> String
         out.push(' ');
         out.push('}');
     }
+    out
+}
+
+fn format_braced_block(expr: &Expr, indent: usize) -> String
+{
+    let mut out = String::new();
+    out.push_str("{\n");
+    out.push_str(&format_stmt(expr, indent + 1));
+    out.push_str(&indent_str(indent));
+    out.push('}');
     out
 }
 

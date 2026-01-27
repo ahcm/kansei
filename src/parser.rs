@@ -42,9 +42,14 @@ impl Parser
         }
     }
 
-    fn make_expr(&self, kind: ExprKind, line: usize) -> Expr
+    fn make_expr(&self, kind: ExprKind, line: usize, column: usize, source: Rc<String>) -> Expr
     {
-        Expr { kind, line }
+        Expr {
+            kind,
+            line,
+            column,
+            source,
+        }
     }
 
     pub fn parse(&mut self) -> Expr
@@ -58,7 +63,7 @@ impl Parser
 
         if self.current_token.token == Token::Equals
         {
-            let line = self.current_token.line;
+            let span = self.current_token.clone();
             self.eat(); // =
             let value = self.parse_expression();
 
@@ -70,7 +75,9 @@ impl Parser
                         value: Box::new(value),
                         slot: None,
                     },
-                    line,
+                    span.line,
+                    span.column,
+                    span.source.clone(),
                 ),
                 ExprKind::Index { target, index } => self.make_expr(
                     ExprKind::IndexAssignment {
@@ -78,9 +85,11 @@ impl Parser
                         index,
                         value: Box::new(value),
                     },
-                    line,
+                    span.line,
+                    span.column,
+                    span.source.clone(),
                 ),
-                _ => panic!("Invalid assignment target at line {}", line),
+                _ => panic!("Invalid assignment target at line {}", span.line),
             };
         }
         expr
@@ -97,7 +106,7 @@ impl Parser
 
         while matches!(self.current_token.token, Token::Or | Token::OrOr)
         {
-            let line = self.current_token.line;
+            let span = self.current_token.clone();
             let is_bool = matches!(self.current_token.token, Token::OrOr);
             self.eat();
             let right = self.parse_and();
@@ -108,7 +117,9 @@ impl Parser
                         left: Box::new(left),
                         right: Box::new(right),
                     },
-                    line,
+                    span.line,
+                    span.column,
+                    span.source.clone(),
                 )
             }
             else
@@ -118,7 +129,9 @@ impl Parser
                         left: Box::new(left),
                         right: Box::new(right),
                     },
-                    line,
+                    span.line,
+                    span.column,
+                    span.source.clone(),
                 )
             };
         }
@@ -131,7 +144,7 @@ impl Parser
 
         while matches!(self.current_token.token, Token::And | Token::AndAnd)
         {
-            let line = self.current_token.line;
+            let span = self.current_token.clone();
             let is_bool = matches!(self.current_token.token, Token::AndAnd);
             self.eat();
             let right = self.parse_comparison();
@@ -142,7 +155,9 @@ impl Parser
                         left: Box::new(left),
                         right: Box::new(right),
                     },
-                    line,
+                    span.line,
+                    span.column,
+                    span.source.clone(),
                 )
             }
             else
@@ -152,7 +167,9 @@ impl Parser
                         left: Box::new(left),
                         right: Box::new(right),
                     },
-                    line,
+                    span.line,
+                    span.column,
+                    span.source.clone(),
                 )
             };
         }
@@ -168,7 +185,7 @@ impl Parser
             Token::EqualEqual | Token::BangEqual | Token::Less | Token::Greater
         )
         {
-            let line = self.current_token.line;
+            let span = self.current_token.clone();
             let op = match self.current_token.token
             {
                 Token::EqualEqual => Op::Equal,
@@ -185,7 +202,9 @@ impl Parser
                     op,
                     right: Box::new(right),
                 },
-                line,
+                span.line,
+                span.column,
+                span.source.clone(),
             );
         }
         left
@@ -197,7 +216,7 @@ impl Parser
 
         while self.current_token.token == Token::Plus || self.current_token.token == Token::Minus
         {
-            let line = self.current_token.line;
+            let span = self.current_token.clone();
             let op = match self.current_token.token
             {
                 Token::Plus => Op::Add,
@@ -212,7 +231,9 @@ impl Parser
                     op,
                     right: Box::new(right),
                 },
-                line,
+                span.line,
+                span.column,
+                span.source.clone(),
             );
         }
         left
@@ -224,7 +245,7 @@ impl Parser
 
         while self.current_token.token == Token::Star || self.current_token.token == Token::Slash
         {
-            let line = self.current_token.line;
+            let span = self.current_token.clone();
             let op = match self.current_token.token
             {
                 Token::Star => Op::Multiply,
@@ -239,7 +260,9 @@ impl Parser
                     op,
                     right: Box::new(right),
                 },
-                line,
+                span.line,
+                span.column,
+                span.source.clone(),
             );
         }
         left
@@ -249,31 +272,46 @@ impl Parser
     {
         if self.current_token.token == Token::Not
         {
-            let line = self.current_token.line;
+            let span = self.current_token.clone();
             self.eat();
             let inner = self.parse_factor();
-            return self.make_expr(ExprKind::Not(Box::new(inner)), line);
+            return self.make_expr(
+                ExprKind::Not(Box::new(inner)),
+                span.line,
+                span.column,
+                span.source.clone(),
+            );
         }
         if self.current_token.token == Token::Clone
         {
-            let line = self.current_token.line;
+            let span = self.current_token.clone();
             self.eat();
             let inner = self.parse_factor();
-            return self.make_expr(ExprKind::Clone(Box::new(inner)), line);
+            return self.make_expr(
+                ExprKind::Clone(Box::new(inner)),
+                span.line,
+                span.column,
+                span.source.clone(),
+            );
         }
         if self.current_token.token == Token::Percent
         {
-            let line = self.current_token.line;
+            let span = self.current_token.clone();
             self.eat();
             let inner = self.parse_factor();
-            return self.make_expr(ExprKind::EnvFreeze(Box::new(inner)), line);
+            return self.make_expr(
+                ExprKind::EnvFreeze(Box::new(inner)),
+                span.line,
+                span.column,
+                span.source.clone(),
+            );
         }
 
         let mut expr = self.parse_atom();
 
         loop
         {
-            let line = self.current_token.line;
+            let span = self.current_token.clone();
             if self.current_token.token == Token::LeftBracket
             {
                 self.eat(); // [
@@ -290,7 +328,9 @@ impl Parser
                             start: Box::new(first),
                             end: Box::new(second),
                         },
-                        line,
+                        span.line,
+                        span.column,
+                        span.source.clone(),
                     );
                 }
                 else
@@ -302,14 +342,18 @@ impl Parser
                             target: Box::new(expr),
                             index: Box::new(first),
                         },
-                        line,
+                        span.line,
+                        span.column,
+                        span.source.clone(),
                     );
                 }
             }
             else if self.current_token.token == Token::Dot
                 || self.current_token.token == Token::ColonColon
             {
+                let span = self.current_token.clone();
                 self.eat(); // . or ::
+                let name_span = self.current_token.clone();
                 let name = match &self.current_token.token
                 {
                     Token::Identifier(n) => intern::intern_owned(n.clone()),
@@ -328,18 +372,25 @@ impl Parser
                         }
                     }
                 };
-                let name_line = self.current_token.line;
                 self.eat();
                 expr = self.make_expr(
                     ExprKind::Index {
                         target: Box::new(expr),
-                        index: Box::new(self.make_expr(ExprKind::String(name), name_line)),
+                        index: Box::new(self.make_expr(
+                            ExprKind::String(name),
+                            name_span.line,
+                            name_span.column,
+                            name_span.source.clone(),
+                        )),
                     },
-                    line,
+                    span.line,
+                    span.column,
+                    span.source.clone(),
                 );
             }
             else if self.current_token.token == Token::LeftParen
             {
+                let span = self.current_token.clone();
                 self.eat(); // (
                 let mut args = Vec::new();
                 if self.current_token.token != Token::RightParen
@@ -383,7 +434,9 @@ impl Parser
                         block,
                         inlined_body: Rc::new(RefCell::new(None)),
                     },
-                    line,
+                    span.line,
+                    span.column,
+                    span.source.clone(),
                 );
             }
             else if self.current_token.token == Token::LeftBrace
@@ -410,6 +463,7 @@ impl Parser
                     };
                     if is_struct
                     {
+                        let span = self.current_token.clone();
                         self.eat(); // {
                         let fields = self.parse_struct_literal_fields();
                         self.expect(Token::RightBrace);
@@ -418,13 +472,16 @@ impl Parser
                                 name: *name,
                                 fields,
                             },
-                            line,
+                            span.line,
+                            span.column,
+                            span.source.clone(),
                         );
                         continue;
                     }
                 }
 
                 // Call with block and no parentheses: foo { |x| ... }
+                let span = self.current_token.clone();
                 self.eat(); // {
                 let params = self.parse_pipe_params();
                 let body = self.parse_block();
@@ -439,7 +496,9 @@ impl Parser
                         }),
                         inlined_body: Rc::new(RefCell::new(None)),
                     },
-                    line,
+                    span.line,
+                    span.column,
+                    span.source.clone(),
                 );
             }
             else if matches!(self.current_token.token, Token::Identifier(_))
@@ -447,6 +506,7 @@ impl Parser
                 let mut temp_lexer = self.lexer.clone();
                 if temp_lexer.next_token().token == Token::LeftBrace
                 {
+                    let span = self.current_token.clone();
                     let name = match &self.current_token.token
                     {
                         Token::Identifier(n) => intern::intern_owned(n.clone()),
@@ -457,13 +517,20 @@ impl Parser
                     let params = self.parse_pipe_params();
                     let body = self.parse_block();
                     self.expect(Token::RightBrace);
-                    let index = self.make_expr(ExprKind::String(name), line);
+                    let index = self.make_expr(
+                        ExprKind::String(name),
+                        span.line,
+                        span.column,
+                        span.source.clone(),
+                    );
                     let function = self.make_expr(
                         ExprKind::Index {
                             target: Box::new(expr),
                             index: Box::new(index),
                         },
-                        line,
+                        span.line,
+                        span.column,
+                        span.source.clone(),
                     );
                     expr = self.make_expr(
                         ExprKind::Call {
@@ -475,21 +542,31 @@ impl Parser
                             }),
                             inlined_body: Rc::new(RefCell::new(None)),
                         },
-                        line,
+                        span.line,
+                        span.column,
+                        span.source.clone(),
                     );
                 }
                 else if let Token::Identifier(n) = &self.current_token.token
                 {
                     if self.current_token.line == expr.line && (n == "keys" || n == "values")
                     {
+                        let span = self.current_token.clone();
                         let name = intern::intern_owned(n.clone());
                         self.eat(); // identifier
                         expr = self.make_expr(
                             ExprKind::Index {
                                 target: Box::new(expr),
-                                index: Box::new(self.make_expr(ExprKind::String(name), line)),
+                                index: Box::new(self.make_expr(
+                                    ExprKind::String(name),
+                                    span.line,
+                                    span.column,
+                                    span.source.clone(),
+                                )),
                             },
-                            line,
+                            span.line,
+                            span.column,
+                            span.source.clone(),
                         );
                     }
                     else
@@ -512,53 +589,83 @@ impl Parser
 
     fn parse_atom(&mut self) -> Expr
     {
-        let line = self.current_token.line;
+        let span = self.current_token.clone();
         match self.current_token.token.clone()
         {
             Token::Integer { value, kind } =>
             {
                 self.eat();
-                self.make_expr(ExprKind::Integer { value, kind }, line)
+                self.make_expr(
+                    ExprKind::Integer { value, kind },
+                    span.line,
+                    span.column,
+                    span.source.clone(),
+                )
             }
             Token::Unsigned { value, kind } =>
             {
                 self.eat();
-                self.make_expr(ExprKind::Unsigned { value, kind }, line)
+                self.make_expr(
+                    ExprKind::Unsigned { value, kind },
+                    span.line,
+                    span.column,
+                    span.source.clone(),
+                )
             }
             Token::Float { value, kind } =>
             {
                 self.eat();
-                self.make_expr(ExprKind::Float { value, kind }, line)
+                self.make_expr(
+                    ExprKind::Float { value, kind },
+                    span.line,
+                    span.column,
+                    span.source.clone(),
+                )
             }
             Token::StringLiteral(s) =>
             {
                 self.eat();
-                self.make_expr(ExprKind::String(intern::intern_owned(s)), line)
+                self.make_expr(
+                    ExprKind::String(intern::intern_owned(s)),
+                    span.line,
+                    span.column,
+                    span.source.clone(),
+                )
             }
             Token::FormatString(s) =>
             {
                 self.eat();
-                self.parse_format_string(s, line)
+                self.parse_format_string(s, span.line, span.column, span.source.clone())
             }
             Token::CommandLiteral(c) =>
             {
                 self.eat();
-                self.make_expr(ExprKind::Shell(intern::intern_owned(c)), line)
+                self.make_expr(
+                    ExprKind::Shell(intern::intern_owned(c)),
+                    span.line,
+                    span.column,
+                    span.source.clone(),
+                )
             }
             Token::True =>
             {
                 self.eat();
-                self.make_expr(ExprKind::Boolean(true), line)
+                self.make_expr(ExprKind::Boolean(true), span.line, span.column, span.source.clone())
             }
             Token::False =>
             {
                 self.eat();
-                self.make_expr(ExprKind::Boolean(false), line)
+                self.make_expr(
+                    ExprKind::Boolean(false),
+                    span.line,
+                    span.column,
+                    span.source.clone(),
+                )
             }
             Token::Nil =>
             {
                 self.eat();
-                self.make_expr(ExprKind::Nil, line)
+                self.make_expr(ExprKind::Nil, span.line, span.column, span.source.clone())
             }
             Token::Identifier(name) =>
             {
@@ -583,17 +690,37 @@ impl Parser
 
                     return self.make_expr(
                         ExprKind::Call {
-                            function: Box::new(
-                                self.make_expr(ExprKind::Identifier { name, slot: None }, line),
-                            ),
+                            function: Box::new(self.make_expr(
+                                ExprKind::Identifier { name, slot: None },
+                                span.line,
+                                span.column,
+                                span.source.clone(),
+                            )),
                             args,
                             block: None,
                             inlined_body: Rc::new(RefCell::new(None)),
                         },
-                        line,
+                        span.line,
+                        span.column,
+                        span.source.clone(),
                     );
                 }
-                self.make_expr(ExprKind::Identifier { name, slot: None }, line)
+                if name_str.as_str() == "error"
+                {
+                    let arg = self.parse_expression();
+                    return self.make_expr(
+                        ExprKind::ErrorRaise(Box::new(arg)),
+                        span.line,
+                        span.column,
+                        span.source.clone(),
+                    );
+                }
+                self.make_expr(
+                    ExprKind::Identifier { name, slot: None },
+                    span.line,
+                    span.column,
+                    span.source.clone(),
+                )
             }
             Token::Fn => self.parse_fn(),
             Token::Struct => self.parse_struct_def(),
@@ -602,6 +729,7 @@ impl Parser
             Token::For => self.parse_for(),
             Token::Loop => self.parse_loop(),
             Token::Collect => self.parse_collect(),
+            Token::Result => self.parse_result(),
             Token::Use => self.parse_use(),
             Token::Import => self.parse_import(),
             Token::Load => self.parse_load(),
@@ -625,7 +753,12 @@ impl Parser
                 if self.current_token.token == Token::RightParen
                 {
                     self.eat();
-                    return self.make_expr(ExprKind::Nil, line);
+                    return self.make_expr(
+                        ExprKind::Nil,
+                        span.line,
+                        span.column,
+                        span.source.clone(),
+                    );
                 }
                 let expr = self.parse_expression();
                 self.expect(Token::RightParen);
@@ -676,13 +809,13 @@ impl Parser
                         }
                     }
                 }
-                self.make_expr(ExprKind::Yield(args), line)
+                self.make_expr(ExprKind::Yield(args), span.line, span.column, span.source.clone())
             }
             Token::Return =>
             {
                 self.eat();
                 // Check if there's an expression to return on the same line
-                let value = if self.current_token.line == line
+                let value = if self.current_token.line == span.line
                     && self.current_token.token != Token::EOF
                     && self.current_token.token != Token::End
                     && self.current_token.token != Token::Else
@@ -696,7 +829,7 @@ impl Parser
                 {
                     None
                 };
-                self.make_expr(ExprKind::Return(value), line)
+                self.make_expr(ExprKind::Return(value), span.line, span.column, span.source.clone())
             }
             Token::Ampersand =>
             {
@@ -707,7 +840,12 @@ impl Parser
                     {
                         let n = intern::intern_symbol_owned(name.clone());
                         self.eat();
-                        self.make_expr(ExprKind::Reference(n), line)
+                        self.make_expr(
+                            ExprKind::Reference(n),
+                            span.line,
+                            span.column,
+                            span.source.clone(),
+                        )
                     }
                     _ => panic!("Expected identifier after & at line {}", self.current_token.line),
                 }
@@ -721,7 +859,7 @@ impl Parser
 
     fn parse_array(&mut self) -> Expr
     {
-        let line = self.current_token.line;
+        let span = self.current_token.clone();
         self.eat(); // [
         let mut elements = Vec::new();
         if self.current_token.token != Token::RightBracket
@@ -737,7 +875,9 @@ impl Parser
                         generator: Box::new(first),
                         size: Box::new(size),
                     },
-                    line,
+                    span.line,
+                    span.column,
+                    span.source.clone(),
                 );
             }
 
@@ -764,12 +904,12 @@ impl Parser
             }
         }
         self.expect(Token::RightBracket);
-        self.make_expr(ExprKind::Array(elements), line)
+        self.make_expr(ExprKind::Array(elements), span.line, span.column, span.source.clone())
     }
 
     fn parse_map(&mut self) -> Expr
     {
-        let line = self.current_token.line;
+        let span = self.current_token.clone();
         self.eat(); // {
         let mut entries = Vec::new();
         if self.current_token.token != Token::RightBrace
@@ -796,7 +936,7 @@ impl Parser
             }
         }
         self.expect(Token::RightBrace);
-        self.make_expr(ExprKind::Map(entries), line)
+        self.make_expr(ExprKind::Map(entries), span.line, span.column, span.source.clone())
     }
 
     fn parse_struct_type_fields(&mut self) -> Vec<(SymbolId, TypeRef)>
@@ -838,7 +978,7 @@ impl Parser
 
     fn parse_struct_def(&mut self) -> Expr
     {
-        let line = self.current_token.line;
+        let span = self.current_token.clone();
         self.eat(); // struct
         let name = match &self.current_token.token
         {
@@ -853,7 +993,12 @@ impl Parser
         self.expect(Token::LeftBrace);
         let fields = self.parse_struct_type_fields();
         self.expect(Token::RightBrace);
-        self.make_expr(ExprKind::StructDef { name, fields }, line)
+        self.make_expr(
+            ExprKind::StructDef { name, fields },
+            span.line,
+            span.column,
+            span.source.clone(),
+        )
     }
 
     fn parse_struct_literal_fields(&mut self) -> Vec<(SymbolId, Expr)>
@@ -923,7 +1068,7 @@ impl Parser
 
     fn parse_use(&mut self) -> Expr
     {
-        let line = self.current_token.line;
+        let span = self.current_token.clone();
         self.eat(); // eat 'use'
 
         let mut path = Vec::new();
@@ -951,12 +1096,12 @@ impl Parser
             }
         }
 
-        self.make_expr(ExprKind::Use(path), line)
+        self.make_expr(ExprKind::Use(path), span.line, span.column, span.source.clone())
     }
 
     fn parse_scoped_public(&mut self) -> Expr
     {
-        let line = self.current_token.line;
+        let span = self.current_token.clone();
         self.eat(); // eat '@'
         let is_file = match &self.current_token.token
         {
@@ -978,17 +1123,27 @@ impl Parser
         let expr = self.parse_assignment();
         if is_file
         {
-            self.make_expr(ExprKind::FilePublic(Box::new(expr)), line)
+            self.make_expr(
+                ExprKind::FilePublic(Box::new(expr)),
+                span.line,
+                span.column,
+                span.source.clone(),
+            )
         }
         else
         {
-            self.make_expr(ExprKind::FunctionPublic(Box::new(expr)), line)
+            self.make_expr(
+                ExprKind::FunctionPublic(Box::new(expr)),
+                span.line,
+                span.column,
+                span.source.clone(),
+            )
         }
     }
 
     fn parse_import(&mut self) -> Expr
     {
-        let line = self.current_token.line;
+        let span = self.current_token.clone();
         self.eat(); // eat 'import'
 
         let path = match &self.current_token.token
@@ -1017,12 +1172,17 @@ impl Parser
             }
         }
 
-        self.make_expr(ExprKind::Import { path, alias }, line)
+        self.make_expr(
+            ExprKind::Import { path, alias },
+            span.line,
+            span.column,
+            span.source.clone(),
+        )
     }
 
     fn parse_load(&mut self) -> Expr
     {
-        let line = self.current_token.line;
+        let span = self.current_token.clone();
         self.eat(); // eat 'load'
 
         let mut path = Vec::new();
@@ -1050,12 +1210,12 @@ impl Parser
             }
         }
 
-        self.make_expr(ExprKind::Load(path), line)
+        self.make_expr(ExprKind::Load(path), span.line, span.column, span.source.clone())
     }
 
     fn parse_export(&mut self) -> Expr
     {
-        let line = self.current_token.line;
+        let span = self.current_token.clone();
         self.eat(); // eat 'export'
 
         let mut namespace = Vec::new();
@@ -1118,12 +1278,17 @@ impl Parser
         }
         self.expect(Token::RightBracket);
 
-        self.make_expr(ExprKind::Export { namespace, names }, line)
+        self.make_expr(
+            ExprKind::Export { namespace, names },
+            span.line,
+            span.column,
+            span.source.clone(),
+        )
     }
 
     fn parse_fn(&mut self) -> Expr
     {
-        let line = self.current_token.line;
+        let span = self.current_token.clone();
         self.eat(); // eat 'fn'
 
         let base_name = if let Token::Identifier(n) = &self.current_token.token
@@ -1202,7 +1367,9 @@ impl Parser
                     body: Box::new(body),
                     slots: None,
                 },
-                line,
+                span.line,
+                span.column,
+                span.source.clone(),
             )
         }
         else if let Some(name) = name
@@ -1214,7 +1381,9 @@ impl Parser
                     body: Box::new(body),
                     slots: None,
                 },
-                line,
+                span.line,
+                span.column,
+                span.source.clone(),
             )
         }
         else
@@ -1225,14 +1394,16 @@ impl Parser
                     body: Box::new(body),
                     slots: None,
                 },
-                line,
+                span.line,
+                span.column,
+                span.source.clone(),
             )
         }
     }
 
     fn parse_if(&mut self) -> Expr
     {
-        let line = self.current_token.line;
+        let span = self.current_token.clone();
         self.eat(); // eat 'if' (or 'elif' if called recursively)
 
         let condition = self.parse_expression();
@@ -1261,13 +1432,15 @@ impl Parser
                 then_branch: Box::new(then_branch),
                 else_branch,
             },
-            line,
+            span.line,
+            span.column,
+            span.source.clone(),
         )
     }
 
     fn parse_while(&mut self) -> Expr
     {
-        let line = self.current_token.line;
+        let span = self.current_token.clone();
         self.eat(); // eat 'while'
 
         let condition = self.parse_expression();
@@ -1280,13 +1453,15 @@ impl Parser
                 condition: Box::new(condition),
                 body: Box::new(body),
             },
-            line,
+            span.line,
+            span.column,
+            span.source.clone(),
         )
     }
 
     fn parse_for(&mut self) -> Expr
     {
-        let line = self.current_token.line;
+        let span = self.current_token.clone();
         self.eat(); // eat 'for'
 
         // Expect variable name
@@ -1311,13 +1486,15 @@ impl Parser
                 iterable: Box::new(iterable),
                 body: Box::new(body),
             },
-            line,
+            span.line,
+            span.column,
+            span.source.clone(),
         )
     }
 
     fn parse_loop(&mut self) -> Expr
     {
-        let line = self.current_token.line;
+        let span = self.current_token.clone();
         self.eat(); // eat 'loop'
 
         let count = self.parse_expression();
@@ -1349,13 +1526,15 @@ impl Parser
                 var_slot: None,
                 body: Box::new(body),
             },
-            line,
+            span.line,
+            span.column,
+            span.source.clone(),
         )
     }
 
     fn parse_collect(&mut self) -> Expr
     {
-        let line = self.current_token.line;
+        let span = self.current_token.clone();
         self.eat(); // eat 'collect'
 
         let count = self.parse_expression();
@@ -1398,13 +1577,68 @@ impl Parser
                 var_slot: None,
                 body: Box::new(body),
             },
-            line,
+            span.line,
+            span.column,
+            span.source.clone(),
+        )
+    }
+
+    fn parse_result(&mut self) -> Expr
+    {
+        let span = self.current_token.clone();
+        self.eat(); // eat 'result'
+
+        self.expect(Token::LeftBrace);
+        let body = self.parse_block();
+        self.expect(Token::RightBrace);
+
+        if self.current_token.token != Token::Else
+        {
+            panic!("result requires else at line {}", self.current_token.line);
+        }
+        self.eat(); // eat 'else'
+
+        let (else_binding, else_expr) = if self.current_token.token == Token::Pipe
+        {
+            self.eat(); // |
+            let name = match &self.current_token.token
+            {
+                Token::Identifier(n) => intern::intern_symbol_owned(n.clone()),
+                _ => panic!("Expected error binding name at line {}", self.current_token.line),
+            };
+            self.eat();
+            self.expect(Token::Pipe);
+
+            if self.current_token.token != Token::LeftBrace
+            {
+                panic!("Expected '{{' after else binding at line {}", self.current_token.line);
+            }
+            self.eat(); // {
+            let handler_body = self.parse_block();
+            self.expect(Token::RightBrace);
+            (Some(name), handler_body)
+        }
+        else
+        {
+            (None, self.parse_expression())
+        };
+
+        self.make_expr(
+            ExprKind::Result {
+                body: Box::new(body),
+                else_expr: Box::new(else_expr),
+                else_binding,
+                else_slot: None,
+            },
+            span.line,
+            span.column,
+            span.source.clone(),
         )
     }
 
     fn parse_block(&mut self) -> Expr
     {
-        let line = self.current_token.line;
+        let span = self.current_token.clone();
         let mut statements = Vec::new();
         let mut seen_export = false;
 
@@ -1436,13 +1670,13 @@ impl Parser
         }
         else
         {
-            self.make_expr(ExprKind::Block(statements), line)
+            self.make_expr(ExprKind::Block(statements), span.line, span.column, span.source.clone())
         }
     }
 
     fn parse_closure_literal(&mut self) -> Expr
     {
-        let line = self.current_token.line;
+        let span = self.current_token.clone();
         self.eat(); // {
         let params = self.parse_pipe_params();
         let body = self.parse_block();
@@ -1453,7 +1687,9 @@ impl Parser
                 body: Box::new(body),
                 slots: None,
             },
-            line,
+            span.line,
+            span.column,
+            span.source.clone(),
         )
     }
 
@@ -1519,7 +1755,13 @@ impl Parser
         }
     }
 
-    fn parse_format_string(&mut self, content: String, line: usize) -> Expr
+    fn parse_format_string(
+        &mut self,
+        content: String,
+        line: usize,
+        column: usize,
+        source: Rc<String>,
+    ) -> Expr
     {
         let mut parts: Vec<FormatPart> = Vec::new();
         let mut literal = String::new();
@@ -1588,7 +1830,7 @@ impl Parser
         {
             parts.push(FormatPart::Literal(intern::intern_owned(literal)));
         }
-        self.make_expr(ExprKind::FormatString(parts), line)
+        self.make_expr(ExprKind::FormatString(parts), line, column, source)
     }
 
     fn split_format_expr(&self, input: &str, line: usize) -> (String, Option<FormatSpec>)

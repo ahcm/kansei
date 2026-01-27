@@ -30,16 +30,238 @@ use std::simd::Simd;
 use std::simd::num::SimdFloat;
 use std::time::SystemTime;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+pub struct RuntimeTraceFrame
+{
+    pub line: usize,
+    pub column: usize,
+    pub source: Rc<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct RuntimeError
 {
     pub message: String,
     pub line: usize,
+    pub column: usize,
+    pub source: Rc<String>,
+    pub trace: Vec<RuntimeTraceFrame>,
+}
+
+impl RuntimeError
+{
+    pub fn new(message: String, line: usize, column: usize, source: Rc<String>) -> Self
+    {
+        let frame = RuntimeTraceFrame {
+            line,
+            column,
+            source: source.clone(),
+        };
+        Self {
+            message,
+            line,
+            column,
+            source,
+            trace: vec![frame],
+        }
+    }
+
+    pub fn simple(message: String, line: usize) -> Self
+    {
+        let mut column = 0;
+        let mut source = Rc::new(String::new());
+        CURRENT_SPAN.with(|span| {
+            if let Some((span_line, span_col, span_src)) = span.borrow().as_ref()
+            {
+                if line == 0 || *span_line == line
+                {
+                    column = *span_col;
+                    source = span_src.clone();
+                }
+            }
+        });
+        let trace = if line > 0
+        {
+            vec![RuntimeTraceFrame {
+                line,
+                column,
+                source: source.clone(),
+            }]
+        }
+        else
+        {
+            Vec::new()
+        };
+        Self {
+            message,
+            line,
+            column,
+            source,
+            trace,
+        }
+    }
+
+    pub fn from_expr(message: String, expr: &Expr) -> Self
+    {
+        Self::new(message, expr.line, expr.column, expr.source.clone())
+    }
+
+    pub fn wrap(err: RuntimeError, line: usize, column: usize, source: Rc<String>) -> Self
+    {
+        let mut trace = err.trace;
+        trace.push(RuntimeTraceFrame {
+            line,
+            column,
+            source: source.clone(),
+        });
+        Self {
+            message: err.message,
+            line,
+            column,
+            source,
+            trace,
+        }
+    }
+}
+
+fn runtime_error_to_value(err: &RuntimeError) -> Value
+{
+    let mut map = FxHashMap::default();
+    map.insert(intern::intern("message"), Value::String(Rc::new(err.message.clone())));
+    map.insert(intern::intern("line"), default_int(err.line as i128));
+    map.insert(intern::intern("column"), default_int(err.column as i128));
+    map.insert(
+        intern::intern("source"),
+        Value::String(err.source.clone()),
+    );
+
+    let trace_vals = err
+        .trace
+        .iter()
+        .map(|frame| {
+            let mut frame_map = FxHashMap::default();
+            frame_map.insert(intern::intern("line"), default_int(frame.line as i128));
+            frame_map.insert(intern::intern("column"), default_int(frame.column as i128));
+            frame_map.insert(
+                intern::intern("source"),
+                Value::String(frame.source.clone()),
+            );
+            Value::Map(Rc::new(RefCell::new(MapValue::new(frame_map))))
+        })
+        .collect::<Vec<_>>();
+    map.insert(
+        intern::intern("trace"),
+        Value::Array(Rc::new(RefCell::new(trace_vals))),
+    );
+    Value::Map(Rc::new(RefCell::new(MapValue::new(map))))
+}
+
+fn runtime_error_from_value(value: &Value) -> Option<RuntimeError>
+{
+    let map = match value
+    {
+        Value::Map(map) => map.borrow(),
+        _ => return None,
+    };
+
+    let message = match map.data.get(&intern::intern("message"))
+    {
+        Some(Value::String(s)) => s.as_str().to_string(),
+        _ => return None,
+    };
+    let line = map
+        .data
+        .get(&intern::intern("line"))
+        .and_then(int_value_as_i64)
+        .unwrap_or(0) as usize;
+    let column = map
+        .data
+        .get(&intern::intern("column"))
+        .and_then(int_value_as_i64)
+        .unwrap_or(0) as usize;
+    let source = map
+        .data
+        .get(&intern::intern("source"))
+        .and_then(|val| match val
+        {
+            Value::String(s) => Some(s.clone()),
+            _ => None,
+        })
+        .unwrap_or_else(|| Rc::new(String::new()));
+
+    let trace = map
+        .data
+        .get(&intern::intern("trace"))
+        .and_then(|val| match val
+        {
+            Value::Array(arr) => Some(arr.borrow()),
+            _ => None,
+        })
+        .map(|frames| {
+            frames
+                .iter()
+                .filter_map(|frame_val| {
+                    let frame_map = match frame_val
+                    {
+                        Value::Map(map) => map.borrow(),
+                        _ => return None,
+                    };
+                    let line = frame_map
+                        .data
+                        .get(&intern::intern("line"))
+                        .and_then(int_value_as_i64)
+                        .unwrap_or(0) as usize;
+                    let column = frame_map
+                        .data
+                        .get(&intern::intern("column"))
+                        .and_then(int_value_as_i64)
+                        .unwrap_or(0) as usize;
+                    let source = frame_map
+                        .data
+                        .get(&intern::intern("source"))
+                        .and_then(|val| match val
+                        {
+                            Value::String(s) => Some(s.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| Rc::new(String::new()));
+                    Some(RuntimeTraceFrame {
+                        line,
+                        column,
+                        source,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(Vec::new);
+
+    let trace = if trace.is_empty() && line > 0
+    {
+        vec![RuntimeTraceFrame {
+            line,
+            column,
+            source: source.clone(),
+        }]
+    }
+    else
+    {
+        trace
+    };
+
+    Some(RuntimeError {
+        message,
+        line,
+        column,
+        source,
+        trace,
+    })
 }
 
 // Special marker for early return - stored in thread local
 thread_local! {
     static EARLY_RETURN: std::cell::RefCell<Option<Value>> = const { std::cell::RefCell::new(None) };
+    static CURRENT_SPAN: std::cell::RefCell<Option<(usize, usize, Rc<String>)>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 const EARLY_RETURN_MARKER: &str = "\x00EARLY_RETURN\x00";
@@ -76,6 +298,9 @@ fn make_early_return_error(value: Value) -> RuntimeError
     RuntimeError {
         message: EARLY_RETURN_MARKER.to_string(),
         line: 0,
+        column: 0,
+        source: Rc::new(String::new()),
+        trace: Vec::new(),
     }
 }
 
@@ -923,10 +1148,7 @@ fn resolve_type_ref(
 {
     if type_ref.path.is_empty()
     {
-        return Err(RuntimeError {
-            message: "Empty type reference".to_string(),
-            line,
-        });
+        return Err(RuntimeError::simple("Empty type reference".to_string(), line));
     }
     if type_ref.path.len() == 1
     {
@@ -972,10 +1194,7 @@ fn resolve_type_ref(
             return Ok(ResolvedType::Struct(ty));
         }
     }
-    Err(RuntimeError {
-        message: format!("Unknown type '{}'", symbol_name(*type_ref.path.last().unwrap()).as_str()),
-        line,
-    })
+    Err(RuntimeError::simple(format!("Unknown type '{}'", symbol_name(*type_ref.path.last().unwrap()).as_str()), line))
 }
 
 fn int_kind_label(kind: IntKind) -> &'static str
@@ -1048,10 +1267,7 @@ fn value_to_bytes(value: &Value, line: usize, label: &str) -> Result<Vec<u8>, Ru
         }
         Value::Mmap(mmap) => Ok(mmap.as_ref().to_vec()),
         Value::MmapMut(mmap) => Ok(mmap.borrow().as_ref().to_vec()),
-        _ => Err(RuntimeError {
-            message: format!("{label} expects bytes"),
-            line,
-        }),
+        _ => Err(RuntimeError::simple(format!("{label} expects bytes"), line)),
     }
 }
 
@@ -1073,10 +1289,7 @@ fn coerce_value_to_type(
             }
             else
             {
-                Err(RuntimeError {
-                    message: format!("{label} expects Bool"),
-                    line,
-                })
+                Err(RuntimeError::simple(format!("{label} expects Bool"), line))
             }
         }
         ResolvedType::String =>
@@ -1087,10 +1300,7 @@ fn coerce_value_to_type(
             }
             else
             {
-                Err(RuntimeError {
-                    message: format!("{label} expects String"),
-                    line,
-                })
+                Err(RuntimeError::simple(format!("{label} expects String"), line))
             }
         }
         ResolvedType::Bytes =>
@@ -1111,10 +1321,7 @@ fn coerce_value_to_type(
             }
             else
             {
-                Err(RuntimeError {
-                    message: format!("{label} expects Array"),
-                    line,
-                })
+                Err(RuntimeError::simple(format!("{label} expects Array"), line))
             }
         }
         ResolvedType::Map =>
@@ -1125,10 +1332,7 @@ fn coerce_value_to_type(
             }
             else
             {
-                Err(RuntimeError {
-                    message: format!("{label} expects Map"),
-                    line,
-                })
+                Err(RuntimeError::simple(format!("{label} expects Map"), line))
             }
         }
         ResolvedType::F32Array =>
@@ -1139,10 +1343,7 @@ fn coerce_value_to_type(
             }
             else
             {
-                Err(RuntimeError {
-                    message: format!("{label} expects F32Array"),
-                    line,
-                })
+                Err(RuntimeError::simple(format!("{label} expects F32Array"), line))
             }
         }
         ResolvedType::F64Array =>
@@ -1153,10 +1354,7 @@ fn coerce_value_to_type(
             }
             else
             {
-                Err(RuntimeError {
-                    message: format!("{label} expects F64Array"),
-                    line,
-                })
+                Err(RuntimeError::simple(format!("{label} expects F64Array"), line))
             }
         }
         ResolvedType::I32Array =>
@@ -1167,10 +1365,7 @@ fn coerce_value_to_type(
             }
             else
             {
-                Err(RuntimeError {
-                    message: format!("{label} expects I32Array"),
-                    line,
-                })
+                Err(RuntimeError::simple(format!("{label} expects I32Array"), line))
             }
         }
         ResolvedType::I64Array =>
@@ -1181,10 +1376,7 @@ fn coerce_value_to_type(
             }
             else
             {
-                Err(RuntimeError {
-                    message: format!("{label} expects I64Array"),
-                    line,
-                })
+                Err(RuntimeError::simple(format!("{label} expects I64Array"), line))
             }
         }
         ResolvedType::Int(kind) =>
@@ -1196,30 +1388,21 @@ fn coerce_value_to_type(
                 {
                     if value > i128::MAX as u128
                     {
-                        return Err(RuntimeError {
-                            message: format!("{label} out of range for {:?}", kind),
-                            line,
-                        });
+                        return Err(RuntimeError::simple(format!("{label} out of range for {:?}", kind), line));
                     }
                     value as i128
                 }
                 Value::Float { value, .. } => value as i128,
                 _ =>
                 {
-                    return Err(RuntimeError {
-                        message: format!("{label} expects Int"),
-                        line,
-                    });
+                    return Err(RuntimeError::simple(format!("{label} expects Int"), line));
                 }
             };
             let min = signed_int_min(*kind);
             let max = signed_int_max(*kind);
             if num < min || num > max
             {
-                return Err(RuntimeError {
-                    message: format!("{label} out of range for {:?}", kind),
-                    line,
-                });
+                return Err(RuntimeError::simple(format!("{label} out of range for {:?}", kind), line));
             }
             Ok(make_signed_int(num, *kind))
         }
@@ -1232,10 +1415,7 @@ fn coerce_value_to_type(
                 {
                     if value < 0
                     {
-                        return Err(RuntimeError {
-                            message: format!("{label} out of range for {:?}", kind),
-                            line,
-                        });
+                        return Err(RuntimeError::simple(format!("{label} out of range for {:?}", kind), line));
                     }
                     value as u128
                 }
@@ -1243,28 +1423,19 @@ fn coerce_value_to_type(
                 {
                     if value < 0.0
                     {
-                        return Err(RuntimeError {
-                            message: format!("{label} out of range for {:?}", kind),
-                            line,
-                        });
+                        return Err(RuntimeError::simple(format!("{label} out of range for {:?}", kind), line));
                     }
                     value as u128
                 }
                 _ =>
                 {
-                    return Err(RuntimeError {
-                        message: format!("{label} expects Uint"),
-                        line,
-                    });
+                    return Err(RuntimeError::simple(format!("{label} expects Uint"), line));
                 }
             };
             let max = unsigned_int_max(*kind);
             if num > max
             {
-                return Err(RuntimeError {
-                    message: format!("{label} out of range for {:?}", kind),
-                    line,
-                });
+                return Err(RuntimeError::simple(format!("{label} out of range for {:?}", kind), line));
             }
             Ok(make_unsigned_int(num, *kind))
         }
@@ -1273,10 +1444,7 @@ fn coerce_value_to_type(
             let num = match value
             {
                 Value::Float { value, .. } => value,
-                v => int_value_as_f64(&v).ok_or_else(|| RuntimeError {
-                    message: format!("{label} expects Float"),
-                    line,
-                })?,
+                v => int_value_as_f64(&v).ok_or_else(|| RuntimeError::simple(format!("{label} expects Float"), line))?,
             };
             Ok(make_float(num, *kind))
         }
@@ -1290,18 +1458,12 @@ fn coerce_value_to_type(
                 }
                 else
                 {
-                    Err(RuntimeError {
-                        message: format!("{label} expects {}", ty.name),
-                        line,
-                    })
+                    Err(RuntimeError::simple(format!("{label} expects {}", ty.name), line))
                 }
             }
             else
             {
-                Err(RuntimeError {
-                    message: format!("{label} expects {}", ty.name),
-                    line,
-                })
+                Err(RuntimeError::simple(format!("{label} expects {}", ty.name), line))
             }
         }
     }
@@ -1338,35 +1500,23 @@ fn coerce_struct_param(
         Value::StructInstance(inst) => inst,
         _ =>
         {
-            return Err(RuntimeError {
-                message: format!("{label} expects a struct value"),
-                line,
-            });
+            return Err(RuntimeError::simple(format!("{label} expects a struct value"), line));
         }
     };
     for (field_name, type_ref) in fields
     {
         let key = symbol_name(*field_name);
-        let idx = inst.ty.field_map.get(&key).ok_or_else(|| RuntimeError {
-            message: format!("{label} missing field '{}'", key.as_str()),
-            line,
-        })?;
-        let field = inst.ty.fields.get(*idx).ok_or_else(|| RuntimeError {
-            message: format!("Struct field '{}' out of bounds", key.as_str()),
-            line,
-        })?;
+        let idx = inst.ty.field_map.get(&key).ok_or_else(|| RuntimeError::simple(format!("{label} missing field '{}'", key.as_str()), line))?;
+        let field = inst.ty.fields.get(*idx).ok_or_else(|| RuntimeError::simple(format!("Struct field '{}' out of bounds", key.as_str()), line))?;
         let expected = resolve_type_ref(env, type_ref, line)?;
         let actual = resolve_type_ref(env, &field.type_ref, line)?;
         if actual != expected
         {
-            return Err(RuntimeError {
-                message: format!(
+            return Err(RuntimeError::simple(format!(
                     "{label} expects field '{}' to be {}",
                     key.as_str(),
                     resolved_type_name(&expected)
-                ),
-                line,
-            });
+                ), line));
         }
         let mut field_values = inst.fields.borrow_mut();
         let current = field_values[*idx].clone();
@@ -1470,23 +1620,14 @@ fn parse_format_spec(spec: &str, line: usize) -> Result<FormatSpec, RuntimeError
     {
         if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_digit())
         {
-            return Err(RuntimeError {
-                message: "Invalid format precision".to_string(),
-                line,
-            });
+            return Err(RuntimeError::simple("Invalid format precision".to_string(), line));
         }
-        let precision = rest.parse::<usize>().map_err(|_| RuntimeError {
-            message: "Invalid format precision".to_string(),
-            line,
-        })?;
+        let precision = rest.parse::<usize>().map_err(|_| RuntimeError::simple("Invalid format precision".to_string(), line))?;
         return Ok(FormatSpec {
             precision: Some(precision),
         });
     }
-    Err(RuntimeError {
-        message: "Unsupported format specifier".to_string(),
-        line,
-    })
+    Err(RuntimeError::simple("Unsupported format specifier".to_string(), line))
 }
 
 fn split_format_expr(input: &str, line: usize)
@@ -1537,10 +1678,7 @@ fn split_format_expr(input: &str, line: usize)
         let spec_str = input[idx + 1..].trim();
         if spec_str.is_empty()
         {
-            return Err(RuntimeError {
-                message: "Empty format specifier".to_string(),
-                line,
-            });
+            return Err(RuntimeError::simple("Empty format specifier".to_string(), line));
         }
         let spec = parse_format_spec(spec_str, line)?;
         Ok((expr, Some(spec)))
@@ -1581,19 +1719,13 @@ fn parse_format_parts(content: &str, line: usize) -> Result<Vec<FormatPart>, Run
             }
             if end >= chars.len()
             {
-                return Err(RuntimeError {
-                    message: "Unclosed format string expression".to_string(),
-                    line,
-                });
+                return Err(RuntimeError::simple("Unclosed format string expression".to_string(), line));
             }
             let expr_slice: String = chars[start..end].iter().collect();
             let (expr_str, spec) = split_format_expr(&expr_slice, line)?;
             if expr_str.trim().is_empty()
             {
-                return Err(RuntimeError {
-                    message: "Empty format string expression".to_string(),
-                    line,
-                });
+                return Err(RuntimeError::simple("Empty format string expression".to_string(), line));
             }
             let parse_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let lexer = crate::lexer::Lexer::new(&expr_str);
@@ -1605,10 +1737,7 @@ fn parse_format_parts(content: &str, line: usize) -> Result<Vec<FormatPart>, Run
                 Ok(expr) => expr,
                 Err(_) =>
                 {
-                    return Err(RuntimeError {
-                        message: "Invalid format string expression".to_string(),
-                        line,
-                    });
+                    return Err(RuntimeError::simple("Invalid format string expression".to_string(), line));
                 }
             };
             parts.push(FormatPart::Expr {
@@ -1626,10 +1755,7 @@ fn parse_format_parts(content: &str, line: usize) -> Result<Vec<FormatPart>, Run
             }
             else
             {
-                return Err(RuntimeError {
-                    message: "Unmatched '}' in format string".to_string(),
-                    line,
-                });
+                return Err(RuntimeError::simple("Unmatched '}' in format string".to_string(), line));
             }
         }
         else
@@ -1949,10 +2075,7 @@ fn eval_binop(op: BinOpKind, l: Value, r: Value) -> EvalResult
         }
         (Value::Integer { value: i1, .. }, Value::Unsigned { value: u2, .. }) =>
         {
-            let u2_i = i128::try_from(u2).map_err(|_| RuntimeError {
-                message: "Unsigned value too large for signed operation".to_string(),
-                line: 0,
-            })?;
+            let u2_i = i128::try_from(u2).map_err(|_| RuntimeError::simple("Unsigned value too large for signed operation".to_string(), 0))?;
             match op
             {
                 BinOpKind::Add => make_signed_int(i1 + u2_i, IntKind::I128),
@@ -1966,10 +2089,7 @@ fn eval_binop(op: BinOpKind, l: Value, r: Value) -> EvalResult
         }
         (Value::Unsigned { value: u1, .. }, Value::Integer { value: i2, .. }) =>
         {
-            let u1_i = i128::try_from(u1).map_err(|_| RuntimeError {
-                message: "Unsigned value too large for signed operation".to_string(),
-                line: 0,
-            })?;
+            let u1_i = i128::try_from(u1).map_err(|_| RuntimeError::simple("Unsigned value too large for signed operation".to_string(), 0))?;
             match op
             {
                 BinOpKind::Add => make_signed_int(u1_i + i2, IntKind::I128),
@@ -2044,10 +2164,7 @@ fn eval_binop(op: BinOpKind, l: Value, r: Value) -> EvalResult
             }
             _ =>
             {
-                return Err(RuntimeError {
-                    message: "Invalid types for operation".to_string(),
-                    line: 0,
-                });
+                return Err(RuntimeError::simple("Invalid types for operation".to_string(), 0));
             }
         },
         (Value::String(s), v2) => match op
@@ -2060,18 +2177,12 @@ fn eval_binop(op: BinOpKind, l: Value, r: Value) -> EvalResult
             }
             _ =>
             {
-                return Err(RuntimeError {
-                    message: "Invalid types for operation".to_string(),
-                    line: 0,
-                });
+                return Err(RuntimeError::simple("Invalid types for operation".to_string(), 0));
             }
         },
         _ =>
         {
-            return Err(RuntimeError {
-                message: "Invalid types for operation".to_string(),
-                line: 0,
-            });
+            return Err(RuntimeError::simple("Invalid types for operation".to_string(), 0));
         }
     };
     Ok(res)
@@ -2528,6 +2639,20 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<SymbolId>)
                 collect_declarations(else_expr, decls);
             }
         }
+        ExprKind::Result {
+            body,
+            else_expr,
+            else_binding,
+            ..
+        } =>
+        {
+            if let Some(name) = else_binding
+            {
+                decls.insert(name.clone());
+            }
+            collect_declarations(body, decls);
+            collect_declarations(else_expr, decls);
+        }
         ExprKind::While { body, .. } =>
         {
             collect_declarations(body, decls);
@@ -2590,6 +2715,10 @@ fn collect_declarations(expr: &Expr, decls: &mut HashSet<SymbolId>)
             }
         }
         ExprKind::Clone(expr) =>
+        {
+            collect_declarations(expr, decls);
+        }
+        ExprKind::ErrorRaise(expr) =>
         {
             collect_declarations(expr, decls);
         }
@@ -2737,6 +2866,10 @@ fn resolve_functions(expr: &mut Expr)
         {
             resolve_functions(expr);
         }
+        ExprKind::ErrorRaise(expr) =>
+        {
+            resolve_functions(expr);
+        }
         ExprKind::EnvFreeze(expr) =>
         {
             resolve_functions(expr);
@@ -2768,6 +2901,15 @@ fn resolve_functions(expr: &mut Expr)
             {
                 resolve_functions(eb);
             }
+        }
+        ExprKind::Result {
+            body,
+            else_expr,
+            ..
+        } =>
+        {
+            resolve_functions(body);
+            resolve_functions(else_expr);
         }
         ExprKind::While { condition, body } =>
         {
@@ -3096,6 +3238,8 @@ fn match_for_range(
     let body_expr = Expr {
         kind: ExprKind::Block(body_stmts.to_vec()),
         line,
+        column: body.column,
+        source: body.source.clone(),
     };
     Some((index_slot, end, step, body_expr))
 }
@@ -3509,6 +3653,10 @@ fn compile_expr(
             }
         }
         ExprKind::EnvFreeze(_) =>
+        {
+            return false;
+        }
+        ExprKind::Result { .. } | ExprKind::ErrorRaise(_) =>
         {
             return false;
         }
@@ -4748,6 +4896,14 @@ fn find_compile_failure(expr: &Expr) -> Option<String>
         {
             return Some("shell command not supported in bytecode".to_string());
         }
+        ExprKind::Result { .. } =>
+        {
+            return Some("result not supported in bytecode".to_string());
+        }
+        ExprKind::ErrorRaise(_) =>
+        {
+            return Some("error not supported in bytecode".to_string());
+        }
         ExprKind::Reference(_) =>
         {
             return Some("reference expression not supported in bytecode".to_string());
@@ -4815,6 +4971,11 @@ fn find_compile_failure(expr: &Expr) -> Option<String>
         } => find_compile_failure(condition)
             .or_else(|| find_compile_failure(then_branch))
             .or_else(|| else_branch.as_ref().and_then(|e| find_compile_failure(e))),
+        ExprKind::Result {
+            body,
+            else_expr,
+            ..
+        } => find_compile_failure(body).or_else(|| find_compile_failure(else_expr)),
         ExprKind::While { condition, body } =>
         {
             find_compile_failure(condition).or_else(|| find_compile_failure(body))
@@ -4863,7 +5024,9 @@ fn find_compile_failure(expr: &Expr) -> Option<String>
         } => find_compile_failure(target)
             .or_else(|| find_compile_failure(index))
             .or_else(|| find_compile_failure(value)),
-        ExprKind::Clone(expr) | ExprKind::EnvFreeze(expr) => find_compile_failure(expr),
+        ExprKind::Clone(expr)
+        | ExprKind::EnvFreeze(expr)
+        | ExprKind::ErrorRaise(expr) => find_compile_failure(expr),
         ExprKind::Not(expr) => find_compile_failure(expr),
         ExprKind::And { left, right }
         | ExprKind::AndBool { left, right }
@@ -4956,6 +5119,15 @@ fn collect_function_exprs(
                 collect_function_exprs(else_expr, out);
             }
         }
+        ExprKind::Result {
+            body,
+            else_expr,
+            ..
+        } =>
+        {
+            collect_function_exprs(body, out);
+            collect_function_exprs(else_expr, out);
+        }
         ExprKind::While { condition, body } =>
         {
             collect_function_exprs(condition, out);
@@ -4979,6 +5151,10 @@ fn collect_function_exprs(
                 collect_function_exprs(into, out);
             }
             collect_function_exprs(body, out);
+        }
+        ExprKind::ErrorRaise(expr) =>
+        {
+            collect_function_exprs(expr, out);
         }
         ExprKind::Call {
             function,
@@ -5540,6 +5716,8 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
                 slot: *slot,
             },
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::IndexAssignment {
             target,
@@ -5552,6 +5730,8 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
                 value: Box::new(substitute(value, args)),
             },
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::BinaryOp { left, op, right } => Expr {
             kind: ExprKind::BinaryOp {
@@ -5560,10 +5740,14 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
                 right: Box::new(substitute(right, args)),
             },
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::Not(expr) => Expr {
             kind: ExprKind::Not(Box::new(substitute(expr, args))),
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::And { left, right } => Expr {
             kind: ExprKind::And {
@@ -5571,6 +5755,8 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
                 right: Box::new(substitute(right, args)),
             },
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::AndBool { left, right } => Expr {
             kind: ExprKind::AndBool {
@@ -5578,6 +5764,8 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
                 right: Box::new(substitute(right, args)),
             },
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::Or { left, right } => Expr {
             kind: ExprKind::Or {
@@ -5585,6 +5773,8 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
                 right: Box::new(substitute(right, args)),
             },
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::OrBool { left, right } => Expr {
             kind: ExprKind::OrBool {
@@ -5592,14 +5782,20 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
                 right: Box::new(substitute(right, args)),
             },
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::Clone(expr) => Expr {
             kind: ExprKind::Clone(Box::new(substitute(expr, args))),
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::EnvFreeze(expr) => Expr {
             kind: ExprKind::EnvFreeze(Box::new(substitute(expr, args))),
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::If {
             condition,
@@ -5612,6 +5808,8 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
                 else_branch: else_branch.as_ref().map(|e| Box::new(substitute(e, args))),
             },
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::While { condition, body } => Expr {
             kind: ExprKind::While {
@@ -5619,6 +5817,8 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
                 body: Box::new(substitute(body, args)),
             },
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::For {
             var,
@@ -5633,6 +5833,8 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
                 body: Box::new(substitute(body, args)),
             },
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::Loop {
             count,
@@ -5647,6 +5849,8 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
                 body: Box::new(substitute(body, args)),
             },
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::Collect {
             count,
@@ -5663,6 +5867,8 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
                 body: Box::new(substitute(body, args)),
             },
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::Call {
             function,
@@ -5677,10 +5883,14 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
                 inlined_body: inlined_body.clone(),
             },
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::Array(elements) => Expr {
             kind: ExprKind::Array(elements.iter().map(|e| substitute(e, args)).collect()),
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::ArrayGenerator { generator, size } => Expr {
             kind: ExprKind::ArrayGenerator {
@@ -5688,6 +5898,8 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
                 size: Box::new(substitute(size, args)),
             },
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::Map(entries) => Expr {
             kind: ExprKind::Map(
@@ -5697,6 +5909,8 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
                     .collect(),
             ),
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::StructLiteral { name, fields } => Expr {
             kind: ExprKind::StructLiteral {
@@ -5707,6 +5921,8 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
                     .collect(),
             },
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::Index { target, index } => Expr {
             kind: ExprKind::Index {
@@ -5714,6 +5930,8 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
                 index: Box::new(substitute(index, args)),
             },
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::Slice { target, start, end } => Expr {
             kind: ExprKind::Slice {
@@ -5722,22 +5940,32 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
                 end: Box::new(substitute(end, args)),
             },
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::Yield(args_exprs) => Expr {
             kind: ExprKind::Yield(args_exprs.iter().map(|a| substitute(a, args)).collect()),
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::Block(stmts) => Expr {
             kind: ExprKind::Block(stmts.iter().map(|s| substitute(s, args)).collect()),
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::FilePublic(expr) => Expr {
             kind: ExprKind::FilePublic(Box::new(substitute(expr, args))),
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::FunctionPublic(expr) => Expr {
             kind: ExprKind::FunctionPublic(Box::new(substitute(expr, args))),
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::FormatString(parts) => Expr {
             kind: ExprKind::FormatString(
@@ -5760,6 +5988,8 @@ fn substitute(expr: &Expr, args: &[Expr]) -> Expr
                     .collect(),
             ),
             line: expr.line,
+            column: expr.column,
+            source: expr.source.clone(),
         },
         ExprKind::StructDef { .. } | ExprKind::MethodDef { .. } => expr.clone(),
         // Literals
@@ -5772,7 +6002,10 @@ fn expr_size(expr: &Expr) -> usize
     match &expr.kind
     {
         ExprKind::BinaryOp { left, right, .. } => 1 + expr_size(left) + expr_size(right),
-        ExprKind::Not(expr) | ExprKind::Clone(expr) | ExprKind::EnvFreeze(expr) =>
+        ExprKind::Not(expr)
+        | ExprKind::Clone(expr)
+        | ExprKind::EnvFreeze(expr)
+        | ExprKind::ErrorRaise(expr) =>
         {
             1 + expr_size(expr)
         }
@@ -5796,6 +6029,11 @@ fn expr_size(expr: &Expr) -> usize
                 + expr_size(then_branch)
                 + else_branch.as_ref().map_or(0, |e| expr_size(e))
         }
+        ExprKind::Result {
+            body,
+            else_expr,
+            ..
+        } => 1 + expr_size(body) + expr_size(else_expr),
         ExprKind::While { condition, body } => 1 + expr_size(condition) + expr_size(body),
         ExprKind::For { iterable, body, .. } => 1 + expr_size(iterable) + expr_size(body),
         ExprKind::Loop { count, body, .. } => 1 + expr_size(count) + expr_size(body),
@@ -5869,13 +6107,15 @@ fn is_reg_simple(expr: &Expr) -> bool
         | ExprKind::While { .. }
         | ExprKind::For { .. }
         | ExprKind::Loop { .. }
-        | ExprKind::Collect { .. } => false,
+        | ExprKind::Collect { .. }
+        | ExprKind::Result { .. } => false,
         ExprKind::Array(_)
         | ExprKind::ArrayGenerator { .. }
         | ExprKind::Map(_)
         | ExprKind::StructLiteral { .. }
         | ExprKind::FormatString(_)
         | ExprKind::EnvFreeze(_)
+        | ExprKind::ErrorRaise(_)
         | ExprKind::Not(_)
         | ExprKind::And { .. }
         | ExprKind::AndBool { .. }
@@ -6986,10 +7226,7 @@ fn eval_index_assign_value(
                 }
                 else
                 {
-                    return Err(RuntimeError {
-                        message: "Array index out of bounds".to_string(),
-                        line: 0,
-                    });
+                    return Err(RuntimeError::simple("Array index out of bounds".to_string(), 0));
                 }
             }
             else
@@ -7015,20 +7252,14 @@ fn eval_index_assign_value(
                             }
                             else
                             {
-                                return Err(RuntimeError {
-                                    message: "F64Array assignment requires a number".to_string(),
-                                    line: 0,
-                                });
+                                return Err(RuntimeError::simple("F64Array assignment requires a number".to_string(), 0));
                             }
                         }
                     }
                 }
                 else
                 {
-                    return Err(RuntimeError {
-                        message: "Array index out of bounds".to_string(),
-                        line: 0,
-                    });
+                    return Err(RuntimeError::simple("Array index out of bounds".to_string(), 0));
                 }
             }
             else
@@ -7054,20 +7285,14 @@ fn eval_index_assign_value(
                             }
                             else
                             {
-                                return Err(RuntimeError {
-                                    message: "F32Array assignment requires a number".to_string(),
-                                    line: 0,
-                                });
+                                return Err(RuntimeError::simple("F32Array assignment requires a number".to_string(), 0));
                             }
                         }
                     }
                 }
                 else
                 {
-                    return Err(RuntimeError {
-                        message: "Array index out of bounds".to_string(),
-                        line: 0,
-                    });
+                    return Err(RuntimeError::simple("Array index out of bounds".to_string(), 0));
                 }
             }
             else
@@ -7088,19 +7313,13 @@ fn eval_index_assign_value(
                         Value::Unsigned { value, .. } => vec[i] = *value as i64,
                         _ =>
                         {
-                            return Err(RuntimeError {
-                                message: "I64Array assignment requires an integer".to_string(),
-                                line: 0,
-                            });
+                            return Err(RuntimeError::simple("I64Array assignment requires an integer".to_string(), 0));
                         }
                     }
                 }
                 else
                 {
-                    return Err(RuntimeError {
-                        message: "Array index out of bounds".to_string(),
-                        line: 0,
-                    });
+                    return Err(RuntimeError::simple("Array index out of bounds".to_string(), 0));
                 }
             }
             else
@@ -7121,19 +7340,13 @@ fn eval_index_assign_value(
                         Value::Unsigned { value, .. } => vec[i] = *value as i32,
                         _ =>
                         {
-                            return Err(RuntimeError {
-                                message: "I32Array assignment requires an integer".to_string(),
-                                line: 0,
-                            });
+                            return Err(RuntimeError::simple("I32Array assignment requires an integer".to_string(), 0));
                         }
                     }
                 }
                 else
                 {
-                    return Err(RuntimeError {
-                        message: "Array index out of bounds".to_string(),
-                        line: 0,
-                    });
+                    return Err(RuntimeError::simple("Array index out of bounds".to_string(), 0));
                 }
             }
             else
@@ -7151,18 +7364,12 @@ fn eval_index_assign_value(
                     Value::Unsigned { value, .. } => *value as i128,
                     _ =>
                     {
-                        return Err(RuntimeError {
-                            message: "ByteBuf assignment requires an integer".to_string(),
-                            line: 0,
-                        });
+                        return Err(RuntimeError::simple("ByteBuf assignment requires an integer".to_string(), 0));
                     }
                 };
                 if byte < 0 || byte > 255
                 {
-                    return Err(RuntimeError {
-                        message: "ByteBuf assignment requires byte (0-255)".to_string(),
-                        line: 0,
-                    });
+                    return Err(RuntimeError::simple("ByteBuf assignment requires byte (0-255)".to_string(), 0));
                 }
                 let mut vec = buf.borrow_mut();
                 if i < vec.len()
@@ -7171,10 +7378,7 @@ fn eval_index_assign_value(
                 }
                 else
                 {
-                    return Err(RuntimeError {
-                        message: "ByteBuf index out of bounds".to_string(),
-                        line: 0,
-                    });
+                    return Err(RuntimeError::simple("ByteBuf index out of bounds".to_string(), 0));
                 }
             }
             else
@@ -7192,18 +7396,12 @@ fn eval_index_assign_value(
                     Value::Unsigned { value, .. } => *value as i128,
                     _ =>
                     {
-                        return Err(RuntimeError {
-                            message: "MmapMut assignment requires an integer".to_string(),
-                            line: 0,
-                        });
+                        return Err(RuntimeError::simple("MmapMut assignment requires an integer".to_string(), 0));
                     }
                 };
                 if byte < 0 || byte > 255
                 {
-                    return Err(RuntimeError {
-                        message: "MmapMut assignment requires byte (0-255)".to_string(),
-                        line: 0,
-                    });
+                    return Err(RuntimeError::simple("MmapMut assignment requires byte (0-255)".to_string(), 0));
                 }
                 let mut vec = mmap.borrow_mut();
                 if i < vec.len()
@@ -7212,10 +7410,7 @@ fn eval_index_assign_value(
                 }
                 else
                 {
-                    return Err(RuntimeError {
-                        message: "MmapMut index out of bounds".to_string(),
-                        line: 0,
-                    });
+                    return Err(RuntimeError::simple("MmapMut index out of bounds".to_string(), 0));
                 }
             }
             else
@@ -7230,14 +7425,8 @@ fn eval_index_assign_value(
                 Value::String(s) => s,
                 _ => return Err(err_index_unsupported()),
             };
-            let idx = inst.ty.field_map.get(&key).ok_or_else(|| RuntimeError {
-                message: format!("Unknown field '{}'", key.as_str()),
-                line: 0,
-            })?;
-            let field = inst.ty.fields.get(*idx).ok_or_else(|| RuntimeError {
-                message: "Struct field out of bounds".to_string(),
-                line: 0,
-            })?;
+            let idx = inst.ty.field_map.get(&key).ok_or_else(|| RuntimeError::simple(format!("Unknown field '{}'", key.as_str()), 0))?;
+            let field = inst.ty.fields.get(*idx).ok_or_else(|| RuntimeError::simple("Struct field out of bounds".to_string(), 0))?;
             let resolved = resolve_type_ref(&interpreter.env, &field.type_ref, 0)?;
             let coerced = coerce_value_to_type(value.clone(), &resolved, 0, key.as_str())?;
             inst.fields.borrow_mut()[*idx] = coerced.clone();
@@ -7256,17 +7445,11 @@ fn eval_index_assign_value(
         }
         Value::Env(_) =>
         {
-            return Err(RuntimeError {
-                message: "Env is immutable".to_string(),
-                line: 0,
-            });
+            return Err(RuntimeError::simple("Env is immutable".to_string(), 0));
         }
         _ =>
         {
-            return Err(RuntimeError {
-                message: "Index assignment not supported on this type".to_string(),
-                line: 0,
-            });
+            return Err(RuntimeError::simple("Index assignment not supported on this type".to_string(), 0));
         }
     }
     Ok(value)
@@ -7381,22 +7564,16 @@ fn load_global_cached(
         cache.borrow_mut().hits += 1;
         if let Value::Uninitialized = val
         {
-            return Err(RuntimeError {
-                message: format!(
+            return Err(RuntimeError::simple(format!(
                     "Variable '{}' used before assignment",
                     symbol_name(name).as_str()
-                ),
-                line: 0,
-            });
+                ), 0));
         }
         return Ok(val);
     }
 
     let (val, env_ptr, version) =
-        lookup_env_value_with_owner(&interpreter.env, name).ok_or_else(|| RuntimeError {
-            message: format!("Undefined variable: {}", symbol_name(name).as_str()),
-            line: 0,
-        })?;
+        lookup_env_value_with_owner(&interpreter.env, name).ok_or_else(|| RuntimeError::simple(format!("Undefined variable: {}", symbol_name(name).as_str()), 0))?;
     cache.borrow_mut().misses += 1;
     {
         let mut cache_mut = cache.borrow_mut();
@@ -7406,10 +7583,7 @@ fn load_global_cached(
     }
     if let Value::Uninitialized = val
     {
-        return Err(RuntimeError {
-            message: format!("Variable '{}' used before assignment", symbol_name(name).as_str()),
-            line: 0,
-        });
+        return Err(RuntimeError::simple(format!("Variable '{}' used before assignment", symbol_name(name).as_str()), 0));
     }
     Ok(val)
 }
@@ -7458,10 +7632,7 @@ fn eval_call_value_cached_generic(
             }
             if arg_len > func_data.params.len()
             {
-                return Err(RuntimeError {
-                    message: "Too many arguments".to_string(),
-                    line: 0,
-                });
+                return Err(RuntimeError::simple("Too many arguments".to_string(), 0));
             }
             if block.is_some()
             {
@@ -7565,7 +7736,7 @@ fn eval_call_value_cached_generic(
         if block.is_none() && cache_mut.native_ptr == Some(func_ptr)
         {
             cache_mut.hits += 1;
-            return func(&arg_vals).map_err(|message| RuntimeError { message, line: 0 });
+            return func(&arg_vals).map_err(|message| RuntimeError::simple(message, 0));
         }
         cache_mut.native_ptr = Some(func_ptr);
         cache_mut.func_ptr = None;
@@ -8028,10 +8199,7 @@ fn execute_reg_instructions(
                             }
                             else
                             {
-                                return Err(RuntimeError {
-                                    message: "Array index out of bounds".to_string(),
-                                    line: 0,
-                                });
+                                return Err(RuntimeError::simple("Array index out of bounds".to_string(), 0));
                             }
                         }
                         other => eval_index_assign_value(interpreter, other, index_val, value_val)?,
@@ -8207,10 +8375,7 @@ fn pop_args_from_stack(
 {
     if argc > stack.len()
     {
-        return Err(RuntimeError {
-            message: "Invalid argument count".to_string(),
-            line: 0,
-        });
+        return Err(RuntimeError::simple("Invalid argument count".to_string(), 0));
     }
     let mut args = smallvec::SmallVec::<[Value; 8]>::with_capacity(argc);
     for _ in 0..argc
@@ -8227,27 +8392,18 @@ fn pop_method_target_and_resolve(
     map_cache: &Rc<RefCell<MapAccessCache>>,
 ) -> EvalResult
 {
-    let target_val = stack.pop().ok_or_else(|| RuntimeError {
-        message: "Missing target for method call".to_string(),
-        line: 0,
-    })?;
+    let target_val = stack.pop().ok_or_else(|| RuntimeError::simple("Missing target for method call".to_string(), 0))?;
     resolve_method_value(target_val, name, map_cache)
 }
 
 fn err_index_requires_int() -> RuntimeError
 {
-    RuntimeError {
-        message: "Array index must be an integer".to_string(),
-        line: 0,
-    }
+    RuntimeError::simple("Array index must be an integer".to_string(), 0)
 }
 
 fn err_index_unsupported() -> RuntimeError
 {
-    RuntimeError {
-        message: "Index operator not supported on this type".to_string(),
-        line: 0,
-    }
+    RuntimeError::simple("Index operator not supported on this type".to_string(), 0)
 }
 
 enum RangeEndNum
@@ -8272,10 +8428,7 @@ fn range_end_f64(end: &RangeEnd, slots: &[Value], const_pool: &[Value])
     match end_val
     {
         Value::Float { value, kind } => Ok(normalize_float_value(value, kind)),
-        _ => int_value_as_f64(&end_val).ok_or_else(|| RuntimeError {
-            message: "Range end must be a number".to_string(),
-            line: 0,
-        }),
+        _ => int_value_as_f64(&end_val).ok_or_else(|| RuntimeError::simple("Range end must be a number".to_string(), 0)),
     }
 }
 
@@ -8291,10 +8444,7 @@ fn range_end_num(
         Value::Float { value, kind } => Ok(RangeEndNum::Float(normalize_float_value(value, kind))),
         _ => int_value_as_i64(&end_val)
             .map(RangeEndNum::Int)
-            .ok_or_else(|| RuntimeError {
-                message: "Range end must be a number".to_string(),
-                line: 0,
-            }),
+            .ok_or_else(|| RuntimeError::simple("Range end must be a number".to_string(), 0)),
     }
 }
 
@@ -8853,10 +9003,7 @@ fn execute_instructions(
                         {
                             if is_self_alias(existing, &val)
                             {
-                                return Err(RuntimeError {
-                                    message: "cannot self alias".to_string(),
-                                    line: 0,
-                                });
+                                return Err(RuntimeError::simple("cannot self alias".to_string(), 0));
                             }
                         }
                         if let Some(dst) = slots.get_mut(slot)
@@ -8875,10 +9022,7 @@ fn execute_instructions(
                     }
                     HotInstr::Dup =>
                     {
-                        let val = frame.stack.last().cloned().ok_or_else(|| RuntimeError {
-                            message: "Stack underflow on dup".to_string(),
-                            line: 0,
-                        })?;
+                        let val = frame.stack.last().cloned().ok_or_else(|| RuntimeError::simple("Stack underflow on dup".to_string(), 0))?;
                         frame.stack.push(val);
                         frame.ip += 1;
                         continue;
@@ -8896,10 +9040,7 @@ fn execute_instructions(
                         let val = frame.stack.last().cloned().unwrap_or(Value::Nil);
                         if !matches!(val, Value::Boolean(_))
                         {
-                            return Err(RuntimeError {
-                                message: "&& expects boolean operands".to_string(),
-                                line: 0,
-                            });
+                            return Err(RuntimeError::simple("&& expects boolean operands".to_string(), 0));
                         }
                         frame.ip += 1;
                         continue;
@@ -8995,10 +9136,7 @@ fn execute_instructions(
                     {
                         if is_self_alias(existing, &val)
                         {
-                            return Err(RuntimeError {
-                                message: "cannot self alias".to_string(),
-                                line: 0,
-                            });
+                            return Err(RuntimeError::simple("cannot self alias".to_string(), 0));
                         }
                     }
                     if let Some(slot) = slots.get_mut(*s)
@@ -9022,19 +9160,13 @@ fn execute_instructions(
                         .env
                         .borrow()
                         .get(*name)
-                        .ok_or_else(|| RuntimeError {
-                            message: format!("Undefined variable: {}", symbol_name(*name).as_str()),
-                            line: 0,
-                        })?;
+                        .ok_or_else(|| RuntimeError::simple(format!("Undefined variable: {}", symbol_name(*name).as_str()), 0))?;
                     if let Value::Uninitialized = val
                     {
-                        return Err(RuntimeError {
-                            message: format!(
+                        return Err(RuntimeError::simple(format!(
                                 "Variable '{}' used before assignment",
                                 symbol_name(*name).as_str()
-                            ),
-                            line: 0,
-                        });
+                            ), 0));
                     }
                     frame.stack.push(val);
                     frame.ip += 1;
@@ -9053,10 +9185,7 @@ fn execute_instructions(
                             {
                                 if Rc::ptr_eq(old_ref, new_ref)
                                 {
-                                    return Err(RuntimeError {
-                                        message: "cannot self alias".to_string(),
-                                        line: 0,
-                                    });
+                                    return Err(RuntimeError::simple("cannot self alias".to_string(), 0));
                                 }
                             }
                         }
@@ -9074,10 +9203,7 @@ fn execute_instructions(
                 }
                 Instruction::Dup =>
                 {
-                    let val = frame.stack.last().cloned().ok_or_else(|| RuntimeError {
-                        message: "Stack underflow on dup".to_string(),
-                        line: 0,
-                    })?;
+                    let val = frame.stack.last().cloned().ok_or_else(|| RuntimeError::simple("Stack underflow on dup".to_string(), 0))?;
                     frame.stack.push(val);
                     frame.ip += 1;
                     continue;
@@ -9175,10 +9301,7 @@ fn execute_instructions(
                     {
                         if is_self_alias(existing, &val)
                         {
-                            return Err(RuntimeError {
-                                message: "cannot self alias".to_string(),
-                                line: 0,
-                            });
+                            return Err(RuntimeError::simple("cannot self alias".to_string(), 0));
                         }
                     }
                     if let Some(slot) = slots.get_mut(s)
@@ -9198,10 +9321,7 @@ fn execute_instructions(
                     let val = frame.stack.last().cloned().unwrap_or(Value::Nil);
                     if !matches!(val, Value::Boolean(_))
                     {
-                        return Err(RuntimeError {
-                            message: "&& expects boolean operands".to_string(),
-                            line: 0,
-                        });
+                        return Err(RuntimeError::simple("&& expects boolean operands".to_string(), 0));
                     }
                 }
                 Instruction::LoadGlobalCached(name, cache) =>
@@ -9215,19 +9335,13 @@ fn execute_instructions(
                         .env
                         .borrow()
                         .get(name)
-                        .ok_or_else(|| RuntimeError {
-                            message: format!("Undefined variable: {}", symbol_name(name).as_str()),
-                            line: 0,
-                        })?;
+                        .ok_or_else(|| RuntimeError::simple(format!("Undefined variable: {}", symbol_name(name).as_str()), 0))?;
                     if let Value::Uninitialized = val
                     {
-                        return Err(RuntimeError {
-                            message: format!(
+                        return Err(RuntimeError::simple(format!(
                                 "Variable '{}' used before assignment",
                                 symbol_name(name).as_str()
-                            ),
-                            line: 0,
-                        });
+                            ), 0));
                     }
                     frame.stack.push(val);
                 }
@@ -9244,10 +9358,7 @@ fn execute_instructions(
                             {
                                 if Rc::ptr_eq(old_ref, new_ref)
                                 {
-                                    return Err(RuntimeError {
-                                        message: "cannot self alias".to_string(),
-                                        line: 0,
-                                    });
+                                    return Err(RuntimeError::simple("cannot self alias".to_string(), 0));
                                 }
                             }
                         }
@@ -9261,10 +9372,7 @@ fn execute_instructions(
                 }
                 Instruction::Dup =>
                 {
-                    let val = frame.stack.last().cloned().ok_or_else(|| RuntimeError {
-                        message: "Stack underflow on dup".to_string(),
-                        line: 0,
-                    })?;
+                    let val = frame.stack.last().cloned().ok_or_else(|| RuntimeError::simple("Stack underflow on dup".to_string(), 0))?;
                     frame.stack.push(val);
                 }
                 Instruction::CloneValue =>
@@ -9323,10 +9431,7 @@ fn execute_instructions(
                 }
                 Instruction::Len =>
                 {
-                    let val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing argument for len".to_string(),
-                        line: 0,
-                    })?;
+                    let val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing argument for len".to_string(), 0))?;
                     let result = match val
                     {
                         Value::String(s) => default_int(s.len() as i128),
@@ -9349,19 +9454,13 @@ fn execute_instructions(
                 Instruction::CallValue(argc) =>
                 {
                     let args = pop_args_from_stack(&mut frame.stack, argc)?;
-                    let func_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing function value for call".to_string(),
-                        line: 0,
-                    })?;
+                    let func_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing function value for call".to_string(), 0))?;
                     let result = interpreter.call_value(func_val, args, 0, None)?;
                     frame.stack.push(result);
                 }
                 Instruction::MapKeys =>
                 {
-                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing target for map keys".to_string(),
-                        line: 0,
-                    })?;
+                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing target for map keys".to_string(), 0))?;
                     let result = match target_val
                     {
                         Value::Map(map) => map_keys_array(&map.borrow()),
@@ -9372,10 +9471,7 @@ fn execute_instructions(
                 }
                 Instruction::MapValues =>
                 {
-                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing target for map values".to_string(),
-                        line: 0,
-                    })?;
+                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing target for map values".to_string(), 0))?;
                     let result = match target_val
                     {
                         Value::Map(map) => map_values_array(&map.borrow()),
@@ -9387,33 +9483,21 @@ fn execute_instructions(
                 Instruction::CallValueCached(cache, argc) =>
                 {
                     let args = pop_args_from_stack(&mut frame.stack, argc)?;
-                    let func_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing function value for call".to_string(),
-                        line: 0,
-                    })?;
+                    let func_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing function value for call".to_string(), 0))?;
                     let result = eval_call_value_cached(interpreter, func_val, args, &cache)?;
                     frame.stack.push(result);
                 }
                 Instruction::CallValueCached0(cache) =>
                 {
-                    let func_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing function value for call".to_string(),
-                        line: 0,
-                    })?;
+                    let func_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing function value for call".to_string(), 0))?;
                     let args = smallvec::SmallVec::<[Value; 8]>::new();
                     let result = eval_call_value_cached(interpreter, func_val, args, &cache)?;
                     frame.stack.push(result);
                 }
                 Instruction::CallValueCached1(cache) =>
                 {
-                    let arg = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing argument for call".to_string(),
-                        line: 0,
-                    })?;
-                    let func_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing function value for call".to_string(),
-                        line: 0,
-                    })?;
+                    let arg = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing argument for call".to_string(), 0))?;
+                    let func_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing function value for call".to_string(), 0))?;
                     let mut args = smallvec::SmallVec::<[Value; 8]>::new();
                     args.push(arg);
                     let result = eval_call_value_cached(interpreter, func_val, args, &cache)?;
@@ -9422,20 +9506,14 @@ fn execute_instructions(
                 Instruction::CallValueWithBlock(block, argc) =>
                 {
                     let args = pop_args_from_stack(&mut frame.stack, argc)?;
-                    let func_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing function value for call".to_string(),
-                        line: 0,
-                    })?;
+                    let func_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing function value for call".to_string(), 0))?;
                     let result = interpreter.call_value(func_val, args, 0, Some(block.clone()))?;
                     frame.stack.push(result);
                 }
                 Instruction::CallValueWithBlockCached(cache, block, argc) =>
                 {
                     let args = pop_args_from_stack(&mut frame.stack, argc)?;
-                    let func_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing function value for call".to_string(),
-                        line: 0,
-                    })?;
+                    let func_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing function value for call".to_string(), 0))?;
                     let result = eval_call_value_cached_with_block(
                         interpreter,
                         func_val,
@@ -9447,10 +9525,7 @@ fn execute_instructions(
                 }
                 Instruction::CallValueWithBlockCached0(cache, block) =>
                 {
-                    let func_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing function value for call".to_string(),
-                        line: 0,
-                    })?;
+                    let func_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing function value for call".to_string(), 0))?;
                     let args = smallvec::SmallVec::<[Value; 8]>::new();
                     let result = eval_call_value_cached_with_block(
                         interpreter,
@@ -9463,14 +9538,8 @@ fn execute_instructions(
                 }
                 Instruction::CallValueWithBlockCached1(cache, block) =>
                 {
-                    let arg = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing argument for call".to_string(),
-                        line: 0,
-                    })?;
-                    let func_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing function value for call".to_string(),
-                        line: 0,
-                    })?;
+                    let arg = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing argument for call".to_string(), 0))?;
+                    let func_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing function value for call".to_string(), 0))?;
                     let mut args = smallvec::SmallVec::<[Value; 8]>::new();
                     args.push(arg);
                     let result = eval_call_value_cached_with_block(
@@ -9498,10 +9567,7 @@ fn execute_instructions(
                 }
                 Instruction::CallGlobalCached1(name, global_cache, call_cache) =>
                 {
-                    let arg = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing argument for call".to_string(),
-                        line: 0,
-                    })?;
+                    let arg = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing argument for call".to_string(), 0))?;
                     let func_val = load_global_cached(interpreter, name, &global_cache)?;
                     let mut args = smallvec::SmallVec::<[Value; 8]>::new();
                     args.push(arg);
@@ -9526,10 +9592,7 @@ fn execute_instructions(
                 }
                 Instruction::CallMethodCached1(name, map_cache, call_cache) =>
                 {
-                    let arg = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing argument for call".to_string(),
-                        line: 0,
-                    })?;
+                    let arg = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing argument for call".to_string(), 0))?;
                     let func_val =
                         pop_method_target_and_resolve(&mut frame.stack, &name, &map_cache)?;
                     let mut args = smallvec::SmallVec::<[Value; 8]>::new();
@@ -9573,10 +9636,7 @@ fn execute_instructions(
                 }
                 Instruction::CallMethodWithBlockCached1(name, map_cache, call_cache, block) =>
                 {
-                    let arg = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing argument for call".to_string(),
-                        line: 0,
-                    })?;
+                    let arg = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing argument for call".to_string(), 0))?;
                     let func_val =
                         pop_method_target_and_resolve(&mut frame.stack, &name, &map_cache)?;
                     let mut args = smallvec::SmallVec::<[Value; 8]>::new();
@@ -9592,10 +9652,7 @@ fn execute_instructions(
                 }
                 Instruction::ForEach { var_slot, body } =>
                 {
-                    let iter_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing iterable for for-loop".to_string(),
-                        line: 0,
-                    })?;
+                    let iter_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing iterable for for-loop".to_string(), 0))?;
                     let iter = match iter_val
                     {
                         Value::Array(arr) =>
@@ -9638,10 +9695,7 @@ fn execute_instructions(
                         }
                         _ =>
                         {
-                            return Err(RuntimeError {
-                                message: "Type is not iterable".to_string(),
-                                line: 0,
-                            });
+                            return Err(RuntimeError::simple("Type is not iterable".to_string(), 0));
                         }
                     };
                     let mut state = ForEachState {
@@ -9672,19 +9726,13 @@ fn execute_instructions(
                 }
                 Instruction::ForEachArray { var_slot, body } =>
                 {
-                    let iter_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing iterable for for-loop".to_string(),
-                        line: 0,
-                    })?;
+                    let iter_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing iterable for for-loop".to_string(), 0))?;
                     let arr = match iter_val
                     {
                         Value::Array(arr) => arr,
                         _ =>
                         {
-                            return Err(RuntimeError {
-                                message: "Type is not iterable".to_string(),
-                                line: 0,
-                            });
+                            return Err(RuntimeError::simple("Type is not iterable".to_string(), 0));
                         }
                     };
                     let len = arr.borrow().len();
@@ -9716,19 +9764,13 @@ fn execute_instructions(
                 }
                 Instruction::ForEachF64Array { var_slot, body } =>
                 {
-                    let iter_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing iterable for for-loop".to_string(),
-                        line: 0,
-                    })?;
+                    let iter_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing iterable for for-loop".to_string(), 0))?;
                     let arr = match iter_val
                     {
                         Value::F64Array(arr) => arr,
                         _ =>
                         {
-                            return Err(RuntimeError {
-                                message: "Type is not iterable".to_string(),
-                                line: 0,
-                            });
+                            return Err(RuntimeError::simple("Type is not iterable".to_string(), 0));
                         }
                     };
                     let len = arr.borrow().len();
@@ -9766,16 +9808,10 @@ fn execute_instructions(
                 {
                     let current = match slots.get(index_slot)
                     {
-                        Some(v) => int_value_as_i64(v).ok_or_else(|| RuntimeError {
-                            message: "Range index must be a number".to_string(),
-                            line: 0,
-                        })?,
+                        Some(v) => int_value_as_i64(v).ok_or_else(|| RuntimeError::simple("Range index must be a number".to_string(), 0))?,
                         None =>
                         {
-                            return Err(RuntimeError {
-                                message: "Range index must be a number".to_string(),
-                                line: 0,
-                            });
+                            return Err(RuntimeError::simple("Range index must be a number".to_string(), 0));
                         }
                     };
                     let end_cached = match end
@@ -9825,10 +9861,7 @@ fn execute_instructions(
                 } =>
                 {
                     let current_val =
-                        slots.get(index_slot).cloned().ok_or_else(|| RuntimeError {
-                            message: "Range index must be a number".to_string(),
-                            line: 0,
-                        })?;
+                        slots.get(index_slot).cloned().ok_or_else(|| RuntimeError::simple("Range index must be a number".to_string(), 0))?;
                     if let Value::Float {
                         value: current,
                         kind,
@@ -9879,10 +9912,7 @@ fn execute_instructions(
                     else
                     {
                         let current =
-                            int_value_as_i64(&current_val).ok_or_else(|| RuntimeError {
-                                message: "Range index must be a number".to_string(),
-                                line: 0,
-                            })?;
+                            int_value_as_i64(&current_val).ok_or_else(|| RuntimeError::simple("Range index must be a number".to_string(), 0))?;
                         let end_cached = match end
                         {
                             RangeEnd::Const(_) => Some(range_end_num(&end, slots, const_pool)?),
@@ -9946,10 +9976,7 @@ fn execute_instructions(
                 } =>
                 {
                     let current_val =
-                        slots.get(index_slot).cloned().ok_or_else(|| RuntimeError {
-                            message: "Range index must be a number".to_string(),
-                            line: 0,
-                        })?;
+                        slots.get(index_slot).cloned().ok_or_else(|| RuntimeError::simple("Range index must be a number".to_string(), 0))?;
                     let (current, kind) = match current_val
                     {
                         Value::Float {
@@ -9959,10 +9986,7 @@ fn execute_instructions(
                         _ =>
                         {
                             let current =
-                                int_value_as_f64(&current_val).ok_or_else(|| RuntimeError {
-                                    message: "Range index must be a number".to_string(),
-                                    line: 0,
-                                })?;
+                                int_value_as_f64(&current_val).ok_or_else(|| RuntimeError::simple("Range index must be a number".to_string(), 0))?;
                             (current, kind)
                         }
                     };
@@ -10012,10 +10036,7 @@ fn execute_instructions(
                 {
                     if count > frame.stack.len()
                     {
-                        return Err(RuntimeError {
-                            message: "Invalid array length".to_string(),
-                            line: 0,
-                        });
+                        return Err(RuntimeError::simple("Invalid array length".to_string(), 0));
                     }
                     let mut elems = Vec::with_capacity(count);
                     for _ in 0..count
@@ -10149,10 +10170,7 @@ fn execute_instructions(
                     let pair_count = count.saturating_mul(2);
                     if pair_count > frame.stack.len()
                     {
-                        return Err(RuntimeError {
-                            message: "Invalid map length".to_string(),
-                            line: 0,
-                        });
+                        return Err(RuntimeError::simple("Invalid map length".to_string(), 0));
                     }
                     let mut entries = Vec::with_capacity(count);
                     for _ in 0..count
@@ -10178,14 +10196,8 @@ fn execute_instructions(
                 }
                 Instruction::Index =>
                 {
-                    let index_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing index for index expression".to_string(),
-                        line: 0,
-                    })?;
-                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing target for index expression".to_string(),
-                        line: 0,
-                    })?;
+                    let index_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing index for index expression".to_string(), 0))?;
+                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing target for index expression".to_string(), 0))?;
                     let result = match target_val
                     {
                         Value::Array(arr) =>
@@ -10479,27 +10491,12 @@ fn execute_instructions(
                 }
                 Instruction::Slice =>
                 {
-                    let end_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing end index for slice".to_string(),
-                        line: 0,
-                    })?;
-                    let start_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing start index for slice".to_string(),
-                        line: 0,
-                    })?;
-                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing target for slice".to_string(),
-                        line: 0,
-                    })?;
+                    let end_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing end index for slice".to_string(), 0))?;
+                    let start_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing start index for slice".to_string(), 0))?;
+                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing target for slice".to_string(), 0))?;
 
-                    let start_idx = int_value_as_usize(&start_val).ok_or_else(|| RuntimeError {
-                        message: "Slice start index must be an integer".to_string(),
-                        line: 0,
-                    })?;
-                    let end_idx = int_value_as_usize(&end_val).ok_or_else(|| RuntimeError {
-                        message: "Slice end index must be an integer".to_string(),
-                        line: 0,
-                    })?;
+                    let start_idx = int_value_as_usize(&start_val).ok_or_else(|| RuntimeError::simple("Slice start index must be an integer".to_string(), 0))?;
+                    let end_idx = int_value_as_usize(&end_val).ok_or_else(|| RuntimeError::simple("Slice end index must be an integer".to_string(), 0))?;
 
                     let result = match target_val
                     {
@@ -10602,86 +10599,47 @@ fn execute_instructions(
                         }
                         _ =>
                         {
-                            return Err(RuntimeError {
-                                message: "Slice is only supported for strings and arrays"
-                                    .to_string(),
-                                line: 0,
-                            });
+                            return Err(RuntimeError::simple("Slice is only supported for strings and arrays"
+                                    .to_string(), 0));
                         }
                     };
                     frame.stack.push(result);
                 }
                 Instruction::IndexCached(cache) =>
                 {
-                    let index_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing index for index expression".to_string(),
-                        line: 0,
-                    })?;
-                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing target for index expression".to_string(),
-                        line: 0,
-                    })?;
+                    let index_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing index for index expression".to_string(), 0))?;
+                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing target for index expression".to_string(), 0))?;
                     let result = eval_index_cached_value(index_val, target_val, &cache)?;
                     frame.stack.push(result);
                 }
                 Instruction::MapIndexCached(cache) =>
                 {
-                    let index_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing index for index expression".to_string(),
-                        line: 0,
-                    })?;
-                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing target for index expression".to_string(),
-                        line: 0,
-                    })?;
+                    let index_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing index for index expression".to_string(), 0))?;
+                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing target for index expression".to_string(), 0))?;
                     let result = eval_map_index_cached_value(index_val, target_val, &cache)?;
                     frame.stack.push(result);
                 }
                 Instruction::F64IndexCached(cache) =>
                 {
-                    let index_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing index for index expression".to_string(),
-                        line: 0,
-                    })?;
-                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing target for index expression".to_string(),
-                        line: 0,
-                    })?;
+                    let index_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing index for index expression".to_string(), 0))?;
+                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing target for index expression".to_string(), 0))?;
                     let result = eval_f64_index_cached_value(index_val, target_val, &cache)?;
                     frame.stack.push(result);
                 }
                 Instruction::IndexAssign =>
                 {
-                    let value = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing value for index assignment".to_string(),
-                        line: 0,
-                    })?;
-                    let index_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing index for index assignment".to_string(),
-                        line: 0,
-                    })?;
-                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing target for index assignment".to_string(),
-                        line: 0,
-                    })?;
+                    let value = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing value for index assignment".to_string(), 0))?;
+                    let index_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing index for index assignment".to_string(), 0))?;
+                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing target for index assignment".to_string(), 0))?;
                     let result =
                         eval_index_assign_value(interpreter, target_val, index_val, value)?;
                     frame.stack.push(result);
                 }
                 Instruction::F64IndexAssignCached(cache) =>
                 {
-                    let value = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing value for index assignment".to_string(),
-                        line: 0,
-                    })?;
-                    let index_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing index for index assignment".to_string(),
-                        line: 0,
-                    })?;
-                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing target for index assignment".to_string(),
-                        line: 0,
-                    })?;
+                    let value = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing value for index assignment".to_string(), 0))?;
+                    let index_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing index for index assignment".to_string(), 0))?;
+                    let target_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing target for index assignment".to_string(), 0))?;
                     let result = match target_val
                     {
                         Value::F64Array(arr) =>
@@ -10739,10 +10697,7 @@ fn execute_instructions(
                             }
                             else
                             {
-                                return Err(RuntimeError {
-                                    message: "Array index out of bounds".to_string(),
-                                    line: 0,
-                                });
+                                return Err(RuntimeError::simple("Array index out of bounds".to_string(), 0));
                             }
                         }
                         other => eval_index_assign_value(interpreter, other, index_val, value)?,
@@ -10757,23 +10712,14 @@ fn execute_instructions(
                     }
                     else
                     {
-                        let size_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                            message: "Missing size for array generator".to_string(),
-                            line: 0,
-                        })?;
-                        int_value_as_usize(&size_val).ok_or_else(|| RuntimeError {
-                            message: "Array size must be a non-negative integer".to_string(),
-                            line: 0,
-                        })?
+                        let size_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing size for array generator".to_string(), 0))?;
+                        int_value_as_usize(&size_val).ok_or_else(|| RuntimeError::simple("Array size must be a non-negative integer".to_string(), 0))?
                     };
                     if let Some(count) = count
                     {
                         if count > frame.stack.len()
                         {
-                            return Err(RuntimeError {
-                                message: "Invalid array length".to_string(),
-                                line: 0,
-                            });
+                            return Err(RuntimeError::simple("Invalid array length".to_string(), 0));
                         }
                         let mut raw_vals = Vec::with_capacity(count);
                         for _ in 0..count
@@ -10852,11 +10798,8 @@ fn execute_instructions(
                                         f64_vals.push(num);
                                         continue;
                                     }
-                                    return Err(RuntimeError {
-                                        message: "Numeric array literal requires numeric elements"
-                                            .to_string(),
-                                        line: 0,
-                                    });
+                                    return Err(RuntimeError::simple("Numeric array literal requires numeric elements"
+                                            .to_string(), 0));
                                 }
                             }
                         }
@@ -10887,10 +10830,7 @@ fn execute_instructions(
                     }
                     else
                     {
-                        let gen_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                            message: "Missing generator for array".to_string(),
-                            line: 0,
-                        })?;
+                        let gen_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing generator for array".to_string(), 0))?;
                         match gen_val
                         {
                             Value::Float {
@@ -10946,29 +10886,17 @@ fn execute_instructions(
                             }
                             _ =>
                             {
-                                return Err(RuntimeError {
-                                    message: "Numeric array generator requires numeric value"
-                                        .to_string(),
-                                    line: 0,
-                                });
+                                return Err(RuntimeError::simple("Numeric array generator requires numeric value"
+                                        .to_string(), 0));
                             }
                         };
                     }
                 }
                 Instruction::ArrayGen =>
                 {
-                    let size_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing size for array generator".to_string(),
-                        line: 0,
-                    })?;
-                    let gen_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing generator for array".to_string(),
-                        line: 0,
-                    })?;
-                    let n = int_value_as_usize(&size_val).ok_or_else(|| RuntimeError {
-                        message: "Array size must be a non-negative integer".to_string(),
-                        line: 0,
-                    })?;
+                    let size_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing size for array generator".to_string(), 0))?;
+                    let gen_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing generator for array".to_string(), 0))?;
+                    let n = int_value_as_usize(&size_val).ok_or_else(|| RuntimeError::simple("Array size must be a non-negative integer".to_string(), 0))?;
                     let mut vals: Vec<Value> = Vec::with_capacity(n);
                     if let Value::Function(data) = gen_val
                     {
@@ -11145,44 +11073,26 @@ fn execute_instructions(
                     src_index_slot,
                 } =>
                 {
-                    let scalar_val = frame.stack.pop().ok_or_else(|| RuntimeError {
-                        message: "Missing scalar for F64Axpy".to_string(),
-                        line: 0,
-                    })?;
+                    let scalar_val = frame.stack.pop().ok_or_else(|| RuntimeError::simple("Missing scalar for F64Axpy".to_string(), 0))?;
                     let scalar = match scalar_val
                     {
                         Value::Float { value, .. } => value,
-                        v => int_value_as_f64(&v).ok_or_else(|| RuntimeError {
-                            message: "F64Axpy requires numeric scalar".to_string(),
-                            line: 0,
-                        })?,
+                        v => int_value_as_f64(&v).ok_or_else(|| RuntimeError::simple("F64Axpy requires numeric scalar".to_string(), 0))?,
                     };
                     let dst_idx = match slots.get(dst_index_slot)
                     {
-                        Some(v) => number_to_usize(v).ok_or_else(|| RuntimeError {
-                            message: "F64Axpy dst index must be numeric".to_string(),
-                            line: 0,
-                        })?,
+                        Some(v) => number_to_usize(v).ok_or_else(|| RuntimeError::simple("F64Axpy dst index must be numeric".to_string(), 0))?,
                         None =>
                         {
-                            return Err(RuntimeError {
-                                message: "F64Axpy dst index must be numeric".to_string(),
-                                line: 0,
-                            });
+                            return Err(RuntimeError::simple("F64Axpy dst index must be numeric".to_string(), 0));
                         }
                     };
                     let src_idx = match slots.get(src_index_slot)
                     {
-                        Some(v) => number_to_usize(v).ok_or_else(|| RuntimeError {
-                            message: "F64Axpy src index must be numeric".to_string(),
-                            line: 0,
-                        })?,
+                        Some(v) => number_to_usize(v).ok_or_else(|| RuntimeError::simple("F64Axpy src index must be numeric".to_string(), 0))?,
                         None =>
                         {
-                            return Err(RuntimeError {
-                                message: "F64Axpy src index must be numeric".to_string(),
-                                line: 0,
-                            });
+                            return Err(RuntimeError::simple("F64Axpy src index must be numeric".to_string(), 0));
                         }
                     };
                     let dst = match slots.get_mut(dst_slot)
@@ -11190,10 +11100,7 @@ fn execute_instructions(
                         Some(Value::F64Array(arr)) => arr.clone(),
                         _ =>
                         {
-                            return Err(RuntimeError {
-                                message: "F64Axpy requires F64Array dst".to_string(),
-                                line: 0,
-                            });
+                            return Err(RuntimeError::simple("F64Axpy requires F64Array dst".to_string(), 0));
                         }
                     };
                     let src = match slots.get(src_slot)
@@ -11201,20 +11108,14 @@ fn execute_instructions(
                         Some(Value::F64Array(arr)) => arr.clone(),
                         _ =>
                         {
-                            return Err(RuntimeError {
-                                message: "F64Axpy requires F64Array src".to_string(),
-                                line: 0,
-                            });
+                            return Err(RuntimeError::simple("F64Axpy requires F64Array src".to_string(), 0));
                         }
                     };
                     let mut dst_vec = dst.borrow_mut();
                     let src_vec = src.borrow();
                     if dst_idx >= dst_vec.len() || src_idx >= src_vec.len()
                     {
-                        return Err(RuntimeError {
-                            message: "F64Axpy index out of bounds".to_string(),
-                            line: 0,
-                        });
+                        return Err(RuntimeError::simple("F64Axpy index out of bounds".to_string(), 0));
                     }
                     let result = dst_vec[dst_idx] + scalar * src_vec[src_idx];
                     dst_vec[dst_idx] = result;
@@ -11238,10 +11139,7 @@ fn execute_instructions(
                         RangeEnd::Slot(s) => slots.get(s).cloned().unwrap_or(Value::Nil),
                         RangeEnd::Const(idx) => const_pool.get(idx).cloned().unwrap_or(Value::Nil),
                     };
-                    let end_idx = number_to_usize(&end_val).ok_or_else(|| RuntimeError {
-                        message: "Range end must be a non-negative number".to_string(),
-                        line: 0,
-                    })?;
+                    let end_idx = number_to_usize(&end_val).ok_or_else(|| RuntimeError::simple("Range end must be a non-negative number".to_string(), 0))?;
                     let acc = match slots.get(acc_slot)
                     {
                         Some(Value::Float { value, .. }) => *value,
@@ -11253,10 +11151,7 @@ fn execute_instructions(
                         Some(Value::F64Array(arr)) => arr.clone(),
                         _ =>
                         {
-                            return Err(RuntimeError {
-                                message: "F64DotRange requires F64Array a".to_string(),
-                                line: 0,
-                            });
+                            return Err(RuntimeError::simple("F64DotRange requires F64Array a".to_string(), 0));
                         }
                     };
                     let b = match slots.get(b_slot)
@@ -11264,20 +11159,14 @@ fn execute_instructions(
                         Some(Value::F64Array(arr)) => arr.clone(),
                         _ =>
                         {
-                            return Err(RuntimeError {
-                                message: "F64DotRange requires F64Array b".to_string(),
-                                line: 0,
-                            });
+                            return Err(RuntimeError::simple("F64DotRange requires F64Array b".to_string(), 0));
                         }
                     };
                     let a_vec = a.borrow();
                     let b_vec = b.borrow();
                     if end_idx > a_vec.len() || end_idx > b_vec.len()
                     {
-                        return Err(RuntimeError {
-                            message: "F64DotRange index out of bounds".to_string(),
-                            line: 0,
-                        });
+                        return Err(RuntimeError::simple("F64DotRange index out of bounds".to_string(), 0));
                     }
                     let mut i = start;
                     let mut sum = Simd::<f64, 4>::splat(0.0);
@@ -11325,10 +11214,7 @@ fn execute_instructions(
                         RangeEnd::Slot(s) => slots.get(s).cloned().unwrap_or(Value::Nil),
                         RangeEnd::Const(idx) => const_pool.get(idx).cloned().unwrap_or(Value::Nil),
                     };
-                    let end_idx = number_to_usize(&end_val).ok_or_else(|| RuntimeError {
-                        message: "Range end must be a non-negative number".to_string(),
-                        line: 0,
-                    })?;
+                    let end_idx = number_to_usize(&end_val).ok_or_else(|| RuntimeError::simple("Range end must be a non-negative number".to_string(), 0))?;
                     let acc1 = match slots.get(acc1_slot)
                     {
                         Some(Value::Float { value, .. }) => *value,
@@ -11346,10 +11232,7 @@ fn execute_instructions(
                         Some(Value::F64Array(arr)) => arr.clone(),
                         _ =>
                         {
-                            return Err(RuntimeError {
-                                message: "F64Dot2Range requires F64Array a1".to_string(),
-                                line: 0,
-                            });
+                            return Err(RuntimeError::simple("F64Dot2Range requires F64Array a1".to_string(), 0));
                         }
                     };
                     let b1 = match slots.get(b1_slot)
@@ -11357,10 +11240,7 @@ fn execute_instructions(
                         Some(Value::F64Array(arr)) => arr.clone(),
                         _ =>
                         {
-                            return Err(RuntimeError {
-                                message: "F64Dot2Range requires F64Array b1".to_string(),
-                                line: 0,
-                            });
+                            return Err(RuntimeError::simple("F64Dot2Range requires F64Array b1".to_string(), 0));
                         }
                     };
                     let a2 = match slots.get(a2_slot)
@@ -11368,10 +11248,7 @@ fn execute_instructions(
                         Some(Value::F64Array(arr)) => arr.clone(),
                         _ =>
                         {
-                            return Err(RuntimeError {
-                                message: "F64Dot2Range requires F64Array a2".to_string(),
-                                line: 0,
-                            });
+                            return Err(RuntimeError::simple("F64Dot2Range requires F64Array a2".to_string(), 0));
                         }
                     };
                     let b2 = match slots.get(b2_slot)
@@ -11379,10 +11256,7 @@ fn execute_instructions(
                         Some(Value::F64Array(arr)) => arr.clone(),
                         _ =>
                         {
-                            return Err(RuntimeError {
-                                message: "F64Dot2Range requires F64Array b2".to_string(),
-                                line: 0,
-                            });
+                            return Err(RuntimeError::simple("F64Dot2Range requires F64Array b2".to_string(), 0));
                         }
                     };
                     let a1_vec = a1.borrow();
@@ -11394,10 +11268,7 @@ fn execute_instructions(
                         || end_idx > a2_vec.len()
                         || end_idx > b2_vec.len()
                     {
-                        return Err(RuntimeError {
-                            message: "F64Dot2Range index out of bounds".to_string(),
-                            line: 0,
-                        });
+                        return Err(RuntimeError::simple("F64Dot2Range index out of bounds".to_string(), 0));
                     }
                     let mut i = start;
                     let mut sum1 = Simd::<f64, 4>::splat(0.0);
@@ -11517,6 +11388,7 @@ fn is_simple(expr: &Expr) -> bool
             let into_simple = into.as_ref().map_or(true, |expr| is_simple(expr));
             is_simple(count) && into_simple && is_simple(body)
         }
+        ExprKind::Result { .. } => false,
         ExprKind::BinaryOp { left, right, .. } => is_simple(left) && is_simple(right),
         ExprKind::Call {
             function,
@@ -11541,6 +11413,7 @@ fn is_simple(expr: &Expr) -> bool
             is_simple(target) && is_simple(start) && is_simple(end)
         }
         ExprKind::EnvFreeze(_) => false,
+        ExprKind::ErrorRaise(_) => false,
         ExprKind::Not(expr) => is_simple(expr),
         ExprKind::And { left, right } | ExprKind::AndBool { left, right } =>
         {
@@ -11621,6 +11494,23 @@ fn resolve(expr: &mut Expr, slot_map: &FxHashMap<SymbolId, usize>)
             {
                 resolve(eb, slot_map);
             }
+        }
+        ExprKind::Result {
+            body,
+            else_expr,
+            else_binding,
+            else_slot,
+        } =>
+        {
+            if let Some(name) = else_binding
+            {
+                if let Some(s) = slot_map.get(name)
+                {
+                    *else_slot = Some(*s);
+                }
+            }
+            resolve(body, slot_map);
+            resolve(else_expr, slot_map);
         }
         ExprKind::While { condition, body } =>
         {
@@ -11752,6 +11642,10 @@ fn resolve(expr: &mut Expr, slot_map: &FxHashMap<SymbolId, usize>)
             resolve(right, slot_map);
         }
         ExprKind::Clone(expr) =>
+        {
+            resolve(expr, slot_map);
+        }
+        ExprKind::ErrorRaise(expr) =>
         {
             resolve(expr, slot_map);
         }
@@ -12277,10 +12171,7 @@ impl Interpreter
     {
         if !import_path.ends_with(".ks")
         {
-            return Err(RuntimeError {
-                message: "import path must end with .ks".to_string(),
-                line,
-            });
+            return Err(RuntimeError::simple("import path must end with .ks".to_string(), line));
         }
 
         let mut rel = PathBuf::new();
@@ -12304,10 +12195,7 @@ impl Interpreter
             }
         }
 
-        Err(RuntimeError {
-            message: format!("Module file '{}' not found", import_path),
-            line,
-        })
+        Err(RuntimeError::simple(format!("Module file '{}' not found", import_path), line))
     }
 
     fn extract_export_spec(&self, expr: &Expr) -> Result<(ExportSpec, Expr), RuntimeError>
@@ -12325,6 +12213,8 @@ impl Interpreter
                 let body = Expr {
                     kind: ExprKind::Nil,
                     line,
+                    column: expr.column,
+                    source: expr.source.clone(),
                 };
                 Ok((spec, body))
             }
@@ -12332,10 +12222,7 @@ impl Interpreter
             {
                 if stmts.is_empty()
                 {
-                    return Err(RuntimeError {
-                        message: "export declaration required at top of module".to_string(),
-                        line,
-                    });
+                    return Err(RuntimeError::simple("export declaration required at top of module".to_string(), line));
                 }
                 match &stmts[0].kind
                 {
@@ -12352,6 +12239,8 @@ impl Interpreter
                             Expr {
                                 kind: ExprKind::Nil,
                                 line,
+                                column: stmts[0].column,
+                                source: stmts[0].source.clone(),
                             }
                         }
                         else if rest.len() == 1
@@ -12363,20 +12252,22 @@ impl Interpreter
                             Expr {
                                 kind: ExprKind::Block(rest.to_vec()),
                                 line,
+                                column: stmts[0].column,
+                                source: stmts[0].source.clone(),
                             }
                         };
                         Ok((spec, body))
                     }
-                    _ => Err(RuntimeError {
-                        message: "export declaration required at top of module".to_string(),
+                    _ => Err(RuntimeError::simple(
+                        "export declaration required at top of module".to_string(),
                         line,
-                    }),
+                    )),
                 }
             }
-            _ => Err(RuntimeError {
-                message: "export declaration required at top of module".to_string(),
+            _ => Err(RuntimeError::simple(
+                "export declaration required at top of module".to_string(),
                 line,
-            }),
+            )),
         }
     }
 
@@ -12390,19 +12281,13 @@ impl Interpreter
         let env_ref = env.borrow();
         for name in &spec.names
         {
-            let val = env_ref.get(*name).ok_or_else(|| RuntimeError {
-                message: format!("export '{}' not found in module", symbol_name(*name).as_str()),
-                line: spec.line,
-            })?;
+            let val = env_ref.get(*name).ok_or_else(|| RuntimeError::simple(format!("export '{}' not found in module", symbol_name(*name).as_str()), spec.line))?;
             if matches!(val, Value::Uninitialized)
             {
-                return Err(RuntimeError {
-                    message: format!(
+                return Err(RuntimeError::simple(format!(
                         "export '{}' not found in module",
                         symbol_name(*name).as_str()
-                    ),
-                    line: spec.line,
-                });
+                    ), spec.line));
             }
             exports.insert(symbol_name(*name), val);
         }
@@ -12418,10 +12303,10 @@ impl Interpreter
     {
         if namespace.is_empty()
         {
-            return Err(RuntimeError {
-                message: "export namespace must not be empty".to_string(),
+            return Err(RuntimeError::simple(
+                "export namespace must not be empty".to_string(),
                 line,
-            });
+            ));
         }
 
         let first = namespace[0];
@@ -12430,13 +12315,10 @@ impl Interpreter
             Some(Value::Map(map)) => map,
             Some(_) =>
             {
-                return Err(RuntimeError {
-                    message: format!(
+                return Err(RuntimeError::simple(format!(
                         "Module namespace '{}' is not a module",
                         symbol_name(first).as_str()
-                    ),
-                    line,
-                });
+                    ), line));
             }
             None =>
             {
@@ -12486,10 +12368,7 @@ impl Interpreter
     ) -> Result<Vec<SymbolId>, RuntimeError>
     {
         let file_path = self.resolve_module_file(path.as_str(), line)?;
-        let metadata = fs::metadata(&file_path).map_err(|e| RuntimeError {
-            message: format!("Failed to read module metadata: {}", e),
-            line,
-        })?;
+        let metadata = fs::metadata(&file_path).map_err(|e| RuntimeError::simple(format!("Failed to read module metadata: {}", e), line))?;
         let modified = metadata.modified().ok();
         let size = metadata.len();
         let key = file_path.to_string_lossy().to_string();
@@ -12540,10 +12419,7 @@ impl Interpreter
         line: usize,
     ) -> Result<(Rc<RefCell<MapValue>>, Vec<SymbolId>), RuntimeError>
     {
-        let source = fs::read_to_string(file_path).map_err(|e| RuntimeError {
-            message: format!("Failed to read module file: {}", e),
-            line,
-        })?;
+        let source = fs::read_to_string(file_path).map_err(|e| RuntimeError::simple(format!("Failed to read module file: {}", e), line))?;
 
         let parse_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let lexer = crate::lexer::Lexer::new(&source);
@@ -12556,10 +12432,7 @@ impl Interpreter
             Ok(ast) => ast,
             Err(_) =>
             {
-                return Err(RuntimeError {
-                    message: "Failed to parse module file".to_string(),
-                    line,
-                });
+                return Err(RuntimeError::simple("Failed to parse module file".to_string(), line));
             }
         };
 
@@ -12593,18 +12466,12 @@ impl Interpreter
     {
         if path.len() < 2
         {
-            return Err(RuntimeError {
-                message: "load wasm requires a module name".to_string(),
-                line,
-            });
+            return Err(RuntimeError::simple("load wasm requires a module name".to_string(), line));
         }
         let wasm_sym = intern::intern_symbol("wasm");
         if path[0] != wasm_sym
         {
-            return Err(RuntimeError {
-                message: "load currently supports only wasm:: modules".to_string(),
-                line,
-            });
+            return Err(RuntimeError::simple("load currently supports only wasm:: modules".to_string(), line));
         }
 
         let mut rel = PathBuf::new();
@@ -12625,14 +12492,11 @@ impl Interpreter
                 break;
             }
         }
-        let resolved = resolved.ok_or_else(|| RuntimeError {
-            message: format!("Wasm module '{}' not found", rel.display()),
-            line,
-        })?;
+        let resolved = resolved.ok_or_else(|| RuntimeError::simple(format!("Wasm module '{}' not found", rel.display()), line))?;
 
         let backend = self.resolve_wasm_backend(line)?;
         let module = WasmModule::load(&resolved, backend)
-            .map_err(|message| RuntimeError { message, line })?;
+            .map_err(|message| RuntimeError::simple(message, line))?;
         let mut exports = FxHashMap::default();
         {
             let module_ref = module.borrow();
@@ -12669,14 +12533,11 @@ impl Interpreter
                     Value::String(backend) => backend.as_str(),
                     _ =>
                     {
-                        return Err(RuntimeError {
-                            message: "program.wasm_backend must be a string".to_string(),
-                            line,
-                        });
+                        return Err(RuntimeError::simple("program.wasm_backend must be a string".to_string(), line));
                     }
                 };
                 return parse_wasm_backend(backend)
-                    .map_err(|message| RuntimeError { message, line });
+                    .map_err(|message| RuntimeError::simple(message, line));
             }
         }
         Ok(WasmBackend::Wasmi)
@@ -12686,10 +12547,7 @@ impl Interpreter
     {
         if path.is_empty()
         {
-            return Err(RuntimeError {
-                message: "use requires a module path".to_string(),
-                line,
-            });
+            return Err(RuntimeError::simple("use requires a module path".to_string(), line));
         }
 
         let std_sym = intern::intern_symbol("std");
@@ -12712,10 +12570,7 @@ impl Interpreter
             }
         }
 
-        let mut current = self.env.borrow().get(path[0]).ok_or_else(|| RuntimeError {
-            message: format!("Module '{}' not found", symbol_name(path[0]).as_str()),
-            line,
-        })?;
+        let mut current = self.env.borrow().get(path[0]).ok_or_else(|| RuntimeError::simple(format!("Module '{}' not found", symbol_name(path[0]).as_str()), line))?;
         let mut current_name = symbol_name(path[0]);
 
         for segment in &path[1..]
@@ -12732,22 +12587,16 @@ impl Interpreter
                     }
                     else
                     {
-                        return Err(RuntimeError {
-                            message: format!(
+                        return Err(RuntimeError::simple(format!(
                                 "Module '{}' has no member '{}'",
                                 current_name.as_str(),
                                 seg_name.as_str()
-                            ),
-                            line,
-                        });
+                            ), line));
                     }
                 }
                 _ =>
                 {
-                    return Err(RuntimeError {
-                        message: format!("'{}' is not a module", current_name.as_str()),
-                        line,
-                    });
+                    return Err(RuntimeError::simple(format!("'{}' is not a module", current_name.as_str()), line));
                 }
             }
         }
@@ -12906,32 +12755,32 @@ impl Interpreter
             Builtin::F64 =>
             {
                 let val = args.get(0).cloned().unwrap_or(Value::Nil);
-                cast_f64_value(&val).map_err(|message| RuntimeError { message, line: 0 })
+                cast_f64_value(&val).map_err(|message| RuntimeError::simple(message, 0))
             }
             Builtin::F32 =>
             {
                 let val = args.get(0).cloned().unwrap_or(Value::Nil);
-                cast_f32_value(&val).map_err(|message| RuntimeError { message, line: 0 })
+                cast_f32_value(&val).map_err(|message| RuntimeError::simple(message, 0))
             }
             Builtin::I64 =>
             {
                 let val = args.get(0).cloned().unwrap_or(Value::Nil);
-                cast_i64_value(&val).map_err(|message| RuntimeError { message, line: 0 })
+                cast_i64_value(&val).map_err(|message| RuntimeError::simple(message, 0))
             }
             Builtin::I32 =>
             {
                 let val = args.get(0).cloned().unwrap_or(Value::Nil);
-                cast_i32_value(&val).map_err(|message| RuntimeError { message, line: 0 })
+                cast_i32_value(&val).map_err(|message| RuntimeError::simple(message, 0))
             }
             Builtin::U64 =>
             {
                 let val = args.get(0).cloned().unwrap_or(Value::Nil);
-                cast_u64_value(&val).map_err(|message| RuntimeError { message, line: 0 })
+                cast_u64_value(&val).map_err(|message| RuntimeError::simple(message, 0))
             }
             Builtin::U32 =>
             {
                 let val = args.get(0).cloned().unwrap_or(Value::Nil);
-                cast_u32_value(&val).map_err(|message| RuntimeError { message, line: 0 })
+                cast_u32_value(&val).map_err(|message| RuntimeError::simple(message, 0))
             }
         }
     }
@@ -12951,32 +12800,23 @@ impl Interpreter
             {
                 if block.is_some()
                 {
-                    return Err(RuntimeError {
-                        message: "Native function does not accept a block".to_string(),
-                        line,
-                    });
+                    return Err(RuntimeError::simple("Native function does not accept a block".to_string(), line));
                 }
-                func(&arg_vals).map_err(|message| RuntimeError { message, line })
+                func(&arg_vals).map_err(|message| RuntimeError::simple(message, line))
             }
             Value::HostFunction(func) =>
             {
                 if block.is_some()
                 {
-                    return Err(RuntimeError {
-                        message: "Host function does not accept a block".to_string(),
-                        line,
-                    });
+                    return Err(RuntimeError::simple("Host function does not accept a block".to_string(), line));
                 }
-                func(self, &arg_vals).map_err(|message| RuntimeError { message, line })
+                func(self, &arg_vals).map_err(|message| RuntimeError::simple(message, line))
             }
             Value::WasmFunction(func) =>
             {
                 if block.is_some()
                 {
-                    return Err(RuntimeError {
-                        message: "Wasm function does not accept a block".to_string(),
-                        line,
-                    });
+                    return Err(RuntimeError::simple("Wasm function does not accept a block".to_string(), line));
                 }
                 self.call_wasm_function(func, arg_vals, line)
             }
@@ -12987,10 +12827,7 @@ impl Interpreter
                 args.extend(arg_vals.into_iter());
                 self.call_value(method.func.clone(), args, line, block)
             }
-            _ => Err(RuntimeError {
-                message: format!("Tried to call a non-function value: {}", func_val),
-                line,
-            }),
+            _ => Err(RuntimeError::simple(format!("Tried to call a non-function value: {}", func_val), line)),
         }
     }
 
@@ -13012,13 +12849,10 @@ impl Interpreter
                     saved_env
                         .borrow_mut()
                         .promote(param.name)
-                        .ok_or_else(|| RuntimeError {
-                            message: format!(
+                        .ok_or_else(|| RuntimeError::simple(format!(
                                 "Undefined variable captured: {}",
                                 symbol_name(param.name).as_str()
-                            ),
-                            line,
-                        })?;
+                            ), line))?;
                 new_env.borrow_mut().define(param.name, ref_val);
             }
             else
@@ -13213,28 +13047,19 @@ impl Interpreter
         let wasm_func = module
             .functions
             .get(&func.name)
-            .ok_or_else(|| RuntimeError {
-                message: format!("Wasm function '{}' not found", func.name),
-                line,
-            })?
+            .ok_or_else(|| RuntimeError::simple(format!("Wasm function '{}' not found", func.name), line))?
             .clone();
         let func_type = module
             .func_types
             .get(&func.name)
-            .ok_or_else(|| RuntimeError {
-                message: format!("Wasm function '{}' type not found", func.name),
-                line,
-            })?
+            .ok_or_else(|| RuntimeError::simple(format!("Wasm function '{}' type not found", func.name), line))?
             .clone();
 
         let params = &func_type.params;
         let results = &func_type.results;
         if results.len() > 1
         {
-            return Err(RuntimeError {
-                message: "Wasm functions with multiple returns are not supported".to_string(),
-                line,
-            });
+            return Err(RuntimeError::simple("Wasm functions with multiple returns are not supported".to_string(), line));
         }
 
         let mut wasm_args: Vec<WasmValue> = Vec::new();
@@ -13264,16 +13089,13 @@ impl Interpreter
                 let mut result = [WasmValue::I32(0)];
                 module
                     .call_func(&add, &[WasmValue::I32(-16)], &mut result)
-                    .map_err(|message| RuntimeError { message, line })?;
+                    .map_err(|message| RuntimeError::simple(message, line))?;
                 let ptr = match result[0]
                 {
                     WasmValue::I32(v) => v,
                     _ =>
                     {
-                        return Err(RuntimeError {
-                            message: "Wasm stack adjust returned non-i32".to_string(),
-                            line,
-                        });
+                        return Err(RuntimeError::simple("Wasm stack adjust returned non-i32".to_string(), line));
                     }
                 };
                 retptr = Some(ptr);
@@ -13290,10 +13112,7 @@ impl Interpreter
                 }
                 else
                 {
-                    return Err(RuntimeError {
-                        message: "Wasm module has no alloc export".to_string(),
-                        line,
-                    });
+                    return Err(RuntimeError::simple("Wasm module has no alloc export".to_string(), line));
                 };
                 let mut results = [WasmValue::I32(0)];
                 let alloc_params = module
@@ -13311,16 +13130,13 @@ impl Interpreter
                 };
                 module
                     .call_func(&alloc, &alloc_args, &mut results)
-                    .map_err(|message| RuntimeError { message, line })?;
+                    .map_err(|message| RuntimeError::simple(message, line))?;
                 let ptr = match results[0]
                 {
                     WasmValue::I32(v) => v,
                     _ =>
                     {
-                        return Err(RuntimeError {
-                            message: "Wasm alloc returned non-i32".to_string(),
-                            line,
-                        });
+                        return Err(RuntimeError::simple("Wasm alloc returned non-i32".to_string(), line));
                     }
                 };
                 retptr = Some(ptr);
@@ -13337,10 +13153,7 @@ impl Interpreter
         {
             if param_index >= params.len()
             {
-                return Err(RuntimeError {
-                    message: "Wasm function argument count mismatch".to_string(),
-                    line,
-                });
+                return Err(RuntimeError::simple("Wasm function argument count mismatch".to_string(), line));
             }
             let arg = &arg_vals[arg_index];
             match arg
@@ -13351,10 +13164,7 @@ impl Interpreter
                         || params[param_index] != WasmValueType::I32
                         || params[param_index + 1] != WasmValueType::I32
                     {
-                        return Err(RuntimeError {
-                            message: "Wasm string arguments require two i32 params".to_string(),
-                            line,
-                        });
+                        return Err(RuntimeError::simple("Wasm string arguments require two i32 params".to_string(), line));
                     }
                     let (alloc, alloc_name) = if let Some(func) = module.alloc.clone()
                     {
@@ -13366,10 +13176,7 @@ impl Interpreter
                     }
                     else
                     {
-                        return Err(RuntimeError {
-                            message: "Wasm module has no alloc export".to_string(),
-                            line,
-                        });
+                        return Err(RuntimeError::simple("Wasm module has no alloc export".to_string(), line));
                     };
                     let bytes = s.as_bytes();
                     let mut results = [WasmValue::I32(0)];
@@ -13388,30 +13195,21 @@ impl Interpreter
                     };
                     module
                         .call_func(&alloc, &alloc_args, &mut results)
-                        .map_err(|message| RuntimeError { message, line })?;
+                        .map_err(|message| RuntimeError::simple(message, line))?;
                     let ptr = match results[0]
                     {
                         WasmValue::I32(v) => v,
                         _ =>
                         {
-                            return Err(RuntimeError {
-                                message: "Wasm alloc returned non-i32".to_string(),
-                                line,
-                            });
+                            return Err(RuntimeError::simple("Wasm alloc returned non-i32".to_string(), line));
                         }
                     };
-                    let memory = module.memory_data_mut().ok_or_else(|| RuntimeError {
-                        message: "Wasm module has no memory export".to_string(),
-                        line,
-                    })?;
+                    let memory = module.memory_data_mut().ok_or_else(|| RuntimeError::simple("Wasm module has no memory export".to_string(), line))?;
                     let start = ptr as usize;
                     let end = start + bytes.len();
                     if end > memory.len()
                     {
-                        return Err(RuntimeError {
-                            message: "Wasm memory overflow writing string".to_string(),
-                            line,
-                        });
+                        return Err(RuntimeError::simple("Wasm memory overflow writing string".to_string(), line));
                     }
                     memory[start..end].copy_from_slice(bytes);
                     allocs.push((ptr, bytes.len() as i32));
@@ -13426,16 +13224,10 @@ impl Interpreter
                         || params[param_index] != WasmValueType::I32
                         || params[param_index + 1] != WasmValueType::I32
                     {
-                        return Err(RuntimeError {
-                            message: "Wasm f64 array arguments require two i32 params".to_string(),
-                            line,
-                        });
+                        return Err(RuntimeError::simple("Wasm f64 array arguments require two i32 params".to_string(), line));
                     }
                     let len = arr.borrow().len();
-                    let len_i32 = i32::try_from(len).map_err(|_| RuntimeError {
-                        message: "Wasm array length too large".to_string(),
-                        line,
-                    })?;
+                    let len_i32 = i32::try_from(len).map_err(|_| RuntimeError::simple("Wasm array length too large".to_string(), line))?;
                     if len == 0
                     {
                         wasm_args.push(WasmValue::I32(0));
@@ -13454,15 +13246,9 @@ impl Interpreter
                     }
                     else
                     {
-                        return Err(RuntimeError {
-                            message: "Wasm module has no alloc export".to_string(),
-                            line,
-                        });
+                        return Err(RuntimeError::simple("Wasm module has no alloc export".to_string(), line));
                     };
-                    let byte_len = len.checked_mul(8).ok_or_else(|| RuntimeError {
-                        message: "Wasm array length too large".to_string(),
-                        line,
-                    })?;
+                    let byte_len = len.checked_mul(8).ok_or_else(|| RuntimeError::simple("Wasm array length too large".to_string(), line))?;
                     let mut results = [WasmValue::I32(0)];
                     let alloc_params = module
                         .func_types
@@ -13479,30 +13265,21 @@ impl Interpreter
                     };
                     module
                         .call_func(&alloc, &alloc_args, &mut results)
-                        .map_err(|message| RuntimeError { message, line })?;
+                        .map_err(|message| RuntimeError::simple(message, line))?;
                     let ptr = match results[0]
                     {
                         WasmValue::I32(v) => v,
                         _ =>
                         {
-                            return Err(RuntimeError {
-                                message: "Wasm alloc returned non-i32".to_string(),
-                                line,
-                            });
+                            return Err(RuntimeError::simple("Wasm alloc returned non-i32".to_string(), line));
                         }
                     };
-                    let memory = module.memory_data_mut().ok_or_else(|| RuntimeError {
-                        message: "Wasm module has no memory export".to_string(),
-                        line,
-                    })?;
+                    let memory = module.memory_data_mut().ok_or_else(|| RuntimeError::simple("Wasm module has no memory export".to_string(), line))?;
                     let start = ptr as usize;
                     let end = start + byte_len;
                     if end > memory.len()
                     {
-                        return Err(RuntimeError {
-                            message: "Wasm memory overflow writing array".to_string(),
-                            line,
-                        });
+                        return Err(RuntimeError::simple("Wasm memory overflow writing array".to_string(), line));
                     }
                     let slice = arr.borrow();
                     for (idx, value) in slice.iter().enumerate()
@@ -13522,17 +13299,11 @@ impl Interpreter
                         || params[param_index] != WasmValueType::I32
                         || params[param_index + 1] != WasmValueType::I32
                     {
-                        return Err(RuntimeError {
-                            message: "Wasm array arguments require two i32 params".to_string(),
-                            line,
-                        });
+                        return Err(RuntimeError::simple("Wasm array arguments require two i32 params".to_string(), line));
                     }
                     let values = arr.borrow();
                     let len = values.len();
-                    let len_i32 = i32::try_from(len).map_err(|_| RuntimeError {
-                        message: "Wasm array length too large".to_string(),
-                        line,
-                    })?;
+                    let len_i32 = i32::try_from(len).map_err(|_| RuntimeError::simple("Wasm array length too large".to_string(), line))?;
                     if len == 0
                     {
                         wasm_args.push(WasmValue::I32(0));
@@ -13551,15 +13322,9 @@ impl Interpreter
                     }
                     else
                     {
-                        return Err(RuntimeError {
-                            message: "Wasm module has no alloc export".to_string(),
-                            line,
-                        });
+                        return Err(RuntimeError::simple("Wasm module has no alloc export".to_string(), line));
                     };
-                    let byte_len = len.checked_mul(4).ok_or_else(|| RuntimeError {
-                        message: "Wasm array length too large".to_string(),
-                        line,
-                    })?;
+                    let byte_len = len.checked_mul(4).ok_or_else(|| RuntimeError::simple("Wasm array length too large".to_string(), line))?;
                     let mut results = [WasmValue::I32(0)];
                     let alloc_params = module
                         .func_types
@@ -13576,43 +13341,28 @@ impl Interpreter
                     };
                     module
                         .call_func(&alloc, &alloc_args, &mut results)
-                        .map_err(|message| RuntimeError { message, line })?;
+                        .map_err(|message| RuntimeError::simple(message, line))?;
                     let ptr = match results[0]
                     {
                         WasmValue::I32(v) => v,
                         _ =>
                         {
-                            return Err(RuntimeError {
-                                message: "Wasm alloc returned non-i32".to_string(),
-                                line,
-                            });
+                            return Err(RuntimeError::simple("Wasm alloc returned non-i32".to_string(), line));
                         }
                     };
-                    let memory = module.memory_data_mut().ok_or_else(|| RuntimeError {
-                        message: "Wasm module has no memory export".to_string(),
-                        line,
-                    })?;
+                    let memory = module.memory_data_mut().ok_or_else(|| RuntimeError::simple("Wasm module has no memory export".to_string(), line))?;
                     let start = ptr as usize;
                     let end = start + byte_len;
                     if end > memory.len()
                     {
-                        return Err(RuntimeError {
-                            message: "Wasm memory overflow writing array".to_string(),
-                            line,
-                        });
+                        return Err(RuntimeError::simple("Wasm memory overflow writing array".to_string(), line));
                     }
                     for (idx, value) in values.iter().enumerate()
                     {
-                        let num = int_value_as_i64(value).ok_or_else(|| RuntimeError {
-                            message: "Wasm array elements must be integers".to_string(),
-                            line,
-                        })?;
+                        let num = int_value_as_i64(value).ok_or_else(|| RuntimeError::simple("Wasm array elements must be integers".to_string(), line))?;
                         if num < 0 || num > u32::MAX as i64
                         {
-                            return Err(RuntimeError {
-                                message: "Wasm array elements must fit in u32".to_string(),
-                                line,
-                            });
+                            return Err(RuntimeError::simple("Wasm array elements must fit in u32".to_string(), line));
                         }
                         let bytes = (num as u32).to_le_bytes();
                         let offset = start + idx * 4;
@@ -13633,10 +13383,7 @@ impl Interpreter
                         WasmValueType::I64 => wasm_args.push(WasmValue::I64(val as i64)),
                         _ =>
                         {
-                            return Err(RuntimeError {
-                                message: "Wasm bool expects i32/i64 param".to_string(),
-                                line,
-                            });
+                            return Err(RuntimeError::simple("Wasm bool expects i32/i64 param".to_string(), line));
                         }
                     }
                     arg_index += 1;
@@ -13650,10 +13397,7 @@ impl Interpreter
                         WasmValueType::F64 => wasm_args.push(WasmValue::F64(*value)),
                         _ =>
                         {
-                            return Err(RuntimeError {
-                                message: "Wasm float expects f32/f64 param".to_string(),
-                                line,
-                            });
+                            return Err(RuntimeError::simple("Wasm float expects f32/f64 param".to_string(), line));
                         }
                     }
                     arg_index += 1;
@@ -13661,10 +13405,7 @@ impl Interpreter
                 }
                 v =>
                 {
-                    let num = int_value_as_i64(v).ok_or_else(|| RuntimeError {
-                        message: "Wasm numeric arguments must be numbers".to_string(),
-                        line,
-                    })?;
+                    let num = int_value_as_i64(v).ok_or_else(|| RuntimeError::simple("Wasm numeric arguments must be numbers".to_string(), line))?;
                     match params[param_index]
                     {
                         WasmValueType::I32 => wasm_args.push(WasmValue::I32(num as i32)),
@@ -13679,22 +13420,19 @@ impl Interpreter
         }
         if param_index != params.len()
         {
-            return Err(RuntimeError {
-                message: format!(
+            return Err(RuntimeError::simple(format!(
                     "Wasm function argument count mismatch for '{}': expected {} params ({:?}), got {}",
                     func.name,
                     params.len(),
                     params,
                     param_index
-                ),
-                line,
-            });
+                ), line));
         }
 
         let mut wasm_results = vec![WasmValue::I32(0); results.len()];
         module
             .call_func(&wasm_func, &wasm_args, &mut wasm_results)
-            .map_err(|message| RuntimeError { message, line })?;
+            .map_err(|message| RuntimeError::simple(message, line))?;
 
         let (dealloc, dealloc_name) = if let Some(func) = module.dealloc.clone()
         {
@@ -13731,18 +13469,12 @@ impl Interpreter
 
         if let Some(ptr) = retptr
         {
-            let memory = module.memory_data().ok_or_else(|| RuntimeError {
-                message: "Wasm module has no memory export".to_string(),
-                line,
-            })?;
+            let memory = module.memory_data().ok_or_else(|| RuntimeError::simple("Wasm module has no memory export".to_string(), line))?;
             let result_str = {
                 let start = ptr as usize;
                 if start + 8 > memory.len()
                 {
-                    return Err(RuntimeError {
-                        message: "Wasm memory overflow reading return".to_string(),
-                        line,
-                    });
+                    return Err(RuntimeError::simple("Wasm memory overflow reading return".to_string(), line));
                 }
                 let ptr_bytes = &memory[start..start + 4];
                 let len_bytes = &memory[start + 4..start + 8];
@@ -13754,10 +13486,7 @@ impl Interpreter
                 let end = start + str_len as usize;
                 if end > memory.len()
                 {
-                    return Err(RuntimeError {
-                        message: "Wasm memory overflow reading string".to_string(),
-                        line,
-                    });
+                    return Err(RuntimeError::simple("Wasm memory overflow reading string".to_string(), line));
                 }
                 Some((String::from_utf8_lossy(&memory[start..end]).to_string(), str_ptr, str_len))
             };
@@ -13829,18 +13558,12 @@ impl Interpreter
                 {
                     let ptr = (v & 0xFFFF_FFFF) as u32;
                     let len = ((v >> 32) & 0xFFFF_FFFF) as u32;
-                    let memory = module.memory_data().ok_or_else(|| RuntimeError {
-                        message: "Wasm module has no memory export".to_string(),
-                        line,
-                    })?;
+                    let memory = module.memory_data().ok_or_else(|| RuntimeError::simple("Wasm module has no memory export".to_string(), line))?;
                     let start = ptr as usize;
                     let end = start + len as usize;
                     if end > memory.len()
                     {
-                        return Err(RuntimeError {
-                            message: "Wasm memory overflow reading string".to_string(),
-                            line,
-                        });
+                        return Err(RuntimeError::simple("Wasm memory overflow reading string".to_string(), line));
                     }
                     let s = String::from_utf8_lossy(&memory[start..end]).to_string();
                     Ok(Value::String(intern::intern_owned(s)))
@@ -13901,10 +13624,7 @@ impl Interpreter
         }
         else if arg_len > data.params.len()
         {
-            return Err(RuntimeError {
-                message: "Too many arguments".to_string(),
-                line,
-            });
+            return Err(RuntimeError::simple("Too many arguments".to_string(), line));
         }
 
         let mut coerced_args: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
@@ -14074,13 +13794,27 @@ impl Interpreter
     {
         let arg_vals: smallvec::SmallVec<[Value; 8]> = args.into_iter().collect();
         self.call_value(func_val, arg_vals, 0, None)
-            .map_err(|err| format!("Error at line {}: {}", err.line, err.message))
+            .map_err(|err| {
+                let loc = if err.column > 0
+                {
+                    format!("{}:{}", err.line, err.column)
+                }
+                else
+                {
+                    err.line.to_string()
+                };
+                format!("Error at line {}: {}", loc, err.message)
+            })
     }
 
     pub fn eval(&mut self, expr: &Expr, slots: &mut [Value]) -> EvalResult
     {
         let line = expr.line;
-        match &expr.kind
+        let prev_span = CURRENT_SPAN.with(|span| span.borrow().clone());
+        CURRENT_SPAN.with(|span| {
+            *span.borrow_mut() = Some((expr.line, expr.column, expr.source.clone()));
+        });
+        let result = match &expr.kind
         {
             ExprKind::Integer { value, kind } => Ok(make_signed_int(*value, *kind)),
             ExprKind::Unsigned { value, kind } => Ok(make_unsigned_int(*value, *kind)),
@@ -14127,10 +13861,7 @@ impl Interpreter
                     {
                         if slot.is_some()
                         {
-                            return Err(RuntimeError {
-                                message: "@file assignment requires a global variable".to_string(),
-                                line,
-                            });
+                            return Err(RuntimeError::simple("@file assignment requires a global variable".to_string(), line));
                         }
                         let val = self.eval(value, slots)?;
                         self.env.borrow_mut().set(*name, val.clone());
@@ -14213,11 +13944,8 @@ impl Interpreter
                         self.env.borrow_mut().mark_public(*name);
                         Ok(func)
                     }
-                    _ => Err(RuntimeError {
-                        message: "@file can only be used with use/import/load, assignments, or function definitions"
-                            .to_string(),
-                        line,
-                    }),
+                    _ => Err(RuntimeError::simple("@file can only be used with use/import/load, assignments, or function definitions"
+                            .to_string(), line)),
                 }
             }
             ExprKind::FunctionPublic(expr) =>
@@ -14343,18 +14071,12 @@ impl Interpreter
                         self.env.borrow_mut().mark_function_public(*name);
                         Ok(func)
                     }
-                    _ => Err(RuntimeError {
-                        message: "@function can only be used with use/import/load, assignments, or function definitions"
-                            .to_string(),
-                        line,
-                    }),
+                    _ => Err(RuntimeError::simple("@function can only be used with use/import/load, assignments, or function definitions"
+                            .to_string(), line)),
                 }
             }
-            ExprKind::Export { .. } => Err(RuntimeError {
-                message: "export declarations are only valid at the top of module files"
-                    .to_string(),
-                line,
-            }),
+            ExprKind::Export { .. } => Err(RuntimeError::simple("export declarations are only valid at the top of module files"
+                    .to_string(), line)),
             ExprKind::Load(path) =>
             {
                 self.load_wasm_module(path, line)?;
@@ -14368,7 +14090,7 @@ impl Interpreter
             ExprKind::EnvFreeze(expr) =>
             {
                 let val = self.eval(expr, slots)?;
-                let env = freeze_to_env(&val).map_err(|message| RuntimeError { message, line })?;
+                let env = freeze_to_env(&val).map_err(|message| RuntimeError::simple(message, line))?;
                 Ok(Value::Env(env))
             }
             ExprKind::Not(expr) =>
@@ -14397,10 +14119,7 @@ impl Interpreter
                     Value::Boolean(value) => value,
                     _ =>
                     {
-                        return Err(RuntimeError {
-                            message: "&& expects boolean operands".to_string(),
-                            line,
-                        })
+                        return Err(RuntimeError::simple("&& expects boolean operands".to_string(), line))
                     }
                 };
                 if !left_bool
@@ -14411,10 +14130,7 @@ impl Interpreter
                 match right_val
                 {
                     Value::Boolean(value) => Ok(Value::Boolean(value)),
-                    _ => Err(RuntimeError {
-                        message: "&& expects boolean operands".to_string(),
-                        line,
-                    }),
+                    _ => Err(RuntimeError::simple("&& expects boolean operands".to_string(), line)),
                 }
             }
             ExprKind::Or { left, right } =>
@@ -14437,10 +14153,7 @@ impl Interpreter
                     Value::Boolean(value) => value,
                     _ =>
                     {
-                        return Err(RuntimeError {
-                            message: "|| expects boolean operands".to_string(),
-                            line,
-                        })
+                        return Err(RuntimeError::simple("|| expects boolean operands".to_string(), line))
                     }
                 };
                 if left_bool
@@ -14451,10 +14164,7 @@ impl Interpreter
                 match right_val
                 {
                     Value::Boolean(value) => Ok(Value::Boolean(value)),
-                    _ => Err(RuntimeError {
-                        message: "|| expects boolean operands".to_string(),
-                        line,
-                    }),
+                    _ => Err(RuntimeError::simple("|| expects boolean operands".to_string(), line)),
                 }
             }
             ExprKind::FormatString(parts) =>
@@ -14501,19 +14211,13 @@ impl Interpreter
                         }
                     }
                 }
-                let val = self.env.borrow().get(*name).ok_or_else(|| RuntimeError {
-                    message: format!("Undefined variable: {}", symbol_name(*name).as_str()),
-                    line,
-                })?;
+                let val = self.env.borrow().get(*name).ok_or_else(|| RuntimeError::simple(format!("Undefined variable: {}", symbol_name(*name).as_str()), line))?;
                 if let Value::Uninitialized = val
                 {
-                    return Err(RuntimeError {
-                        message: format!(
+                    return Err(RuntimeError::simple(format!(
                             "Variable '{}' used before assignment",
                             symbol_name(*name).as_str()
-                        ),
-                        line,
-                    });
+                        ), line));
                 }
                 Ok(val)
             }
@@ -14523,13 +14227,10 @@ impl Interpreter
                     .env
                     .borrow_mut()
                     .promote(*name)
-                    .ok_or_else(|| RuntimeError {
-                        message: format!(
+                    .ok_or_else(|| RuntimeError::simple(format!(
                             "Undefined variable referenced: {}",
                             symbol_name(*name).as_str()
-                        ),
-                        line,
-                    })?;
+                        ), line))?;
                 Ok(val)
             }
             ExprKind::Assignment { name, value, slot } =>
@@ -14545,10 +14246,7 @@ impl Interpreter
                             {
                                 if Rc::ptr_eq(old_ref, new_ref)
                                 {
-                                    return Err(RuntimeError {
-                                        message: "cannot self alias".to_string(),
-                                        line,
-                                    });
+                                    return Err(RuntimeError::simple("cannot self alias".to_string(), line));
                                 }
                             }
                         }
@@ -14570,10 +14268,7 @@ impl Interpreter
                             {
                                 if Rc::ptr_eq(old_ref, new_ref)
                                 {
-                                    return Err(RuntimeError {
-                                        message: "cannot self alias".to_string(),
-                                        line,
-                                    });
+                                    return Err(RuntimeError::simple("cannot self alias".to_string(), line));
                                 }
                             }
                         }
@@ -14605,18 +14300,12 @@ impl Interpreter
                             }
                             else
                             {
-                                return Err(RuntimeError {
-                                    message: "Array index out of bounds".to_string(),
-                                    line,
-                                });
+                                return Err(RuntimeError::simple("Array index out of bounds".to_string(), line));
                             }
                         }
                         else
                         {
-                            return Err(RuntimeError {
-                                message: err_index_requires_int().message,
-                                line,
-                            });
+                            return Err(RuntimeError::simple(err_index_requires_int().message, line));
                         }
                     }
                     Value::F64Array(arr) =>
@@ -14637,29 +14326,20 @@ impl Interpreter
                                         }
                                         else
                                         {
-                                            return Err(RuntimeError {
-                                                message: "F64Array assignment requires a number"
-                                                    .to_string(),
-                                                line,
-                                            });
+                                            return Err(RuntimeError::simple("F64Array assignment requires a number"
+                                                    .to_string(), line));
                                         }
                                     }
                                 }
                             }
                             else
                             {
-                                return Err(RuntimeError {
-                                    message: "Array index out of bounds".to_string(),
-                                    line,
-                                });
+                                return Err(RuntimeError::simple("Array index out of bounds".to_string(), line));
                             }
                         }
                         else
                         {
-                            return Err(RuntimeError {
-                                message: err_index_requires_int().message,
-                                line,
-                            });
+                            return Err(RuntimeError::simple(err_index_requires_int().message, line));
                         }
                     }
                     Value::F32Array(arr) =>
@@ -14680,29 +14360,20 @@ impl Interpreter
                                         }
                                         else
                                         {
-                                            return Err(RuntimeError {
-                                                message: "F32Array assignment requires a number"
-                                                    .to_string(),
-                                                line,
-                                            });
+                                            return Err(RuntimeError::simple("F32Array assignment requires a number"
+                                                    .to_string(), line));
                                         }
                                     }
                                 }
                             }
                             else
                             {
-                                return Err(RuntimeError {
-                                    message: "Array index out of bounds".to_string(),
-                                    line,
-                                });
+                                return Err(RuntimeError::simple("Array index out of bounds".to_string(), line));
                             }
                         }
                         else
                         {
-                            return Err(RuntimeError {
-                                message: err_index_requires_int().message,
-                                line,
-                            });
+                            return Err(RuntimeError::simple(err_index_requires_int().message, line));
                         }
                     }
                     Value::I64Array(arr) =>
@@ -14718,28 +14389,19 @@ impl Interpreter
                                     Value::Unsigned { value, .. } => vec[i] = *value as i64,
                                     _ =>
                                     {
-                                        return Err(RuntimeError {
-                                            message: "I64Array assignment requires an integer"
-                                                .to_string(),
-                                            line,
-                                        });
+                                        return Err(RuntimeError::simple("I64Array assignment requires an integer"
+                                                .to_string(), line));
                                     }
                                 }
                             }
                             else
                             {
-                                return Err(RuntimeError {
-                                    message: "Array index out of bounds".to_string(),
-                                    line,
-                                });
+                                return Err(RuntimeError::simple("Array index out of bounds".to_string(), line));
                             }
                         }
                         else
                         {
-                            return Err(RuntimeError {
-                                message: err_index_requires_int().message,
-                                line,
-                            });
+                            return Err(RuntimeError::simple(err_index_requires_int().message, line));
                         }
                     }
                     Value::I32Array(arr) =>
@@ -14755,28 +14417,19 @@ impl Interpreter
                                     Value::Unsigned { value, .. } => vec[i] = *value as i32,
                                     _ =>
                                     {
-                                        return Err(RuntimeError {
-                                            message: "I32Array assignment requires an integer"
-                                                .to_string(),
-                                            line,
-                                        });
+                                        return Err(RuntimeError::simple("I32Array assignment requires an integer"
+                                                .to_string(), line));
                                     }
                                 }
                             }
                             else
                             {
-                                return Err(RuntimeError {
-                                    message: "Array index out of bounds".to_string(),
-                                    line,
-                                });
+                                return Err(RuntimeError::simple("Array index out of bounds".to_string(), line));
                             }
                         }
                         else
                         {
-                            return Err(RuntimeError {
-                                message: err_index_requires_int().message,
-                                line,
-                            });
+                            return Err(RuntimeError::simple(err_index_requires_int().message, line));
                         }
                     }
                     Value::Map(map) =>
@@ -14792,10 +14445,7 @@ impl Interpreter
                     }
                     Value::Env(_) =>
                     {
-                        return Err(RuntimeError {
-                            message: "Env is immutable".to_string(),
-                            line,
-                        });
+                        return Err(RuntimeError::simple("Env is immutable".to_string(), line));
                     }
                     Value::StructInstance(inst) =>
                     {
@@ -14804,20 +14454,11 @@ impl Interpreter
                             Value::String(s) => s,
                             _ =>
                             {
-                                return Err(RuntimeError {
-                                    message: err_index_unsupported().message,
-                                    line,
-                                });
+                                return Err(RuntimeError::simple(err_index_unsupported().message, line));
                             }
                         };
-                        let idx = inst.ty.field_map.get(&key).ok_or_else(|| RuntimeError {
-                            message: format!("Unknown field '{}'", key.as_str()),
-                            line,
-                        })?;
-                        let field = inst.ty.fields.get(*idx).ok_or_else(|| RuntimeError {
-                            message: "Struct field out of bounds".to_string(),
-                            line,
-                        })?;
+                        let idx = inst.ty.field_map.get(&key).ok_or_else(|| RuntimeError::simple(format!("Unknown field '{}'", key.as_str()), line))?;
+                        let field = inst.ty.fields.get(*idx).ok_or_else(|| RuntimeError::simple("Struct field out of bounds".to_string(), line))?;
                         let resolved = resolve_type_ref(&self.env, &field.type_ref, line)?;
                         let coerced =
                             coerce_value_to_type(val.clone(), &resolved, line, key.as_str())?;
@@ -14825,10 +14466,7 @@ impl Interpreter
                     }
                     _ =>
                     {
-                        return Err(RuntimeError {
-                            message: "Index assignment not supported on this type".to_string(),
-                            line,
-                        });
+                        return Err(RuntimeError::simple("Index assignment not supported on this type".to_string(), line));
                     }
                 }
                 Ok(val)
@@ -14986,52 +14624,37 @@ impl Interpreter
             {
                 if params.is_empty()
                 {
-                    return Err(RuntimeError {
-                        message: "Method must take self as first parameter".to_string(),
-                        line,
-                    });
+                    return Err(RuntimeError::simple("Method must take self as first parameter".to_string(), line));
                 }
                 let self_name = symbol_name(params[0].name);
                 if self_name.as_str() != "self"
                 {
-                    return Err(RuntimeError {
-                        message: "Method must take self as first parameter".to_string(),
-                        line,
-                    });
+                    return Err(RuntimeError::simple("Method must take self as first parameter".to_string(), line));
                 }
                 let type_val = self
                     .env
                     .borrow()
                     .get(*type_name)
-                    .ok_or_else(|| RuntimeError {
-                        message: format!("Unknown struct '{}'", symbol_name(*type_name).as_str()),
-                        line,
-                    })?;
+                    .ok_or_else(|| RuntimeError::simple(format!("Unknown struct '{}'", symbol_name(*type_name).as_str()), line))?;
                 let ty = match type_val
                 {
                     Value::StructType(ty) => ty,
                     _ =>
                     {
-                        return Err(RuntimeError {
-                            message: format!(
+                        return Err(RuntimeError::simple(format!(
                                 "'{}' is not a struct type",
                                 symbol_name(*type_name).as_str()
-                            ),
-                            line,
-                        });
+                            ), line));
                     }
                 };
                 let method_key = symbol_name(*name);
                 if ty.field_map.contains_key(&method_key)
                 {
-                    return Err(RuntimeError {
-                        message: format!(
+                    return Err(RuntimeError::simple(format!(
                             "Method '{}' conflicts with field on {}",
                             method_key.as_str(),
                             ty.name
-                        ),
-                        line,
-                    });
+                        ), line));
                 }
                 let func_env = self.env.clone();
                 let (resolved_body, slot_names) = if let Some(slot_names) = slots
@@ -15114,10 +14737,7 @@ impl Interpreter
                 }
                 else
                 {
-                    Err(RuntimeError {
-                        message: "No block given for yield".to_string(),
-                        line,
-                    })
+                    Err(RuntimeError::simple("No block given for yield".to_string(), line))
                 }
             }
             ExprKind::Return(expr) =>
@@ -15131,6 +14751,100 @@ impl Interpreter
                     Value::Nil
                 };
                 Err(make_early_return_error(value))
+            }
+            ExprKind::ErrorRaise(inner) =>
+            {
+                let value = self.eval(inner, slots)?;
+                if let Some(err) = runtime_error_from_value(&value)
+                {
+                    Err(RuntimeError::wrap(
+                        err,
+                        expr.line,
+                        expr.column,
+                        expr.source.clone(),
+                    ))
+                }
+                else
+                {
+                    Err(RuntimeError::from_expr(value.to_string(), expr))
+                }
+            }
+            ExprKind::Result {
+                body,
+                else_expr,
+                else_binding,
+                else_slot,
+            } =>
+            {
+                match self.eval(body, slots)
+                {
+                    Ok(value) => Ok(value),
+                    Err(err) if is_early_return(&err) => Err(err),
+                    Err(err) =>
+                    {
+                        let err_val = runtime_error_to_value(&err);
+                        let mut saved_slot = None;
+                        let mut saved_local = None;
+
+                        if let Some(slot) = else_slot
+                        {
+                            if let Some(slot_val) = slots.get_mut(*slot)
+                            {
+                                saved_slot = Some(slot_val.clone());
+                                *slot_val = err_val.clone();
+                            }
+                        }
+                        else if let Some(name) = else_binding
+                        {
+                            let idx = *name as usize;
+                            let mut env = self.env.borrow_mut();
+                            if idx < env.values.len()
+                            {
+                                if !matches!(env.values[idx], Value::Uninitialized)
+                                {
+                                    saved_local = Some(env.values[idx].clone());
+                                }
+                            }
+                            if idx >= env.values.len()
+                            {
+                                env.values.resize(idx + 1, Value::Uninitialized);
+                            }
+                            env.values[idx] = err_val.clone();
+                        }
+
+                        let result = self.eval(else_expr, slots);
+
+                        if let Some(slot) = else_slot
+                        {
+                            if let Some(slot_val) = slots.get_mut(*slot)
+                            {
+                                if let Some(saved) = saved_slot
+                                {
+                                    *slot_val = saved;
+                                }
+                            }
+                        }
+                        else if let Some(name) = else_binding
+                        {
+                            let idx = *name as usize;
+                            let mut env = self.env.borrow_mut();
+                            if idx >= env.values.len()
+                            {
+                                env.values.resize(idx + 1, Value::Uninitialized);
+                            }
+                            if let Some(saved) = saved_local
+                            {
+                                env.values[idx] = saved;
+                            }
+                            else
+                            {
+                                env.values[idx] = Value::Uninitialized;
+                            }
+                        }
+
+                        result
+                    }
+                }
             }
             ExprKind::Array(elements) =>
             {
@@ -15294,10 +15008,7 @@ impl Interpreter
                     let field_str = symbol_name(*field_name);
                     if field_map.contains_key(&field_str)
                     {
-                        return Err(RuntimeError {
-                            message: format!("Duplicate field '{}'", field_str.as_str()),
-                            line,
-                        });
+                        return Err(RuntimeError::simple(format!("Duplicate field '{}'", field_str.as_str()), line));
                     }
                     field_map.insert(field_str.clone(), idx);
                     field_defs.push(crate::value::StructField {
@@ -15317,22 +15028,16 @@ impl Interpreter
             }
             ExprKind::StructLiteral { name, fields } =>
             {
-                let type_val = self.env.borrow().get(*name).ok_or_else(|| RuntimeError {
-                    message: format!("Unknown struct '{}'", symbol_name(*name).as_str()),
-                    line,
-                })?;
+                let type_val = self.env.borrow().get(*name).ok_or_else(|| RuntimeError::simple(format!("Unknown struct '{}'", symbol_name(*name).as_str()), line))?;
                 let ty = match type_val
                 {
                     Value::StructType(ty) => ty,
                     _ =>
                     {
-                        return Err(RuntimeError {
-                            message: format!(
+                        return Err(RuntimeError::simple(format!(
                                 "'{}' is not a struct type",
                                 symbol_name(*name).as_str()
-                            ),
-                            line,
-                        });
+                            ), line));
                     }
                 };
                 let mut field_values = FxHashMap::default();
@@ -15342,14 +15047,11 @@ impl Interpreter
                     let field_str = symbol_name(*field_name);
                     if !ty.field_map.contains_key(&field_str)
                     {
-                        return Err(RuntimeError {
-                            message: format!(
+                        return Err(RuntimeError::simple(format!(
                                 "Unknown field '{}' for {}",
                                 field_str.as_str(),
                                 ty.name
-                            ),
-                            line,
-                        });
+                            ), line));
                     }
                     field_values.insert(field_str, val);
                 }
@@ -15358,14 +15060,11 @@ impl Interpreter
                 {
                     let val = field_values
                         .remove(&field.name)
-                        .ok_or_else(|| RuntimeError {
-                            message: format!(
+                        .ok_or_else(|| RuntimeError::simple(format!(
                                 "Missing field '{}' for {}",
                                 field.name.as_str(),
                                 ty.name
-                            ),
-                            line,
-                        })?;
+                            ), line))?;
                     let resolved = resolve_type_ref(&self.env, &field.type_ref, line)?;
                     let coerced = coerce_value_to_type(val, &resolved, line, field.name.as_str())?;
                     values.push(coerced);
@@ -15380,10 +15079,7 @@ impl Interpreter
             {
                 let gen_val = self.eval(generator, slots)?;
                 let size_val = self.eval(size, slots)?;
-                let n = int_value_as_usize(&size_val).ok_or_else(|| RuntimeError {
-                    message: "Array size must be a non-negative integer".to_string(),
-                    line,
-                })?;
+                let n = int_value_as_usize(&size_val).ok_or_else(|| RuntimeError::simple("Array size must be a non-negative integer".to_string(), line))?;
                 let mut vals: Vec<Value> = Vec::with_capacity(n);
                 if let Value::Function(data) = gen_val
                 {
@@ -15603,10 +15299,7 @@ impl Interpreter
                         }
                         else
                         {
-                            Err(RuntimeError {
-                                message: err_index_unsupported().message,
-                                line,
-                            })
+                            Err(RuntimeError::simple(err_index_unsupported().message, line))
                         }
                     }
                     Value::StructType(ty) =>
@@ -15617,10 +15310,7 @@ impl Interpreter
                         }
                         else
                         {
-                            Err(RuntimeError {
-                                message: err_index_unsupported().message,
-                                line,
-                            })
+                            Err(RuntimeError::simple(err_index_unsupported().message, line))
                         }
                     }
                     Value::Array(arr) =>
@@ -15639,10 +15329,7 @@ impl Interpreter
                         }
                         else
                         {
-                            Err(RuntimeError {
-                                message: err_index_requires_int().message,
-                                line,
-                            })
+                            Err(RuntimeError::simple(err_index_requires_int().message, line))
                         }
                     }
                     Value::F64Array(arr) =>
@@ -15661,10 +15348,7 @@ impl Interpreter
                         }
                         else
                         {
-                            Err(RuntimeError {
-                                message: err_index_requires_int().message,
-                                line,
-                            })
+                            Err(RuntimeError::simple(err_index_requires_int().message, line))
                         }
                     }
                     Value::F32Array(arr) =>
@@ -15683,10 +15367,7 @@ impl Interpreter
                         }
                         else
                         {
-                            Err(RuntimeError {
-                                message: err_index_requires_int().message,
-                                line,
-                            })
+                            Err(RuntimeError::simple(err_index_requires_int().message, line))
                         }
                     }
                     Value::I64Array(arr) =>
@@ -15705,10 +15386,7 @@ impl Interpreter
                         }
                         else
                         {
-                            Err(RuntimeError {
-                                message: err_index_requires_int().message,
-                                line,
-                            })
+                            Err(RuntimeError::simple(err_index_requires_int().message, line))
                         }
                     }
                     Value::I32Array(arr) =>
@@ -15727,10 +15405,7 @@ impl Interpreter
                         }
                         else
                         {
-                            Err(RuntimeError {
-                                message: err_index_requires_int().message,
-                                line,
-                            })
+                            Err(RuntimeError::simple(err_index_requires_int().message, line))
                         }
                     }
                     Value::Map(map) =>
@@ -15779,10 +15454,7 @@ impl Interpreter
                             Ok(env.data.get(&key).map(env_clone_value).unwrap_or(Value::Nil))
                         }
                     }
-                    _ => Err(RuntimeError {
-                        message: err_index_unsupported().message,
-                        line,
-                    }),
+                    _ => Err(RuntimeError::simple(err_index_unsupported().message, line)),
                 }
             }
             ExprKind::Slice { target, start, end } =>
@@ -15791,14 +15463,8 @@ impl Interpreter
                 let start_val = self.eval(start, slots)?;
                 let end_val = self.eval(end, slots)?;
 
-                let start_idx = int_value_as_usize(&start_val).ok_or_else(|| RuntimeError {
-                    message: "Slice start index must be an integer".to_string(),
-                    line,
-                })?;
-                let end_idx = int_value_as_usize(&end_val).ok_or_else(|| RuntimeError {
-                    message: "Slice end index must be an integer".to_string(),
-                    line,
-                })?;
+                let start_idx = int_value_as_usize(&start_val).ok_or_else(|| RuntimeError::simple("Slice start index must be an integer".to_string(), line))?;
+                let end_idx = int_value_as_usize(&end_val).ok_or_else(|| RuntimeError::simple("Slice end index must be an integer".to_string(), line))?;
 
                 match target_val
                 {
@@ -15850,10 +15516,7 @@ impl Interpreter
                             Ok(Value::F64Array(Rc::new(RefCell::new(slice))))
                         }
                     }
-                    _ => Err(RuntimeError {
-                        message: "Slice is only supported for strings and arrays".to_string(),
-                        line,
-                    }),
+                    _ => Err(RuntimeError::simple("Slice is only supported for strings and arrays".to_string(), line)),
                 }
             }
             ExprKind::Call {
@@ -15996,37 +15659,37 @@ impl Interpreter
                         {
                             let val = self.eval(&args[0], slots)?;
                             return cast_f64_value(&val)
-                                .map_err(|message| RuntimeError { message, line });
+                                .map_err(|message| RuntimeError::simple(message, line));
                         }
                         "f32" =>
                         {
                             let val = self.eval(&args[0], slots)?;
                             return cast_f32_value(&val)
-                                .map_err(|message| RuntimeError { message, line });
+                                .map_err(|message| RuntimeError::simple(message, line));
                         }
                         "i64" =>
                         {
                             let val = self.eval(&args[0], slots)?;
                             return cast_i64_value(&val)
-                                .map_err(|message| RuntimeError { message, line });
+                                .map_err(|message| RuntimeError::simple(message, line));
                         }
                         "i32" =>
                         {
                             let val = self.eval(&args[0], slots)?;
                             return cast_i32_value(&val)
-                                .map_err(|message| RuntimeError { message, line });
+                                .map_err(|message| RuntimeError::simple(message, line));
                         }
                         "u64" =>
                         {
                             let val = self.eval(&args[0], slots)?;
                             return cast_u64_value(&val)
-                                .map_err(|message| RuntimeError { message, line });
+                                .map_err(|message| RuntimeError::simple(message, line));
                         }
                         "u32" =>
                         {
                             let val = self.eval(&args[0], slots)?;
                             return cast_u32_value(&val)
-                                .map_err(|message| RuntimeError { message, line });
+                                .map_err(|message| RuntimeError::simple(message, line));
                         }
                         _ =>
                         {}
@@ -16074,13 +15737,10 @@ impl Interpreter
                                     }
                                     else
                                     {
-                                        return Err(RuntimeError {
-                                            message: format!(
+                                        return Err(RuntimeError::simple(format!(
                                                 "Argument #{} expected to be a reference (&var), but got value",
                                                 i + 1
-                                            ),
-                                            line,
-                                        });
+                                            ), line));
                                     }
                                 }
                                 else
@@ -16100,10 +15760,7 @@ impl Interpreter
                     {
                         if block.is_some()
                         {
-                            return Err(RuntimeError {
-                                message: "Native function does not accept a block".to_string(),
-                                line,
-                            });
+                            return Err(RuntimeError::simple("Native function does not accept a block".to_string(), line));
                         }
                         let mut arg_vals: smallvec::SmallVec<[Value; 8]> =
                             smallvec::SmallVec::new();
@@ -16111,16 +15768,13 @@ impl Interpreter
                         {
                             arg_vals.push(self.eval(arg_expr, slots)?);
                         }
-                        func(&arg_vals).map_err(|message| RuntimeError { message, line })
+                        func(&arg_vals).map_err(|message| RuntimeError::simple(message, line))
                     }
                     Value::HostFunction(func) =>
                     {
                         if block.is_some()
                         {
-                            return Err(RuntimeError {
-                                message: "Host function does not accept a block".to_string(),
-                                line,
-                            });
+                            return Err(RuntimeError::simple("Host function does not accept a block".to_string(), line));
                         }
                         let mut arg_vals: smallvec::SmallVec<[Value; 8]> =
                             smallvec::SmallVec::new();
@@ -16128,16 +15782,13 @@ impl Interpreter
                         {
                             arg_vals.push(self.eval(arg_expr, slots)?);
                         }
-                        func(self, &arg_vals).map_err(|message| RuntimeError { message, line })
+                        func(self, &arg_vals).map_err(|message| RuntimeError::simple(message, line))
                     }
                     Value::WasmFunction(func) =>
                     {
                         if block.is_some()
                         {
-                            return Err(RuntimeError {
-                                message: "Wasm function does not accept a block".to_string(),
-                                line,
-                            });
+                            return Err(RuntimeError::simple("Wasm function does not accept a block".to_string(), line));
                         }
                         let mut arg_vals: smallvec::SmallVec<[Value; 8]> =
                             smallvec::SmallVec::new();
@@ -16163,10 +15814,7 @@ impl Interpreter
                             block.clone().map(Rc::new),
                         )
                     }
-                    _ => Err(RuntimeError {
-                        message: format!("Tried to call a non-function value: {}", func_val),
-                        line,
-                    }),
+                    _ => Err(RuntimeError::simple(format!("Tried to call a non-function value: {}", func_val), line)),
                 }
             }
             ExprKind::BinaryOp { left, op, right } =>
@@ -16273,10 +15921,7 @@ impl Interpreter
                     }
                     (Value::Integer { value: i1, .. }, Value::Unsigned { value: u2, .. }) =>
                     {
-                        let u2_i = i128::try_from(u2).map_err(|_| RuntimeError {
-                            message: "Unsigned value too large for signed operation".to_string(),
-                            line,
-                        })?;
+                        let u2_i = i128::try_from(u2).map_err(|_| RuntimeError::simple("Unsigned value too large for signed operation".to_string(), line))?;
                         let kind = IntKind::I128;
                         match op
                         {
@@ -16292,10 +15937,7 @@ impl Interpreter
                     }
                     (Value::Unsigned { value: u1, .. }, Value::Integer { value: i2, .. }) =>
                     {
-                        let u1_i = i128::try_from(u1).map_err(|_| RuntimeError {
-                            message: "Unsigned value too large for signed operation".to_string(),
-                            line,
-                        })?;
+                        let u1_i = i128::try_from(u1).map_err(|_| RuntimeError::simple("Unsigned value too large for signed operation".to_string(), line))?;
                         let kind = IntKind::I128;
                         match op
                         {
@@ -16375,10 +16017,7 @@ impl Interpreter
                         }
                         Op::Equal => Ok(Value::Boolean(s1 == s2)),
                         Op::NotEqual => Ok(Value::Boolean(s1 != s2)),
-                        _ => Err(RuntimeError {
-                            message: "Invalid operation on two strings".to_string(),
-                            line,
-                        }),
+                        _ => Err(RuntimeError::simple("Invalid operation on two strings".to_string(), line)),
                     },
                     (Value::String(s), v2) => match op
                     {
@@ -16390,10 +16029,7 @@ impl Interpreter
                         }
                         Op::Equal => Ok(Value::Boolean(false)),
                         Op::NotEqual => Ok(Value::Boolean(true)),
-                        _ => Err(RuntimeError {
-                            message: format!("Invalid operation between String and {:?}", v2),
-                            line,
-                        }),
+                        _ => Err(RuntimeError::simple(format!("Invalid operation between String and {:?}", v2), line)),
                     },
                     // Array concatenation cases
                     (Value::Array(arr1), Value::Array(arr2)) => match op
@@ -16406,10 +16042,7 @@ impl Interpreter
                         }
                         Op::Equal => Ok(Value::Boolean(*arr1.borrow() == *arr2.borrow())),
                         Op::NotEqual => Ok(Value::Boolean(*arr1.borrow() != *arr2.borrow())),
-                        _ => Err(RuntimeError {
-                            message: "Invalid operation on arrays".to_string(),
-                            line,
-                        }),
+                        _ => Err(RuntimeError::simple("Invalid operation on arrays".to_string(), line)),
                     },
                     (Value::Array(arr1), Value::I64Array(arr2)) => match op
                     {
@@ -16424,10 +16057,7 @@ impl Interpreter
                         }
                         Op::Equal => Ok(Value::Boolean(false)),
                         Op::NotEqual => Ok(Value::Boolean(true)),
-                        _ => Err(RuntimeError {
-                            message: "Invalid operation on arrays".to_string(),
-                            line,
-                        }),
+                        _ => Err(RuntimeError::simple("Invalid operation on arrays".to_string(), line)),
                     },
                     (Value::Array(arr1), Value::I32Array(arr2)) => match op
                     {
@@ -16442,10 +16072,7 @@ impl Interpreter
                         }
                         Op::Equal => Ok(Value::Boolean(false)),
                         Op::NotEqual => Ok(Value::Boolean(true)),
-                        _ => Err(RuntimeError {
-                            message: "Invalid operation on arrays".to_string(),
-                            line,
-                        }),
+                        _ => Err(RuntimeError::simple("Invalid operation on arrays".to_string(), line)),
                     },
                     (Value::Array(arr1), Value::F64Array(arr2)) => match op
                     {
@@ -16460,10 +16087,7 @@ impl Interpreter
                         }
                         Op::Equal => Ok(Value::Boolean(false)),
                         Op::NotEqual => Ok(Value::Boolean(true)),
-                        _ => Err(RuntimeError {
-                            message: "Invalid operation on arrays".to_string(),
-                            line,
-                        }),
+                        _ => Err(RuntimeError::simple("Invalid operation on arrays".to_string(), line)),
                     },
                     (Value::Array(arr1), Value::F32Array(arr2)) => match op
                     {
@@ -16478,10 +16102,7 @@ impl Interpreter
                         }
                         Op::Equal => Ok(Value::Boolean(false)),
                         Op::NotEqual => Ok(Value::Boolean(true)),
-                        _ => Err(RuntimeError {
-                            message: "Invalid operation on arrays".to_string(),
-                            line,
-                        }),
+                        _ => Err(RuntimeError::simple("Invalid operation on arrays".to_string(), line)),
                     },
                     (Value::I64Array(arr1), Value::I64Array(arr2)) => match op
                     {
@@ -16493,10 +16114,7 @@ impl Interpreter
                         }
                         Op::Equal => Ok(Value::Boolean(*arr1.borrow() == *arr2.borrow())),
                         Op::NotEqual => Ok(Value::Boolean(*arr1.borrow() != *arr2.borrow())),
-                        _ => Err(RuntimeError {
-                            message: "Invalid operation on arrays".to_string(),
-                            line,
-                        }),
+                        _ => Err(RuntimeError::simple("Invalid operation on arrays".to_string(), line)),
                     },
                     (Value::I32Array(arr1), Value::I32Array(arr2)) => match op
                     {
@@ -16508,10 +16126,7 @@ impl Interpreter
                         }
                         Op::Equal => Ok(Value::Boolean(*arr1.borrow() == *arr2.borrow())),
                         Op::NotEqual => Ok(Value::Boolean(*arr1.borrow() != *arr2.borrow())),
-                        _ => Err(RuntimeError {
-                            message: "Invalid operation on arrays".to_string(),
-                            line,
-                        }),
+                        _ => Err(RuntimeError::simple("Invalid operation on arrays".to_string(), line)),
                     },
                     (Value::I64Array(arr1), Value::Array(arr2)) => match op
                     {
@@ -16527,10 +16142,7 @@ impl Interpreter
                         }
                         Op::Equal => Ok(Value::Boolean(false)),
                         Op::NotEqual => Ok(Value::Boolean(true)),
-                        _ => Err(RuntimeError {
-                            message: "Invalid operation on arrays".to_string(),
-                            line,
-                        }),
+                        _ => Err(RuntimeError::simple("Invalid operation on arrays".to_string(), line)),
                     },
                     (Value::I32Array(arr1), Value::Array(arr2)) => match op
                     {
@@ -16546,10 +16158,7 @@ impl Interpreter
                         }
                         Op::Equal => Ok(Value::Boolean(false)),
                         Op::NotEqual => Ok(Value::Boolean(true)),
-                        _ => Err(RuntimeError {
-                            message: "Invalid operation on arrays".to_string(),
-                            line,
-                        }),
+                        _ => Err(RuntimeError::simple("Invalid operation on arrays".to_string(), line)),
                     },
                     (Value::I64Array(arr1), Value::F64Array(arr2)) => match op
                     {
@@ -16562,10 +16171,7 @@ impl Interpreter
                         }
                         Op::Equal => Ok(Value::Boolean(false)),
                         Op::NotEqual => Ok(Value::Boolean(true)),
-                        _ => Err(RuntimeError {
-                            message: "Invalid operation on arrays".to_string(),
-                            line,
-                        }),
+                        _ => Err(RuntimeError::simple("Invalid operation on arrays".to_string(), line)),
                     },
                     (Value::I32Array(arr1), Value::F32Array(arr2)) => match op
                     {
@@ -16578,10 +16184,7 @@ impl Interpreter
                         }
                         Op::Equal => Ok(Value::Boolean(false)),
                         Op::NotEqual => Ok(Value::Boolean(true)),
-                        _ => Err(RuntimeError {
-                            message: "Invalid operation on arrays".to_string(),
-                            line,
-                        }),
+                        _ => Err(RuntimeError::simple("Invalid operation on arrays".to_string(), line)),
                     },
                     (Value::F64Array(arr1), Value::F64Array(arr2)) => match op
                     {
@@ -16593,10 +16196,7 @@ impl Interpreter
                         }
                         Op::Equal => Ok(Value::Boolean(*arr1.borrow() == *arr2.borrow())),
                         Op::NotEqual => Ok(Value::Boolean(*arr1.borrow() != *arr2.borrow())),
-                        _ => Err(RuntimeError {
-                            message: "Invalid operation on arrays".to_string(),
-                            line,
-                        }),
+                        _ => Err(RuntimeError::simple("Invalid operation on arrays".to_string(), line)),
                     },
                     (Value::F32Array(arr1), Value::F32Array(arr2)) => match op
                     {
@@ -16608,10 +16208,7 @@ impl Interpreter
                         }
                         Op::Equal => Ok(Value::Boolean(*arr1.borrow() == *arr2.borrow())),
                         Op::NotEqual => Ok(Value::Boolean(*arr1.borrow() != *arr2.borrow())),
-                        _ => Err(RuntimeError {
-                            message: "Invalid operation on arrays".to_string(),
-                            line,
-                        }),
+                        _ => Err(RuntimeError::simple("Invalid operation on arrays".to_string(), line)),
                     },
                     (Value::F64Array(arr1), Value::Array(arr2)) => match op
                     {
@@ -16627,10 +16224,7 @@ impl Interpreter
                         }
                         Op::Equal => Ok(Value::Boolean(false)),
                         Op::NotEqual => Ok(Value::Boolean(true)),
-                        _ => Err(RuntimeError {
-                            message: "Invalid operation on arrays".to_string(),
-                            line,
-                        }),
+                        _ => Err(RuntimeError::simple("Invalid operation on arrays".to_string(), line)),
                     },
                     (Value::F32Array(arr1), Value::Array(arr2)) => match op
                     {
@@ -16646,10 +16240,7 @@ impl Interpreter
                         }
                         Op::Equal => Ok(Value::Boolean(false)),
                         Op::NotEqual => Ok(Value::Boolean(true)),
-                        _ => Err(RuntimeError {
-                            message: "Invalid operation on arrays".to_string(),
-                            line,
-                        }),
+                        _ => Err(RuntimeError::simple("Invalid operation on arrays".to_string(), line)),
                     },
                     (Value::F64Array(arr1), Value::I64Array(arr2)) => match op
                     {
@@ -16664,10 +16255,7 @@ impl Interpreter
                         }
                         Op::Equal => Ok(Value::Boolean(false)),
                         Op::NotEqual => Ok(Value::Boolean(true)),
-                        _ => Err(RuntimeError {
-                            message: "Invalid operation on arrays".to_string(),
-                            line,
-                        }),
+                        _ => Err(RuntimeError::simple("Invalid operation on arrays".to_string(), line)),
                     },
                     (Value::F32Array(arr1), Value::I32Array(arr2)) => match op
                     {
@@ -16682,22 +16270,16 @@ impl Interpreter
                         }
                         Op::Equal => Ok(Value::Boolean(false)),
                         Op::NotEqual => Ok(Value::Boolean(true)),
-                        _ => Err(RuntimeError {
-                            message: "Invalid operation on arrays".to_string(),
-                            line,
-                        }),
+                        _ => Err(RuntimeError::simple("Invalid operation on arrays".to_string(), line)),
                     },
                     (v1, v2) => match op
                     {
                         Op::Equal => Ok(Value::Boolean(false)),
                         Op::NotEqual => Ok(Value::Boolean(true)),
-                        _ => Err(RuntimeError {
-                            message: format!(
+                        _ => Err(RuntimeError::simple(format!(
                                 "Type mismatch: Cannot operate {:?} on {:?} and {:?}",
                                 op, v1, v2
-                            ),
-                            line,
-                        }),
+                            ), line)),
                     },
                 }
             }
@@ -16838,10 +16420,7 @@ impl Interpreter
                         }
                         Ok(last_val)
                     }
-                    _ => Err(RuntimeError {
-                        message: "Type is not iterable".to_string(),
-                        line,
-                    }),
+                    _ => Err(RuntimeError::simple("Type is not iterable".to_string(), line)),
                 }
             }
         ExprKind::Loop {
@@ -16852,10 +16431,7 @@ impl Interpreter
         } =>
         {
             let count_val = self.eval(count, slots)?;
-            let n = number_to_usize(&count_val).ok_or_else(|| RuntimeError {
-                message: "Loop count must be a non-negative number".to_string(),
-                line,
-            })?;
+            let n = number_to_usize(&count_val).ok_or_else(|| RuntimeError::simple("Loop count must be a non-negative number".to_string(), line))?;
             for idx in 0..n
             {
                 if let Some(slot) = var_slot
@@ -16884,10 +16460,7 @@ impl Interpreter
         } =>
         {
             let count_val = self.eval(count, slots)?;
-            let n = number_to_usize(&count_val).ok_or_else(|| RuntimeError {
-                message: "Collect count must be a non-negative number".to_string(),
-                line,
-            })?;
+            let n = number_to_usize(&count_val).ok_or_else(|| RuntimeError::simple("Collect count must be a non-negative number".to_string(), line))?;
             let into_val = if let Some(expr) = into
             {
                 Some(self.eval(expr, slots)?)
@@ -16903,10 +16476,7 @@ impl Interpreter
                 {
                     if arr.borrow().len() != n
                     {
-                        return Err(RuntimeError {
-                            message: "Collect into array length mismatch".to_string(),
-                            line,
-                        });
+                        return Err(RuntimeError::simple("Collect into array length mismatch".to_string(), line));
                     }
                     for idx in 0..n
                     {
@@ -16932,10 +16502,7 @@ impl Interpreter
                 {
                     if arr.borrow().len() != n
                     {
-                        return Err(RuntimeError {
-                            message: "Collect into array length mismatch".to_string(),
-                            line,
-                        });
+                        return Err(RuntimeError::simple("Collect into array length mismatch".to_string(), line));
                     }
                     for idx in 0..n
                     {
@@ -16953,10 +16520,7 @@ impl Interpreter
                                 .assign(*name, default_int(idx as i128));
                         }
                         let val = self.eval(body, slots)?;
-                        let num = int_value_as_f64(&val).ok_or_else(|| RuntimeError {
-                            message: "Collect into F64Array expects numeric results".to_string(),
-                            line,
-                        })?;
+                        let num = int_value_as_f64(&val).ok_or_else(|| RuntimeError::simple("Collect into F64Array expects numeric results".to_string(), line))?;
                         arr.borrow_mut()[idx] = num;
                     }
                     Ok(Value::F64Array(arr))
@@ -16965,10 +16529,7 @@ impl Interpreter
                 {
                     if arr.borrow().len() != n
                     {
-                        return Err(RuntimeError {
-                            message: "Collect into array length mismatch".to_string(),
-                            line,
-                        });
+                        return Err(RuntimeError::simple("Collect into array length mismatch".to_string(), line));
                     }
                     for idx in 0..n
                     {
@@ -16986,10 +16547,7 @@ impl Interpreter
                                 .assign(*name, default_int(idx as i128));
                         }
                         let val = self.eval(body, slots)?;
-                        let num = int_value_as_f64(&val).ok_or_else(|| RuntimeError {
-                            message: "Collect into F32Array expects numeric results".to_string(),
-                            line,
-                        })?;
+                        let num = int_value_as_f64(&val).ok_or_else(|| RuntimeError::simple("Collect into F32Array expects numeric results".to_string(), line))?;
                         arr.borrow_mut()[idx] = num as f32;
                     }
                     Ok(Value::F32Array(arr))
@@ -16998,10 +16556,7 @@ impl Interpreter
                 {
                     if arr.borrow().len() != n
                     {
-                        return Err(RuntimeError {
-                            message: "Collect into array length mismatch".to_string(),
-                            line,
-                        });
+                        return Err(RuntimeError::simple("Collect into array length mismatch".to_string(), line));
                     }
                     for idx in 0..n
                     {
@@ -17019,10 +16574,7 @@ impl Interpreter
                                 .assign(*name, default_int(idx as i128));
                         }
                         let val = self.eval(body, slots)?;
-                        let num = int_value_as_i64(&val).ok_or_else(|| RuntimeError {
-                            message: "Collect into I64Array expects integer results".to_string(),
-                            line,
-                        })?;
+                        let num = int_value_as_i64(&val).ok_or_else(|| RuntimeError::simple("Collect into I64Array expects integer results".to_string(), line))?;
                         arr.borrow_mut()[idx] = num;
                     }
                     Ok(Value::I64Array(arr))
@@ -17031,10 +16583,7 @@ impl Interpreter
                 {
                     if arr.borrow().len() != n
                     {
-                        return Err(RuntimeError {
-                            message: "Collect into array length mismatch".to_string(),
-                            line,
-                        });
+                        return Err(RuntimeError::simple("Collect into array length mismatch".to_string(), line));
                     }
                     for idx in 0..n
                     {
@@ -17052,16 +16601,10 @@ impl Interpreter
                                 .assign(*name, default_int(idx as i128));
                         }
                         let val = self.eval(body, slots)?;
-                        let num = int_value_as_i64(&val).ok_or_else(|| RuntimeError {
-                            message: "Collect into I32Array expects integer results".to_string(),
-                            line,
-                        })?;
+                        let num = int_value_as_i64(&val).ok_or_else(|| RuntimeError::simple("Collect into I32Array expects integer results".to_string(), line))?;
                         if num < i32::MIN as i64 || num > i32::MAX as i64
                         {
-                            return Err(RuntimeError {
-                                message: "Collect into I32Array result out of range".to_string(),
-                                line,
-                            });
+                            return Err(RuntimeError::simple("Collect into I32Array result out of range".to_string(), line));
                         }
                         arr.borrow_mut()[idx] = num as i32;
                     }
@@ -17069,10 +16612,7 @@ impl Interpreter
                 }
                 Some(_) =>
                 {
-                    Err(RuntimeError {
-                        message: "Collect into expects an array".to_string(),
-                        line,
-                    })
+                    Err(RuntimeError::simple("Collect into expects an array".to_string(), line))
                 }
                 None =>
                 {
@@ -17107,7 +16647,11 @@ impl Interpreter
                 }
                 Ok(last)
             }
-        }
+        };
+        CURRENT_SPAN.with(|span| {
+            *span.borrow_mut() = prev_span;
+        });
+        result
     }
 
     pub fn eval_ast_in(

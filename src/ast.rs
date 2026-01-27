@@ -64,6 +64,8 @@ pub struct Expr
 {
     pub kind: ExprKind,
     pub line: usize,
+    pub column: usize,
+    pub source: Rc<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -158,6 +160,14 @@ pub enum ExprKind
 
     Yield(Vec<Expr>),
     Return(Option<Box<Expr>>),
+    Result
+    {
+        body: Box<Expr>,
+        else_expr: Box<Expr>,
+        else_binding: Option<SymbolId>,
+        else_slot: Option<usize>,
+    },
+    ErrorRaise(Box<Expr>),
 
     If
     {

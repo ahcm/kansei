@@ -731,6 +731,34 @@ pub fn expr_to_sexpr(expr: &Expr) -> SExpr
                 .unwrap_or_else(|| atom("nil"));
             list("Return", vec![line_atom, expr_val])
         }
+        ExprKind::ErrorRaise(expr) =>
+        {
+            list("ErrorRaise", vec![line_atom, expr_to_sexpr(expr)])
+        }
+        ExprKind::Result {
+            body,
+            else_expr,
+            else_binding,
+            else_slot,
+        } =>
+        {
+            let binding_expr = else_binding
+                .map(symbol_to_atom)
+                .unwrap_or_else(|| atom("nil"));
+            let slot_expr = else_slot
+                .map(|s| atom(s.to_string()))
+                .unwrap_or_else(|| atom("nil"));
+            list(
+                "Result",
+                vec![
+                    line_atom,
+                    expr_to_sexpr(body),
+                    expr_to_sexpr(else_expr),
+                    binding_expr,
+                    slot_expr,
+                ],
+            )
+        }
         ExprKind::If {
             condition,
             then_branch,
@@ -1282,6 +1310,37 @@ fn parse_expr(expr: &SExpr) -> Result<Expr, String>
             };
             ExprKind::Return(expr)
         }
+        "ErrorRaise" =>
+        {
+            if items.len() != 3
+            {
+                return Err("Invalid ErrorRaise".to_string());
+            }
+            ExprKind::ErrorRaise(Box::new(parse_expr(&items[2])?))
+        }
+        "Result" =>
+        {
+            if items.len() != 6
+            {
+                return Err("Invalid Result".to_string());
+            }
+            let else_binding = match &items[4]
+            {
+                SExpr::Atom(s) if s == "nil" => None,
+                other => Some(parse_symbol(other)?),
+            };
+            let else_slot = match &items[5]
+            {
+                SExpr::Atom(s) if s == "nil" => None,
+                other => Some(parse_usize(other)?),
+            };
+            ExprKind::Result {
+                body: Box::new(parse_expr(&items[2])?),
+                else_expr: Box::new(parse_expr(&items[3])?),
+                else_binding,
+                else_slot,
+            }
+        }
         "If" =>
         {
             if items.len() != 5
@@ -1713,7 +1772,12 @@ fn parse_expr(expr: &SExpr) -> Result<Expr, String>
         }
         _ => return Err("Unknown expression tag".to_string()),
     };
-    Ok(Expr { kind, line })
+    Ok(Expr {
+        kind,
+        line,
+        column: 0,
+        source: Rc::new(String::new()),
+    })
 }
 
 pub fn sexpr_to_expr(expr: &SExpr) -> Result<Expr, String>

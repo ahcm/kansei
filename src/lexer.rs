@@ -1,4 +1,5 @@
 use crate::ast::{FloatKind, IntKind};
+use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token
@@ -58,6 +59,7 @@ pub enum Token
     Pipe,
     End,
     Return,
+    Result,
     True,
     False,
     Nil,
@@ -82,6 +84,8 @@ pub struct Span
 {
     pub token: Token,
     pub line: usize,
+    pub column: usize,
+    pub source: Rc<String>,
 }
 
 #[derive(Clone)]
@@ -90,6 +94,8 @@ pub struct Lexer
     input: Vec<char>,
     position: usize,
     pub line: usize,
+    line_start: usize,
+    source_lines: Vec<Rc<String>>,
 }
 
 impl Lexer
@@ -100,6 +106,11 @@ impl Lexer
             input: input.chars().collect(),
             position: 0,
             line: 1,
+            line_start: 0,
+            source_lines: input
+                .split('\n')
+                .map(|line| Rc::new(line.to_string()))
+                .collect(),
         }
     }
 
@@ -110,12 +121,20 @@ impl Lexer
             self.skip_whitespace();
 
             let start_line = self.line;
+            let start_column = self.position.saturating_sub(self.line_start) + 1;
+            let source = self
+                .source_lines
+                .get(start_line.saturating_sub(1))
+                .cloned()
+                .unwrap_or_else(|| Rc::new(String::new()));
 
             if self.position >= self.input.len()
             {
                 return Span {
                     token: Token::EOF,
                     line: start_line,
+                    column: start_column,
+                    source,
                 };
             }
 
@@ -310,6 +329,8 @@ impl Lexer
             return Span {
                 token,
                 line: start_line,
+                column: start_column,
+                source,
             };
         }
     }
@@ -329,6 +350,7 @@ impl Lexer
             if self.input[self.position] == '\n'
             {
                 self.line += 1;
+                self.line_start = self.position + 1;
             }
             self.position += 1;
         }
@@ -494,6 +516,7 @@ impl Lexer
             "nil" => Token::Nil,
             "fn" => Token::Fn,
             "return" => Token::Return,
+            "result" => Token::Result,
             _ => Token::Identifier(ident),
         }
     }
@@ -510,6 +533,7 @@ impl Lexer
             if ch == '\n'
             {
                 self.line += 1;
+                self.line_start = self.position + 1;
                 content.push(ch);
                 self.position += 1;
             }
@@ -696,6 +720,7 @@ impl Token
             Token::Or => Some("or"),
             Token::End => Some("end"),
             Token::Return => Some("return"),
+            Token::Result => Some("result"),
             Token::True => Some("true"),
             Token::False => Some("false"),
             Token::Nil => Some("nil"),

@@ -110,6 +110,21 @@ that a module path exists but does not create local bindings. Use assignment to
 alias. Use `@file` or `@function` with `use/import/load` when you want those bindings
 visible to nested functions.
 
+### Package install (local paths)
+`kansei install` copies `.ks` modules into the user module directory
+(default `~/.local/share/kansei/modules`). It reads `kansei.toml` if present:
+
+```toml
+[dependencies]
+math = { path = "../math" }
+util = "../util"
+```
+
+Or install directly from a path:
+```
+kansei install ../mylib
+```
+
 `std::lib` modules are feature-gated in the Rust build. By default, all std::lib
 modules are enabled. To disable a module, build without defaults and opt in to the
 ones you want:

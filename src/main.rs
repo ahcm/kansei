@@ -11,6 +11,7 @@ mod sexpr;
 mod source;
 mod value;
 mod wasm;
+mod pm;
 
 use directories::ProjectDirs;
 use rustc_hash::FxHashMap;
@@ -501,7 +502,8 @@ fn print_usage(bin: &str)
 Commands:
   {bin} fmt <path>      Format .ks files in place
   {bin} check <path>    Parse .ks files and exit non-zero on errors
-  {bin} test <path>     Run .ks files and compare against .out/.err if present"
+  {bin} test <path>     Run .ks files and compare against .out/.err if present
+  {bin} install [path]  Install modules from kansei.toml or local paths"
     );
 }
 
@@ -716,6 +718,11 @@ fn handle_subcommand(args: &[String]) -> Option<i32>
                 return Some(2);
             }
             Some(run_tests(&args[2..]))
+        }
+        "install" =>
+        {
+            let code = pm::run_install(&args[2..]);
+            Some(code)
         }
         _ => None,
     }

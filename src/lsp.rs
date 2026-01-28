@@ -135,9 +135,11 @@ fn read_message(reader: &mut dyn BufRead, log: &mut LspLog) -> Option<String>
         let bytes = reader.read_line(&mut line).ok()?;
         if bytes == 0
         {
+            log.write("lsp: read_line returned 0 (stdin closed)\n");
             return None;
         }
         let line_trim = line.trim_end_matches(&['\r', '\n'][..]);
+        log.write(&format!("lsp: header line: {line_trim}\n"));
         if line_trim.is_empty()
         {
             if let Some(len) = content_length
@@ -148,8 +150,10 @@ fn read_message(reader: &mut dyn BufRead, log: &mut LspLog) -> Option<String>
                     log.write("lsp: failed to read body\n");
                     return None;
                 }
+                log.write(&format!("lsp: read body len {len}\n"));
                 return String::from_utf8(buf).ok();
             }
+            log.write("lsp: header end without content-length\n");
             content_length = None;
             continue;
         }
@@ -160,11 +164,8 @@ fn read_message(reader: &mut dyn BufRead, log: &mut LspLog) -> Option<String>
             if let Ok(len) = len_str.parse::<usize>()
             {
                 content_length = Some(len);
+                log.write(&format!("lsp: content-length {len}\n"));
             }
-        }
-        if content_length.is_none()
-        {
-            log.write(&format!("lsp: header: {line_trim}\n"));
         }
     }
 }

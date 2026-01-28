@@ -48,14 +48,18 @@ fn native_os_set_env(args: &[Value]) -> Result<Value, String>
 {
     let key = os_string_arg(args, 0, "OS.set_env")?;
     let value = os_string_arg(args, 1, "OS.set_env")?;
-    std::env::set_var(key, value);
+    unsafe {
+        std::env::set_var(key, value);
+    }
     Ok(Value::Boolean(true))
 }
 
 fn native_os_unset_env(args: &[Value]) -> Result<Value, String>
 {
     let key = os_string_arg(args, 0, "OS.unset_env")?;
-    std::env::remove_var(key);
+    unsafe {
+        std::env::remove_var(key);
+    }
     Ok(Value::Boolean(true))
 }
 

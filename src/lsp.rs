@@ -2,7 +2,7 @@ use crate::lexer::Lexer;
 use crate::parser::Parser;
 use serde_json::json;
 use std::collections::HashMap;
-use std::io::{self, BufRead, Read, Write};
+use std::io::{self, BufRead, Write};
 
 fn parse_source(source: &str) -> Result<(), String>
 {
@@ -35,7 +35,7 @@ fn parse_source(source: &str) -> Result<(), String>
 fn parse_error_location(message: &str) -> (usize, usize, String)
 {
     let mut line = 0usize;
-    let mut col = 0usize;
+    let col = 0usize;
     if let Some(idx) = message.find("line ")
     {
         let rest = &message[idx + 5..];

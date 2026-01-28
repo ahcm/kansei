@@ -11800,7 +11800,7 @@ pub enum LogFileMode
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum LogLevel
+pub(crate) enum LogLevel
 {
     Error = 0,
     Warn = 1,
@@ -11864,31 +11864,7 @@ impl LogTarget
         }
     }
 
-    fn write(&mut self, msg: &str, flush: bool) -> io::Result<()>
-    {
-        match self
-        {
-            Self::Stderr =>
-            {
-                let mut stderr = io::stderr();
-                stderr.write_all(msg.as_bytes())?;
-                if flush
-                {
-                    stderr.flush()?;
-                }
-                Ok(())
-            }
-            Self::File(writer) =>
-            {
-                writer.write_all(msg.as_bytes())?;
-                if flush
-                {
-                    writer.flush()?;
-                }
-                Ok(())
-            }
-        }
-    }
+    // write(...) removed; unused for now.
 }
 
 fn rotate_log_file(path: &std::path::Path, max_bytes: u64) -> io::Result<()>

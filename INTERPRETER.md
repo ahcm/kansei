@@ -28,6 +28,12 @@ kansei lsp
 ```
 It provides diagnostics and hover on symbols defined in the current document.
 
+### LSP Debug Logging
+Set `KANSEI_LSP_LOG` to a file path to capture basic LSP diagnostics:
+```
+KANSEI_LSP_LOG=/tmp/kansei-lsp.log kansei lsp
+```
+
 ### Vim (vim-lsp)
 Example `~/.vimrc`:
 ```vim

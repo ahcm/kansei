@@ -11934,6 +11934,7 @@ pub struct Interpreter
     module_lookup_cache: FxHashMap<String, ModuleLookupEntry>,
     module_search_paths: Vec<PathBuf>,
     wasm_search_paths: Vec<PathBuf>,
+    module_dir_stack: Vec<PathBuf>,
     log_target: LogTarget,
     log_format: String,
     log_flush: bool,
@@ -11963,6 +11964,7 @@ impl Interpreter
             module_lookup_cache: FxHashMap::default(),
             module_search_paths,
             wasm_search_paths,
+            module_dir_stack: Vec::new(),
             log_target: LogTarget::Stderr,
             log_format: "{message}".to_string(),
             log_flush: true,
@@ -12473,6 +12475,15 @@ impl Interpreter
             }
         }
 
+        for base in self.module_dir_stack.iter().rev()
+        {
+            let candidate = base.join(&rel);
+            if candidate.exists()
+            {
+                return Ok(candidate);
+            }
+        }
+
         for base in &self.module_search_paths
         {
             let candidate = base.join(&rel);
@@ -12728,9 +12739,17 @@ impl Interpreter
 
         let module_env = self.get_env(Some(self.env.clone()), false);
         let original_env = self.env.clone();
+        if let Some(parent) = file_path.parent()
+        {
+            self.module_dir_stack.push(parent.to_path_buf());
+        }
         self.env = module_env.clone();
         let eval_result = self.eval(&body, &mut []);
         self.env = original_env;
+        if file_path.parent().is_some()
+        {
+            self.module_dir_stack.pop();
+        }
         if let Err(err) = eval_result
         {
             return Err(err);

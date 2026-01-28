@@ -1,10 +1,7 @@
-use crate::lexer::Lexer;
-use crate::parser::Parser;
 use serde_json::json;
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::fs::OpenOptions;
-use std::sync::mpsc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use libc::{SIGPIPE, SIG_IGN};
 use libc::{SIGINT, SIGTERM, SIGHUP};
@@ -14,34 +11,6 @@ static LSP_SHUTDOWN: AtomicBool = AtomicBool::new(false);
 extern "C" fn lsp_signal_handler(_sig: i32)
 {
     LSP_SHUTDOWN.store(true, Ordering::SeqCst);
-}
-
-fn parse_source(source: &str) -> Result<(), String>
-{
-    let parse_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let lexer = Lexer::new(source);
-        let mut parser = Parser::new(lexer);
-        parser.parse()
-    }));
-    match parse_result
-    {
-        Ok(_) => Ok(()),
-        Err(e) =>
-        {
-            if let Some(s) = e.downcast_ref::<&str>()
-            {
-                Err(s.to_string())
-            }
-            else if let Some(s) = e.downcast_ref::<String>()
-            {
-                Err(s.clone())
-            }
-            else
-            {
-                Err("Syntax Error".to_string())
-            }
-        }
-    }
 }
 
 fn parse_error_location(message: &str) -> (usize, usize, String)
@@ -195,27 +164,7 @@ pub fn run_lsp() -> i32
     let mut stdout = io::stdout();
     let mut docs: HashMap<String, String> = HashMap::new();
     let mut doc_symbols: HashMap<String, HashMap<String, (usize, usize)>> = HashMap::new();
-    let mut doc_versions: HashMap<String, u64> = HashMap::new();
     let mut log = LspLog::new();
-    let (parse_tx, parse_rx) = mpsc::channel::<ParseRequest>();
-    let (result_tx, result_rx) = mpsc::channel::<ParseResult>();
-
-    std::thread::spawn(move || {
-        while let Ok(req) = parse_rx.recv()
-        {
-            let diag = parse_source(&req.text).err();
-            let symbols = parse_ast_quiet(&req.text)
-                .ok()
-                .map(|ast| collect_symbols(&ast))
-                .unwrap_or_default();
-            let _ = result_tx.send(ParseResult {
-                uri: req.uri,
-                version: req.version,
-                diag,
-                symbols,
-            });
-        }
-    });
 
     loop
     {
@@ -257,8 +206,6 @@ pub fn run_lsp() -> i32
                 id,
                 &mut docs,
                 &mut doc_symbols,
-                &mut doc_versions,
-                &parse_tx,
                 &mut log,
             )
         }));
@@ -289,226 +236,10 @@ pub fn run_lsp() -> i32
             }
         }
 
-        while let Ok(result) = result_rx.try_recv()
-        {
-            let current_version = doc_versions.get(&result.uri).copied().unwrap_or(0);
-            if result.version != current_version
-            {
-                continue;
-            }
-            log.write(&format!("lsp: diagnostics ready for {}\n", result.uri));
-            doc_symbols.insert(result.uri.clone(), result.symbols);
-            if let Err(err) = publish_diagnostics(&mut stdout, &result.uri, result.diag)
-            {
-                log.write(&format!("lsp: diagnostics write error: {err}\n"));
-                if err.kind() == io::ErrorKind::BrokenPipe
-                {
-                    log.write("lsp: exit (BrokenPipe) after diagnostics\n");
-                    break;
-                }
-            }
-            else
-            {
-                log.write(&format!("lsp: diagnostics published for {}\n", result.uri));
-            }
-        }
     }
 
     let _ = stdout.flush();
     0
-}
-
-fn parse_ast_quiet(source: &str) -> Result<crate::ast::Expr, String>
-{
-    let parse_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let lexer = Lexer::new(source);
-        let mut parser = Parser::new(lexer);
-        parser.parse()
-    }));
-    match parse_result
-    {
-        Ok(ast) => Ok(ast),
-        Err(e) =>
-        {
-            if let Some(s) = e.downcast_ref::<&str>()
-            {
-                Err(s.to_string())
-            }
-            else if let Some(s) = e.downcast_ref::<String>()
-            {
-                Err(s.clone())
-            }
-            else
-            {
-                Err("Syntax Error".to_string())
-            }
-        }
-    }
-}
-
-fn collect_symbols(ast: &crate::ast::Expr) -> HashMap<String, (usize, usize)>
-{
-    use crate::ast::ExprKind;
-    let mut symbols = HashMap::new();
-    fn visit(expr: &crate::ast::Expr, symbols: &mut HashMap<String, (usize, usize)>)
-    {
-        match &expr.kind
-        {
-            ExprKind::FunctionDef { name, .. } =>
-            {
-                symbols.insert(
-                    crate::intern::symbol_name(*name).to_string(),
-                    (
-                        expr.line.saturating_sub(1),
-                        expr.column.saturating_sub(1),
-                    ),
-                );
-            }
-            ExprKind::MethodDef { name, .. } =>
-            {
-                symbols.insert(
-                    crate::intern::symbol_name(*name).to_string(),
-                    (
-                        expr.line.saturating_sub(1),
-                        expr.column.saturating_sub(1),
-                    ),
-                );
-            }
-            ExprKind::StructDef { name, .. } =>
-            {
-                symbols.insert(
-                    crate::intern::symbol_name(*name).to_string(),
-                    (
-                        expr.line.saturating_sub(1),
-                        expr.column.saturating_sub(1),
-                    ),
-                );
-            }
-            ExprKind::Block(stmts) =>
-            {
-                for stmt in stmts
-                {
-                    visit(stmt, symbols);
-                }
-            }
-            ExprKind::If { then_branch, else_branch, condition } =>
-            {
-                visit(condition, symbols);
-                visit(then_branch, symbols);
-                if let Some(else_branch) = else_branch
-                {
-                    visit(else_branch, symbols);
-                }
-            }
-            ExprKind::While { condition, body } =>
-            {
-                visit(condition, symbols);
-                visit(body, symbols);
-            }
-            ExprKind::For { iterable, body, .. } =>
-            {
-                visit(iterable, symbols);
-                visit(body, symbols);
-            }
-            ExprKind::Call { function, args, block, .. } =>
-            {
-                visit(function, symbols);
-                for arg in args
-                {
-                    visit(arg, symbols);
-                }
-                if let Some(block) = block
-                {
-                    visit(&block.body, symbols);
-                }
-            }
-            ExprKind::Assignment { value, .. }
-            | ExprKind::IndexAssignment { value, .. }
-            | ExprKind::Not(value)
-            | ExprKind::Clone(value)
-            | ExprKind::EnvFreeze(value)
-            | ExprKind::ErrorRaise(value) => visit(value, symbols),
-            ExprKind::Return(value) =>
-            {
-                if let Some(value) = value
-                {
-                    visit(value, symbols);
-                }
-            }
-            ExprKind::BinaryOp { left, right, .. }
-            | ExprKind::And { left, right }
-            | ExprKind::AndBool { left, right }
-            | ExprKind::Or { left, right }
-            | ExprKind::OrBool { left, right } =>
-            {
-                visit(left, symbols);
-                visit(right, symbols);
-            }
-            ExprKind::Array(items) =>
-            {
-                for item in items
-                {
-                    visit(item, symbols);
-                }
-            }
-            ExprKind::ArrayGenerator { generator, size } =>
-            {
-                visit(generator, symbols);
-                visit(size, symbols);
-            }
-            ExprKind::Map(map_items) =>
-            {
-                for (_, value) in map_items
-                {
-                    visit(value, symbols);
-                }
-            }
-            ExprKind::FunctionPublic(inner)
-            | ExprKind::FilePublic(inner) => visit(inner, symbols),
-            ExprKind::Index { target, index } =>
-            {
-                visit(target, symbols);
-                visit(index, symbols);
-            }
-            ExprKind::Slice { target, start, end } =>
-            {
-                visit(target, symbols);
-                visit(start, symbols);
-                visit(end, symbols);
-            }
-            ExprKind::Yield(items) =>
-            {
-                for item in items
-                {
-                    visit(item, symbols);
-                }
-            }
-            ExprKind::Result { body, else_expr, .. } =>
-            {
-                visit(body, symbols);
-                visit(else_expr, symbols);
-            }
-            ExprKind::Loop { count, body, .. }
-            | ExprKind::Collect { count, body, .. } =>
-            {
-                visit(count, symbols);
-                visit(body, symbols);
-            }
-            ExprKind::FormatString(parts) =>
-            {
-                for part in parts
-                {
-                    if let crate::ast::FormatPart::Expr { expr, .. } = part
-                    {
-                        visit(expr, symbols);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    visit(ast, &mut symbols);
-    symbols
 }
 
 fn word_at_position(source: &str, line: usize, character: usize) -> Option<String>
@@ -549,6 +280,48 @@ fn is_ident_byte(b: u8) -> bool
     b.is_ascii_alphanumeric() || b == b'_'
 }
 
+fn scan_symbols(source: &str) -> HashMap<String, (usize, usize)>
+{
+    let mut symbols = HashMap::new();
+    for (line_idx, line) in source.lines().enumerate()
+    {
+        let trimmed = line.trim_start();
+        let leading = line.len().saturating_sub(trimmed.len());
+        if let Some(rest) = trimmed.strip_prefix("fn ")
+        {
+            if let Some(pos) = rest.find('(')
+            {
+                let name_part = rest[..pos].trim();
+                if !name_part.is_empty()
+                {
+                    let name = name_part
+                        .replace("::", ".")
+                        .rsplit('.')
+                        .next()
+                        .unwrap_or(name_part)
+                        .to_string();
+                    let col = leading + trimmed.find(name_part).unwrap_or(0);
+                    symbols.insert(name, (line_idx, col));
+                }
+            }
+        }
+        if let Some(rest) = trimmed.strip_prefix("struct ")
+        {
+            let name_part = rest
+                .split(|c: char| c.is_whitespace() || c == '{')
+                .next()
+                .unwrap_or("")
+                .trim();
+            if !name_part.is_empty()
+            {
+                let col = leading + trimmed.find(name_part).unwrap_or(0);
+                symbols.insert(name_part.to_string(), (line_idx, col));
+            }
+        }
+    }
+    symbols
+}
+
 enum LoopControl
 {
     Continue,
@@ -560,20 +333,6 @@ struct LspLog
     file: Option<std::fs::File>,
 }
 
-struct ParseRequest
-{
-    uri: String,
-    text: String,
-    version: u64,
-}
-
-struct ParseResult
-{
-    uri: String,
-    version: u64,
-    diag: Option<String>,
-    symbols: HashMap<String, (usize, usize)>,
-}
 
 impl LspLog
 {
@@ -603,8 +362,6 @@ fn handle_request(
     id: Option<serde_json::Value>,
     docs: &mut HashMap<String, String>,
     doc_symbols: &mut HashMap<String, HashMap<String, (usize, usize)>>,
-    doc_versions: &mut HashMap<String, u64>,
-    parse_tx: &mpsc::Sender<ParseRequest>,
     log: &mut LspLog,
 ) -> io::Result<LoopControl>
 {
@@ -654,9 +411,8 @@ fn handle_request(
                     let uri = uri.as_str().unwrap_or_default().to_string();
                     let text = text.as_str().unwrap_or_default().to_string();
                     docs.insert(uri.clone(), text.clone());
-                    let version = doc_versions.get(&uri).copied().unwrap_or(0).saturating_add(1);
-                    doc_versions.insert(uri.clone(), version);
-                    let _ = parse_tx.send(ParseRequest { uri, text, version });
+                    doc_symbols.insert(uri.clone(), scan_symbols(&text));
+                    let _ = publish_diagnostics(stdout, &uri, None);
                 }
                 else
                 {
@@ -686,9 +442,8 @@ fn handle_request(
                     {
                         let text = text.to_string();
                         docs.insert(uri.clone(), text.clone());
-                        let version = doc_versions.get(&uri).copied().unwrap_or(0).saturating_add(1);
-                        doc_versions.insert(uri.clone(), version);
-                        let _ = parse_tx.send(ParseRequest { uri, text, version });
+                        doc_symbols.insert(uri.clone(), scan_symbols(&text));
+                        let _ = publish_diagnostics(stdout, &uri, None);
                     }
                 }
             }

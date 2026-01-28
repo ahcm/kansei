@@ -11989,6 +11989,15 @@ impl Interpreter
         self.module_search_paths = default_module_search_paths(Some(path));
         self.wasm_search_paths = default_wasm_search_paths(Some(path));
         self.module_lookup_cache.clear();
+        let base = if path.is_dir()
+        {
+            Some(path.to_path_buf())
+        }
+        else
+        {
+            path.parent().map(|p| p.to_path_buf())
+        };
+        self.module_dir_stack = base.into_iter().collect();
     }
 
     pub fn set_log_file(&mut self, path: &std::path::Path) -> io::Result<()>

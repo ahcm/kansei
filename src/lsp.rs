@@ -571,12 +571,17 @@ fn handle_request(
                     log.write("lsp: didOpen has uri/text\n");
                     let uri = uri.as_str().unwrap_or_default().to_string();
                     let text = text.as_str().unwrap_or_default().to_string();
+                    log.write("lsp: didOpen parsing\n");
                     let diag = parse_source(&text).err();
+                    log.write("lsp: didOpen parsed\n");
                     docs.insert(uri.clone(), text);
+                    log.write("lsp: didOpen stored text\n");
                     if let Ok(ast) = parse_ast_quiet(docs.get(&uri).unwrap())
                     {
+                        log.write("lsp: didOpen parsed ast\n");
                         let symbols = collect_symbols(&ast);
                         doc_symbols.insert(uri.clone(), symbols);
+                        log.write("lsp: didOpen stored symbols\n");
                     }
                     log.write("lsp: publish diagnostics (didOpen)\n");
                     publish_diagnostics(stdout, &uri, diag)?;

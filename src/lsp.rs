@@ -158,6 +158,7 @@ fn read_message(reader: &mut dyn BufRead) -> Option<String>
 
 pub fn run_lsp() -> i32
 {
+    std::panic::set_hook(Box::new(|_| {}));
     let stdin = io::stdin();
     let mut reader = io::BufReader::new(stdin.lock());
     let mut stdout = io::stdout();

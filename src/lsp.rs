@@ -141,7 +141,8 @@ fn read_message(reader: &mut dyn BufRead) -> Option<String>
         {
             break;
         }
-        if let Some(rest) = line_trim.strip_prefix("Content-Length:")
+        let lower = line_trim.to_ascii_lowercase();
+        if let Some(rest) = lower.strip_prefix("content-length:")
         {
             let len_str = rest.trim();
             if let Ok(len) = len_str.parse::<usize>()

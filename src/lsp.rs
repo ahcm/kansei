@@ -5,7 +5,16 @@ use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::fs::OpenOptions;
 use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use libc::{SIGPIPE, SIG_IGN};
+use libc::{SIGINT, SIGTERM, SIGHUP};
+
+static LSP_SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn lsp_signal_handler(_sig: i32)
+{
+    LSP_SHUTDOWN.store(true, Ordering::SeqCst);
+}
 
 fn parse_source(source: &str, suppress: bool) -> Result<(), String>
 {
@@ -216,6 +225,9 @@ pub fn run_lsp() -> i32
     std::panic::set_hook(Box::new(|_| {}));
     unsafe {
         libc::signal(SIGPIPE, SIG_IGN);
+        libc::signal(SIGTERM, lsp_signal_handler as *const () as libc::sighandler_t);
+        libc::signal(SIGINT, lsp_signal_handler as *const () as libc::sighandler_t);
+        libc::signal(SIGHUP, lsp_signal_handler as *const () as libc::sighandler_t);
     }
     let stdin = io::stdin();
     let mut reader = io::BufReader::new(stdin.lock());
@@ -246,6 +258,11 @@ pub fn run_lsp() -> i32
 
     loop
     {
+        if LSP_SHUTDOWN.load(Ordering::SeqCst)
+        {
+            log.write("lsp: shutdown signal received\n");
+            break;
+        }
         let msg = match read_message(&mut reader, &mut log)
         {
             Some(msg) => msg,

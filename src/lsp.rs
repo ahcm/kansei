@@ -572,6 +572,7 @@ fn handle_request(
                     publish_diagnostics(stdout, &uri, diag)?;
                 }
             }
+            return Ok(LoopControl::Continue);
         }
         Some("textDocument/didChange") =>
         {

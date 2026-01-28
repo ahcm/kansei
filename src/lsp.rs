@@ -166,6 +166,18 @@ fn publish_diagnostics(stdout: &mut dyn Write, uri: &str, message: Option<String
     )
 }
 
+fn publish_empty_diagnostics(stdout: &mut dyn Write, uri: &str) -> io::Result<()>
+{
+    send_notification(
+        stdout,
+        "textDocument/publishDiagnostics",
+        json!({
+            "uri": uri,
+            "diagnostics": []
+        }),
+    )
+}
+
 fn read_message(reader: &mut dyn BufRead, log: &mut LspLog) -> Option<String>
 {
     let mut content_length = None;
@@ -612,21 +624,10 @@ fn handle_request(
                     log.write("lsp: didOpen has uri/text\n");
                     let uri = uri.as_str().unwrap_or_default().to_string();
                     let text = text.as_str().unwrap_or_default().to_string();
-                    log.write("lsp: didOpen parsing\n");
-                    let diag = parse_source(&text, true).err();
-                    log.write("lsp: didOpen parsed\n");
                     docs.insert(uri.clone(), text);
-                    log.write("lsp: didOpen stored text\n");
-                    if let Ok(ast) = parse_ast_quiet(docs.get(&uri).unwrap())
-                    {
-                        log.write("lsp: didOpen parsed ast\n");
-                        let symbols = collect_symbols(&ast);
-                        doc_symbols.insert(uri.clone(), symbols);
-                        log.write("lsp: didOpen stored symbols\n");
-                    }
-                    log.write("lsp: publish diagnostics (didOpen)\n");
-                    publish_diagnostics(stdout, &uri, diag)?;
-                    log.write("lsp: published diagnostics (didOpen)\n");
+                    log.write("lsp: publish diagnostics (didOpen) empty\n");
+                    publish_empty_diagnostics(stdout, &uri)?;
+                    log.write("lsp: published diagnostics (didOpen) empty\n");
                 }
                 else
                 {
@@ -654,15 +655,9 @@ fn handle_request(
                 {
                     if let Some(text) = change.get("text").and_then(|t| t.as_str())
                     {
-                        let diag = parse_source(text, true).err();
                         docs.insert(uri.clone(), text.to_string());
-                        if let Ok(ast) = parse_ast_quiet(docs.get(&uri).unwrap())
-                        {
-                            let symbols = collect_symbols(&ast);
-                            doc_symbols.insert(uri.clone(), symbols);
-                        }
-                        log.write("lsp: publish diagnostics (didChange)\n");
-                        publish_diagnostics(stdout, &uri, diag)?;
+                        log.write("lsp: publish diagnostics (didChange) empty\n");
+                        publish_empty_diagnostics(stdout, &uri)?;
                     }
                 }
             }

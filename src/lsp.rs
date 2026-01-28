@@ -606,18 +606,19 @@ fn handle_request(
             if let Some(id) = id
             {
                 log.write("lsp: sending initialize response\n");
-                send_response(
-                    stdout,
-                    &id,
-                    json!({
-                        "capabilities": {
-                            "textDocumentSync": 1,
-                            "hoverProvider": true
-                        }
-                    }),
-                )?;
+                    send_response(
+                        stdout,
+                        &id,
+                        json!({
+                            "capabilities": {
+                                "textDocumentSync": 1,
+                                "hoverProvider": true,
+                                "definitionProvider": true
+                            }
+                        }),
+                    )?;
+                }
             }
-        }
         Some("initialized") =>
         {
             log.write("lsp: initialized notification\n");
@@ -755,6 +756,66 @@ fn handle_request(
                     json!(null)
                 };
                 log.write("lsp: sending hover response\n");
+                send_response(stdout, &id, result)?;
+            }
+        }
+        Some("textDocument/definition") =>
+        {
+            let params = value.get("params").cloned().unwrap_or(json!({}));
+            let uri = params
+                .get("textDocument")
+                .and_then(|doc| doc.get("uri"))
+                .and_then(|u| u.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let pos = params.get("position").cloned().unwrap_or(json!({}));
+            let line = pos.get("line").and_then(|l| l.as_u64()).unwrap_or(0) as usize;
+            let character = pos
+                .get("character")
+                .and_then(|c| c.as_u64())
+                .unwrap_or(0) as usize;
+            let symbol = docs
+                .get(&uri)
+                .and_then(|text| word_at_position(text, line, character));
+            let location = if let Some(symbol) = symbol
+            {
+                if let Some(symbols) = doc_symbols.get(&uri)
+                {
+                    if let Some((def_line, def_col)) = symbols.get(&symbol)
+                    {
+                        Some(json!({
+                            "uri": uri,
+                            "range": {
+                                "start": { "line": def_line, "character": def_col },
+                                "end": { "line": def_line, "character": def_col + 1 }
+                            }
+                        }))
+                    }
+                    else
+                    {
+                        None
+                    }
+                }
+                else
+                {
+                    None
+                }
+            }
+            else
+            {
+                None
+            };
+
+            if let Some(id) = id
+            {
+                let result = if let Some(location) = location
+                {
+                    json!(location)
+                }
+                else
+                {
+                    json!(null)
+                };
                 send_response(stdout, &id, result)?;
             }
         }

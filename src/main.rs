@@ -697,7 +697,7 @@ fn handle_subcommand(args: &[String]) -> Option<i32>
     {
         "fmt" =>
         {
-            let mut fmt_args = args[2..].to_vec();
+            let fmt_args = args[2..].to_vec();
             if fmt_args.iter().any(|arg| arg == "--stdin")
             {
                 return Some(run_fmt_stdin());

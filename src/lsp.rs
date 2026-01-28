@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::fs::OpenOptions;
 use std::sync::mpsc;
-use std::time::Duration;
 use libc::{SIGPIPE, SIG_IGN};
 
 fn parse_source(source: &str, suppress: bool) -> Result<(), String>
@@ -168,35 +167,6 @@ fn publish_diagnostics(stdout: &mut dyn Write, uri: &str, message: Option<String
     )
 }
 
-fn publish_empty_diagnostics(stdout: &mut dyn Write, uri: &str) -> io::Result<()>
-{
-    send_notification(
-        stdout,
-        "textDocument/publishDiagnostics",
-        json!({
-            "uri": uri,
-            "diagnostics": []
-        }),
-    )
-}
-
-fn parse_with_timeout(
-    source: String,
-    timeout_ms: u64,
-) -> Option<(Option<String>, HashMap<String, (usize, usize)>)>
-{
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let diag = parse_source(&source, true).err();
-        let symbols = parse_ast_quiet(&source)
-            .ok()
-            .map(|ast| collect_symbols(&ast))
-            .unwrap_or_default();
-        let _ = tx.send((diag, symbols));
-    });
-    rx.recv_timeout(Duration::from_millis(timeout_ms)).ok()
-}
-
 fn read_message(reader: &mut dyn BufRead, log: &mut LspLog) -> Option<String>
 {
     let mut content_length = None;
@@ -252,7 +222,27 @@ pub fn run_lsp() -> i32
     let mut stdout = io::stdout();
     let mut docs: HashMap<String, String> = HashMap::new();
     let mut doc_symbols: HashMap<String, HashMap<String, (usize, usize)>> = HashMap::new();
+    let mut doc_versions: HashMap<String, u64> = HashMap::new();
     let mut log = LspLog::new();
+    let (parse_tx, parse_rx) = mpsc::channel::<ParseRequest>();
+    let (result_tx, result_rx) = mpsc::channel::<ParseResult>();
+
+    std::thread::spawn(move || {
+        while let Ok(req) = parse_rx.recv()
+        {
+            let diag = parse_source(&req.text, true).err();
+            let symbols = parse_ast_quiet(&req.text)
+                .ok()
+                .map(|ast| collect_symbols(&ast))
+                .unwrap_or_default();
+            let _ = result_tx.send(ParseResult {
+                uri: req.uri,
+                version: req.version,
+                diag,
+                symbols,
+            });
+        }
+    });
 
     loop
     {
@@ -289,6 +279,8 @@ pub fn run_lsp() -> i32
                 id,
                 &mut docs,
                 &mut doc_symbols,
+                &mut doc_versions,
+                &parse_tx,
                 &mut log,
             )
         }));
@@ -316,6 +308,25 @@ pub fn run_lsp() -> i32
             Err(_) =>
             {
                 log.write("lsp: panic in request handler\n");
+            }
+        }
+
+        while let Ok(result) = result_rx.try_recv()
+        {
+            let current_version = doc_versions.get(&result.uri).copied().unwrap_or(0);
+            if result.version != current_version
+            {
+                continue;
+            }
+            doc_symbols.insert(result.uri.clone(), result.symbols);
+            if let Err(err) = publish_diagnostics(&mut stdout, &result.uri, result.diag)
+            {
+                log.write(&format!("lsp: diagnostics write error: {err}\n"));
+                if err.kind() == io::ErrorKind::BrokenPipe
+                {
+                    log.write("lsp: exit (BrokenPipe) after diagnostics\n");
+                    break;
+                }
             }
         }
     }
@@ -568,6 +579,21 @@ struct LspLog
     file: Option<std::fs::File>,
 }
 
+struct ParseRequest
+{
+    uri: String,
+    text: String,
+    version: u64,
+}
+
+struct ParseResult
+{
+    uri: String,
+    version: u64,
+    diag: Option<String>,
+    symbols: HashMap<String, (usize, usize)>,
+}
+
 impl LspLog
 {
     fn new() -> Self
@@ -596,6 +622,8 @@ fn handle_request(
     id: Option<serde_json::Value>,
     docs: &mut HashMap<String, String>,
     doc_symbols: &mut HashMap<String, HashMap<String, (usize, usize)>>,
+    doc_versions: &mut HashMap<String, u64>,
+    parse_tx: &mpsc::Sender<ParseRequest>,
     log: &mut LspLog,
 ) -> io::Result<LoopControl>
 {
@@ -645,19 +673,9 @@ fn handle_request(
                     let uri = uri.as_str().unwrap_or_default().to_string();
                     let text = text.as_str().unwrap_or_default().to_string();
                     docs.insert(uri.clone(), text.clone());
-                    log.write("lsp: didOpen parsing (async)\n");
-                    if let Some((diag, symbols)) = parse_with_timeout(text, 200)
-                    {
-                        doc_symbols.insert(uri.clone(), symbols);
-                        log.write("lsp: publish diagnostics (didOpen)\n");
-                        publish_diagnostics(stdout, &uri, diag)?;
-                        log.write("lsp: published diagnostics (didOpen)\n");
-                    }
-                    else
-                    {
-                        log.write("lsp: didOpen parse timeout\n");
-                        publish_empty_diagnostics(stdout, &uri)?;
-                    }
+                    let version = doc_versions.get(&uri).copied().unwrap_or(0).saturating_add(1);
+                    doc_versions.insert(uri.clone(), version);
+                    let _ = parse_tx.send(ParseRequest { uri, text, version });
                 }
                 else
                 {
@@ -687,18 +705,9 @@ fn handle_request(
                     {
                         let text = text.to_string();
                         docs.insert(uri.clone(), text.clone());
-                        log.write("lsp: didChange parsing (async)\n");
-                        if let Some((diag, symbols)) = parse_with_timeout(text, 200)
-                        {
-                            doc_symbols.insert(uri.clone(), symbols);
-                            log.write("lsp: publish diagnostics (didChange)\n");
-                            publish_diagnostics(stdout, &uri, diag)?;
-                        }
-                        else
-                        {
-                            log.write("lsp: didChange parse timeout\n");
-                            publish_empty_diagnostics(stdout, &uri)?;
-                        }
+                        let version = doc_versions.get(&uri).copied().unwrap_or(0).saturating_add(1);
+                        doc_versions.insert(uri.clone(), version);
+                        let _ = parse_tx.send(ParseRequest { uri, text, version });
                     }
                 }
             }

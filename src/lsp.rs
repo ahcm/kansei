@@ -214,22 +214,31 @@ pub fn run_lsp() -> i32
                 id,
                 &mut docs,
                 &mut doc_symbols,
+                &mut log,
             )
         }));
 
         match handle_result
         {
             Ok(Ok(LoopControl::Continue)) => {}
-            Ok(Ok(LoopControl::Break)) => break,
+            Ok(Ok(LoopControl::Break)) =>
+            {
+                log.write("lsp: exit (LoopControl::Break)\n");
+                break;
+            }
             Ok(Err(err)) =>
             {
                 log.write(&format!("lsp: write error: {err}\n"));
                 if err.kind() == io::ErrorKind::BrokenPipe
                 {
+                    log.write("lsp: exit (BrokenPipe)\n");
                     break;
                 }
             }
-            Err(_) => {}
+            Err(_) =>
+            {
+                log.write("lsp: panic in request handler\n");
+            }
         }
     }
 
@@ -507,6 +516,7 @@ fn handle_request(
     id: Option<serde_json::Value>,
     docs: &mut HashMap<String, String>,
     doc_symbols: &mut HashMap<String, HashMap<String, (usize, usize)>>,
+    log: &mut LspLog,
 ) -> io::Result<LoopControl>
 {
     match method
@@ -515,6 +525,7 @@ fn handle_request(
         {
             if let Some(id) = id
             {
+                log.write("lsp: sending initialize response\n");
                 send_response(
                     stdout,
                     &id,
@@ -527,10 +538,15 @@ fn handle_request(
                 )?;
             }
         }
+        Some("initialized") =>
+        {
+            log.write("lsp: initialized notification\n");
+        }
         Some("shutdown") =>
         {
             if let Some(id) = id
             {
+                log.write("lsp: sending shutdown response\n");
                 send_response(stdout, &id, json!(null))?;
             }
         }
@@ -551,6 +567,7 @@ fn handle_request(
                         let symbols = collect_symbols(&ast);
                         doc_symbols.insert(uri.clone(), symbols);
                     }
+                    log.write("lsp: publish diagnostics (didOpen)\n");
                     publish_diagnostics(stdout, &uri, diag)?;
                 }
             }
@@ -577,6 +594,7 @@ fn handle_request(
                             let symbols = collect_symbols(&ast);
                             doc_symbols.insert(uri.clone(), symbols);
                         }
+                        log.write("lsp: publish diagnostics (didChange)\n");
                         publish_diagnostics(stdout, &uri, diag)?;
                     }
                 }
@@ -634,6 +652,7 @@ fn handle_request(
                 {
                     json!(null)
                 };
+                log.write("lsp: sending hover response\n");
                 send_response(stdout, &id, result)?;
             }
         }
@@ -641,6 +660,7 @@ fn handle_request(
         {
             if let Some(id) = id
             {
+                log.write("lsp: sending default response\n");
                 send_response(stdout, &id, json!(null))?;
             }
         }

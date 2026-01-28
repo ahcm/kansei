@@ -12635,26 +12635,29 @@ impl Interpreter
             }
         };
 
-        for segment in &namespace[1..namespace.len() - 1]
+        if namespace.len() > 1
         {
-            let seg_name = symbol_name(*segment);
-            let next = {
-                let mut map_mut = current.borrow_mut();
-                if let Some(Value::Map(next_map)) = map_mut.data.get(&seg_name).cloned()
-                {
-                    next_map
-                }
-                else
-                {
-                    let new_map = Rc::new(RefCell::new(MapValue::new(FxHashMap::default())));
-                    map_mut
-                        .data
-                        .insert(seg_name.clone(), Value::Map(new_map.clone()));
-                    map_mut.version = map_mut.version.wrapping_add(1);
-                    new_map
-                }
-            };
-            current = next;
+            for segment in &namespace[1..namespace.len() - 1]
+            {
+                let seg_name = symbol_name(*segment);
+                let next = {
+                    let mut map_mut = current.borrow_mut();
+                    if let Some(Value::Map(next_map)) = map_mut.data.get(&seg_name).cloned()
+                    {
+                        next_map
+                    }
+                    else
+                    {
+                        let new_map = Rc::new(RefCell::new(MapValue::new(FxHashMap::default())));
+                        map_mut
+                            .data
+                            .insert(seg_name.clone(), Value::Map(new_map.clone()));
+                        map_mut.version = map_mut.version.wrapping_add(1);
+                        new_map
+                    }
+                };
+                current = next;
+            }
         }
 
         let last = *namespace.last().unwrap();

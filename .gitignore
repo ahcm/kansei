@@ -3,3 +3,4 @@ wasm/*/target
 wasm/*.wasm
 tests/*/wasm
 tmp/
+Cargo.lock

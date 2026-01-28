@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::fs::OpenOptions;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::path::{Path, PathBuf};
 use libc::{SIGPIPE, SIG_IGN};
 use libc::{SIGINT, SIGTERM, SIGHUP};
 
@@ -164,6 +165,8 @@ pub fn run_lsp() -> i32
     let mut stdout = io::stdout();
     let mut docs: HashMap<String, String> = HashMap::new();
     let mut doc_symbols: HashMap<String, HashMap<String, (usize, usize)>> = HashMap::new();
+    let mut workspace_root: Option<PathBuf> = None;
+    let mut workspace_index = WorkspaceIndex::new();
     let mut log = LspLog::new();
 
     loop
@@ -206,6 +209,8 @@ pub fn run_lsp() -> i32
                 id,
                 &mut docs,
                 &mut doc_symbols,
+                &mut workspace_root,
+                &mut workspace_index,
                 &mut log,
             )
         }));
@@ -322,6 +327,112 @@ fn scan_symbols(source: &str) -> HashMap<String, (usize, usize)>
     symbols
 }
 
+fn find_workspace_definition(
+    symbol: &str,
+    root: Option<&Path>,
+    index: &mut WorkspaceIndex,
+) -> Option<Location>
+{
+    if !index.built
+    {
+        if let Some(root) = root
+        {
+            index.symbols = build_workspace_index(root);
+        }
+        index.built = true;
+    }
+    index.symbols.get(symbol).and_then(|list| list.first()).cloned()
+}
+
+fn build_workspace_index(root: &Path) -> HashMap<String, Vec<Location>>
+{
+    let mut out: HashMap<String, Vec<Location>> = HashMap::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(path) = stack.pop()
+    {
+        if should_skip_dir(&path)
+        {
+            continue;
+        }
+        if path.is_dir()
+        {
+            if let Ok(entries) = std::fs::read_dir(&path)
+            {
+                for entry in entries.flatten()
+                {
+                    stack.push(entry.path());
+                }
+            }
+            continue;
+        }
+        if path.extension().and_then(|s| s.to_str()) != Some("ks")
+        {
+            continue;
+        }
+        let content = match std::fs::read_to_string(&path)
+        {
+            Ok(content) => content,
+            Err(_) => continue,
+        };
+        let symbols = scan_symbols(&content);
+        let uri = path_to_uri(&path);
+        for (name, (line, col)) in symbols
+        {
+            out.entry(name)
+                .or_default()
+                .push(Location { uri: uri.clone(), line, col });
+        }
+    }
+    out
+}
+
+fn should_skip_dir(path: &Path) -> bool
+{
+    let s = path.to_string_lossy();
+    s.contains("/.git/")
+        || s.contains("/target/")
+        || s.contains("/wasm/target/")
+        || s.contains("/node_modules/")
+}
+
+fn path_to_uri(path: &Path) -> String
+{
+    let abs = if path.is_absolute()
+    {
+        path.to_path_buf()
+    }
+    else
+    {
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join(path)
+    };
+    let mut uri = format!("file://{}", abs.to_string_lossy());
+    uri = uri.replace(' ', "%20");
+    uri
+}
+
+fn uri_to_path(uri: &str) -> Option<PathBuf>
+{
+    if let Some(rest) = uri.strip_prefix("file://")
+    {
+        Some(PathBuf::from(rest.replace("%20", " ")))
+    }
+    else
+    {
+        None
+    }
+}
+
+fn location_to_json(loc: Location) -> serde_json::Value
+{
+    json!({
+        "uri": loc.uri,
+        "range": {
+            "start": { "line": loc.line, "character": loc.col },
+            "end": { "line": loc.line, "character": loc.col + 1 }
+        }
+    })
+}
+
 enum LoopControl
 {
     Continue,
@@ -355,6 +466,31 @@ impl LspLog
     }
 }
 
+struct WorkspaceIndex
+{
+    built: bool,
+    symbols: HashMap<String, Vec<Location>>,
+}
+
+impl WorkspaceIndex
+{
+    fn new() -> Self
+    {
+        Self {
+            built: false,
+            symbols: HashMap::new(),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct Location
+{
+    uri: String,
+    line: usize,
+    col: usize,
+}
+
 fn handle_request(
     stdout: &mut dyn Write,
     value: &serde_json::Value,
@@ -362,6 +498,8 @@ fn handle_request(
     id: Option<serde_json::Value>,
     docs: &mut HashMap<String, String>,
     doc_symbols: &mut HashMap<String, HashMap<String, (usize, usize)>>,
+    workspace_root: &mut Option<PathBuf>,
+    workspace_index: &mut WorkspaceIndex,
     log: &mut LspLog,
 ) -> io::Result<LoopControl>
 {
@@ -371,11 +509,27 @@ fn handle_request(
         {
             if let Some(id) = id
             {
+                if let Some(params) = value.get("params")
+                {
+                    if let Some(root) = params
+                        .get("rootUri")
+                        .and_then(|u| u.as_str())
+                        .and_then(uri_to_path)
+                    {
+                        *workspace_root = Some(root);
+                    }
+                    else if let Some(root) = params
+                        .get("rootPath")
+                        .and_then(|u| u.as_str())
+                    {
+                        *workspace_root = Some(PathBuf::from(root));
+                    }
+                }
                 log.write("lsp: sending initialize response\n");
-                    send_response(
-                        stdout,
-                        &id,
-                        json!({
+                send_response(
+                    stdout,
+                    &id,
+                    json!({
                             "capabilities": {
                                 "textDocumentSync": 1,
                                 "hoverProvider": true,
@@ -538,12 +692,22 @@ fn handle_request(
                     }
                     else
                     {
-                        None
+                        find_workspace_definition(
+                            &symbol,
+                            workspace_root.as_deref(),
+                            workspace_index,
+                        )
+                        .map(|loc| location_to_json(loc))
                     }
                 }
                 else
                 {
-                    None
+                    find_workspace_definition(
+                        &symbol,
+                        workspace_root.as_deref(),
+                        workspace_index,
+                    )
+                    .map(|loc| location_to_json(loc))
                 }
             }
             else

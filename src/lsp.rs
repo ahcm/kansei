@@ -3,6 +3,7 @@ use crate::parser::Parser;
 use serde_json::json;
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
+use std::fs::OpenOptions;
 
 fn parse_source(source: &str) -> Result<(), String>
 {
@@ -125,7 +126,7 @@ fn publish_diagnostics(stdout: &mut dyn Write, uri: &str, message: Option<String
     )
 }
 
-fn read_message(reader: &mut dyn BufRead) -> Option<String>
+fn read_message(reader: &mut dyn BufRead, log: &mut LspLog) -> Option<String>
 {
     let mut content_length = None;
     loop
@@ -142,7 +143,11 @@ fn read_message(reader: &mut dyn BufRead) -> Option<String>
             if let Some(len) = content_length
             {
                 let mut buf = vec![0u8; len];
-                reader.read_exact(&mut buf).ok()?;
+                if reader.read_exact(&mut buf).is_err()
+                {
+                    log.write("lsp: failed to read body\n");
+                    return None;
+                }
                 return String::from_utf8(buf).ok();
             }
             content_length = None;
@@ -157,6 +162,10 @@ fn read_message(reader: &mut dyn BufRead) -> Option<String>
                 content_length = Some(len);
             }
         }
+        if content_length.is_none()
+        {
+            log.write(&format!("lsp: header: {line_trim}\n"));
+        }
     }
 }
 
@@ -168,21 +177,34 @@ pub fn run_lsp() -> i32
     let mut stdout = io::stdout();
     let mut docs: HashMap<String, String> = HashMap::new();
     let mut doc_symbols: HashMap<String, HashMap<String, (usize, usize)>> = HashMap::new();
+    let mut log = LspLog::new();
 
     loop
     {
-        let msg = match read_message(&mut reader)
+        let msg = match read_message(&mut reader, &mut log)
         {
             Some(msg) => msg,
-            None => break,
+            None =>
+            {
+                log.write("lsp: read_message returned None\n");
+                break;
+            }
         };
         let value: serde_json::Value = match serde_json::from_str(&msg)
         {
             Ok(val) => val,
-            Err(_) => continue,
+            Err(err) =>
+            {
+                log.write(&format!("lsp: json parse error: {err}\n"));
+                continue;
+            }
         };
         let method = value.get("method").and_then(|m| m.as_str());
         let id = value.get("id").cloned();
+        if let Some(method) = method
+        {
+            log.write(&format!("lsp: method {method}\n"));
+        }
 
         let handle_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             handle_request(
@@ -201,6 +223,7 @@ pub fn run_lsp() -> i32
             Ok(Ok(LoopControl::Break)) => break,
             Ok(Err(err)) =>
             {
+                log.write(&format!("lsp: write error: {err}\n"));
                 if err.kind() == io::ErrorKind::BrokenPipe
                 {
                     break;
@@ -449,6 +472,32 @@ enum LoopControl
 {
     Continue,
     Break,
+}
+
+struct LspLog
+{
+    file: Option<std::fs::File>,
+}
+
+impl LspLog
+{
+    fn new() -> Self
+    {
+        let path = std::env::var("KANSEI_LSP_LOG").ok();
+        let file = path.and_then(|p| {
+            OpenOptions::new().create(true).append(true).open(p).ok()
+        });
+        Self { file }
+    }
+
+    fn write(&mut self, msg: &str)
+    {
+        if let Some(file) = self.file.as_mut()
+        {
+            let _ = file.write_all(msg.as_bytes());
+            let _ = file.flush();
+        }
+    }
 }
 
 fn handle_request(

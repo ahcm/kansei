@@ -397,15 +397,33 @@ fn collect_symbols(ast: &crate::ast::Expr) -> HashMap<String, (usize, usize)>
         {
             ExprKind::FunctionDef { name, .. } =>
             {
-                symbols.insert(crate::intern::symbol_name(*name).to_string(), (expr.line - 1, expr.column.saturating_sub(1)));
+                symbols.insert(
+                    crate::intern::symbol_name(*name).to_string(),
+                    (
+                        expr.line.saturating_sub(1),
+                        expr.column.saturating_sub(1),
+                    ),
+                );
             }
             ExprKind::MethodDef { name, .. } =>
             {
-                symbols.insert(crate::intern::symbol_name(*name).to_string(), (expr.line - 1, expr.column.saturating_sub(1)));
+                symbols.insert(
+                    crate::intern::symbol_name(*name).to_string(),
+                    (
+                        expr.line.saturating_sub(1),
+                        expr.column.saturating_sub(1),
+                    ),
+                );
             }
             ExprKind::StructDef { name, .. } =>
             {
-                symbols.insert(crate::intern::symbol_name(*name).to_string(), (expr.line - 1, expr.column.saturating_sub(1)));
+                symbols.insert(
+                    crate::intern::symbol_name(*name).to_string(),
+                    (
+                        expr.line.saturating_sub(1),
+                        expr.column.saturating_sub(1),
+                    ),
+                );
             }
             ExprKind::Block(stmts) =>
             {

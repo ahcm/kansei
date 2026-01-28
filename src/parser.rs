@@ -1232,6 +1232,10 @@ impl Parser
             _ => panic!("Expected namespace after export at line {}", self.current_token.line),
         }
 
+        // Support both:
+        // export foo::bar::[a, b]
+        // export foo::bar
+        let mut names = Vec::new();
         loop
         {
             if self.current_token.token != Token::ColonColon
@@ -1241,21 +1245,32 @@ impl Parser
             self.eat(); // ::
             if self.current_token.token == Token::LeftBracket
             {
+                self.eat(); // [
                 break;
             }
             match &self.current_token.token
             {
                 Token::Identifier(n) =>
                 {
-                    namespace.push(intern::intern_symbol_owned(n.clone()));
+                    let ident = intern::intern_symbol_owned(n.clone());
                     self.eat();
+                    if self.current_token.token == Token::ColonColon
+                    {
+                        namespace.push(ident);
+                        continue;
+                    }
+                    names.push(ident);
+                    return self.make_expr(
+                        ExprKind::Export { namespace, names },
+                        span.line,
+                        span.column,
+                        span.source.clone(),
+                    );
                 }
                 _ => panic!("Expected namespace segment at line {}", self.current_token.line),
             }
         }
 
-        self.expect(Token::LeftBracket);
-        let mut names = Vec::new();
         if self.current_token.token != Token::RightBracket
         {
             loop

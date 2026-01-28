@@ -59,7 +59,11 @@ fn parse_error_location(message: &str) -> (usize, usize, String)
     (line, col, message.to_string())
 }
 
-fn send_response(stdout: &mut dyn Write, id: &serde_json::Value, result: serde_json::Value)
+fn send_response(
+    stdout: &mut dyn Write,
+    id: &serde_json::Value,
+    result: serde_json::Value,
+) -> io::Result<()>
 {
     let response = json!({
         "jsonrpc": "2.0",
@@ -67,12 +71,17 @@ fn send_response(stdout: &mut dyn Write, id: &serde_json::Value, result: serde_j
         "result": result
     });
     let payload = response.to_string();
-    let _ = write!(stdout, "Content-Length: {}\r\n\r\n", payload.len());
-    let _ = stdout.write_all(payload.as_bytes());
-    let _ = stdout.flush();
+    write!(stdout, "Content-Length: {}\r\n\r\n", payload.len())?;
+    stdout.write_all(payload.as_bytes())?;
+    stdout.flush()?;
+    Ok(())
 }
 
-fn send_notification(stdout: &mut dyn Write, method: &str, params: serde_json::Value)
+fn send_notification(
+    stdout: &mut dyn Write,
+    method: &str,
+    params: serde_json::Value,
+) -> io::Result<()>
 {
     let notif = json!({
         "jsonrpc": "2.0",
@@ -80,12 +89,13 @@ fn send_notification(stdout: &mut dyn Write, method: &str, params: serde_json::V
         "params": params
     });
     let payload = notif.to_string();
-    let _ = write!(stdout, "Content-Length: {}\r\n\r\n", payload.len());
-    let _ = stdout.write_all(payload.as_bytes());
-    let _ = stdout.flush();
+    write!(stdout, "Content-Length: {}\r\n\r\n", payload.len())?;
+    stdout.write_all(payload.as_bytes())?;
+    stdout.flush()?;
+    Ok(())
 }
 
-fn publish_diagnostics(stdout: &mut dyn Write, uri: &str, message: Option<String>)
+fn publish_diagnostics(stdout: &mut dyn Write, uri: &str, message: Option<String>) -> io::Result<()>
 {
     let diagnostics = if let Some(message) = message
     {
@@ -112,7 +122,7 @@ fn publish_diagnostics(stdout: &mut dyn Write, uri: &str, message: Option<String
             "uri": uri,
             "diagnostics": diagnostics
         }),
-    );
+    )
 }
 
 fn read_message(reader: &mut dyn BufRead) -> Option<String>
@@ -175,7 +185,7 @@ pub fn run_lsp() -> i32
             {
                 if let Some(id) = id
                 {
-                    send_response(
+                    if let Err(err) = send_response(
                         &mut stdout,
                         &id,
                         json!({
@@ -184,14 +194,26 @@ pub fn run_lsp() -> i32
                                 "hoverProvider": true
                             }
                         }),
-                    );
+                    )
+                    {
+                        if err.kind() == io::ErrorKind::BrokenPipe
+                        {
+                            break;
+                        }
+                    }
                 }
             }
             Some("shutdown") =>
             {
                 if let Some(id) = id
                 {
-                    send_response(&mut stdout, &id, json!(null));
+                    if let Err(err) = send_response(&mut stdout, &id, json!(null))
+                    {
+                        if err.kind() == io::ErrorKind::BrokenPipe
+                        {
+                            break;
+                        }
+                    }
                 }
             }
             Some("exit") => break,
@@ -212,7 +234,13 @@ pub fn run_lsp() -> i32
                             let symbols = collect_symbols(&ast);
                             doc_symbols.insert(uri.clone(), symbols);
                         }
-                        publish_diagnostics(&mut stdout, &uri, diag);
+                        if let Err(err) = publish_diagnostics(&mut stdout, &uri, diag)
+                        {
+                            if err.kind() == io::ErrorKind::BrokenPipe
+                            {
+                                break;
+                            }
+                        }
                     }
                 }
             }
@@ -238,7 +266,13 @@ pub fn run_lsp() -> i32
                                 let symbols = collect_symbols(&ast);
                                 doc_symbols.insert(uri.clone(), symbols);
                             }
-                            publish_diagnostics(&mut stdout, &uri, diag);
+                            if let Err(err) = publish_diagnostics(&mut stdout, &uri, diag)
+                            {
+                                if err.kind() == io::ErrorKind::BrokenPipe
+                                {
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -295,14 +329,26 @@ pub fn run_lsp() -> i32
                     {
                         json!(null)
                     };
-                    send_response(&mut stdout, &id, result);
+                    if let Err(err) = send_response(&mut stdout, &id, result)
+                    {
+                        if err.kind() == io::ErrorKind::BrokenPipe
+                        {
+                            break;
+                        }
+                    }
                 }
             }
             _ =>
             {
                 if let Some(id) = id
                 {
-                    send_response(&mut stdout, &id, json!(null));
+                    if let Err(err) = send_response(&mut stdout, &id, json!(null))
+                    {
+                        if err.kind() == io::ErrorKind::BrokenPipe
+                        {
+                            break;
+                        }
+                    }
                 }
             }
         }

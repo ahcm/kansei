@@ -502,6 +502,7 @@ fn print_usage(bin: &str)
 
 Commands:
   {bin} fmt <path>      Format .ks files in place
+  {bin} fmt --stdin     Format stdin to stdout
   {bin} check <path>    Parse .ks files and exit non-zero on errors
   {bin} test <path>     Run .ks files and compare against .out/.err if present
   {bin} install [path]  Install modules from kansei.toml or local paths
@@ -696,12 +697,17 @@ fn handle_subcommand(args: &[String]) -> Option<i32>
     {
         "fmt" =>
         {
-            if args.len() < 3
+            let mut fmt_args = args[2..].to_vec();
+            if fmt_args.iter().any(|arg| arg == "--stdin")
             {
-                eprintln!("fmt expects a file or directory path.");
+                return Some(run_fmt_stdin());
+            }
+            if fmt_args.is_empty()
+            {
+                eprintln!("fmt expects a file or directory path, or --stdin.");
                 return Some(2);
             }
-            Some(run_fmt(&args[2..]))
+            Some(run_fmt(&fmt_args))
         }
         "check" =>
         {
@@ -841,6 +847,31 @@ fn run_fmt(paths: &[String]) -> i32
             println!("formatted {} file(s)", formatted);
         }
         0
+    }
+}
+
+fn run_fmt_stdin() -> i32
+{
+    use std::io::Read;
+    let mut input = String::new();
+    if std::io::stdin().read_to_string(&mut input).is_err()
+    {
+        eprintln!("fmt --stdin failed to read input.");
+        return 1;
+    }
+    match parse_source_string(&input)
+    {
+        Ok(ast) =>
+        {
+            let formatted = source::expr_to_source(&ast);
+            print!("{formatted}");
+            0
+        }
+        Err(err) =>
+        {
+            eprintln!("fmt --stdin parse error: {err}");
+            1
+        }
     }
 }
 

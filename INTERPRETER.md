@@ -81,8 +81,16 @@ name = "kansei"
 scope = "source.ks"
 file-types = ["ks"]
 language-servers = ["kansei"]
+formatter = { command = "kansei", args = ["fmt", "--stdin"] }
 
 [language-server.kansei]
 command = "kansei"
 args = ["lsp"]
 ```
+
+To enable textobjects and indent queries in Helix, copy these files:
+```
+helix/runtime/queries/kansei/textobjects.scm
+helix/runtime/queries/kansei/indents.scm
+```
+into your Helix runtime at `~/.config/helix/runtime/queries/kansei/`.

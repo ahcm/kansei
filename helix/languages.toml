@@ -1,0 +1,10 @@
+[[language]]
+name = "kansei"
+scope = "source.ks"
+file-types = ["ks"]
+language-servers = ["kansei"]
+formatter = { command = "kansei", args = ["fmt", "--stdin"] }
+
+[language-server.kansei]
+command = "kansei"
+args = ["lsp"]

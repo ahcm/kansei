@@ -4,6 +4,8 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::fs::OpenOptions;
+use std::sync::mpsc;
+use std::time::Duration;
 use libc::{SIGPIPE, SIG_IGN};
 
 fn parse_source(source: &str, suppress: bool) -> Result<(), String>
@@ -176,6 +178,23 @@ fn publish_empty_diagnostics(stdout: &mut dyn Write, uri: &str) -> io::Result<()
             "diagnostics": []
         }),
     )
+}
+
+fn parse_with_timeout(
+    source: String,
+    timeout_ms: u64,
+) -> Option<(Option<String>, HashMap<String, (usize, usize)>)>
+{
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let diag = parse_source(&source, true).err();
+        let symbols = parse_ast_quiet(&source)
+            .ok()
+            .map(|ast| collect_symbols(&ast))
+            .unwrap_or_default();
+        let _ = tx.send((diag, symbols));
+    });
+    rx.recv_timeout(Duration::from_millis(timeout_ms)).ok()
 }
 
 fn read_message(reader: &mut dyn BufRead, log: &mut LspLog) -> Option<String>
@@ -624,10 +643,20 @@ fn handle_request(
                     log.write("lsp: didOpen has uri/text\n");
                     let uri = uri.as_str().unwrap_or_default().to_string();
                     let text = text.as_str().unwrap_or_default().to_string();
-                    docs.insert(uri.clone(), text);
-                    log.write("lsp: publish diagnostics (didOpen) empty\n");
-                    publish_empty_diagnostics(stdout, &uri)?;
-                    log.write("lsp: published diagnostics (didOpen) empty\n");
+                    docs.insert(uri.clone(), text.clone());
+                    log.write("lsp: didOpen parsing (async)\n");
+                    if let Some((diag, symbols)) = parse_with_timeout(text, 200)
+                    {
+                        doc_symbols.insert(uri.clone(), symbols);
+                        log.write("lsp: publish diagnostics (didOpen)\n");
+                        publish_diagnostics(stdout, &uri, diag)?;
+                        log.write("lsp: published diagnostics (didOpen)\n");
+                    }
+                    else
+                    {
+                        log.write("lsp: didOpen parse timeout\n");
+                        publish_empty_diagnostics(stdout, &uri)?;
+                    }
                 }
                 else
                 {
@@ -655,9 +684,20 @@ fn handle_request(
                 {
                     if let Some(text) = change.get("text").and_then(|t| t.as_str())
                     {
-                        docs.insert(uri.clone(), text.to_string());
-                        log.write("lsp: publish diagnostics (didChange) empty\n");
-                        publish_empty_diagnostics(stdout, &uri)?;
+                        let text = text.to_string();
+                        docs.insert(uri.clone(), text.clone());
+                        log.write("lsp: didChange parsing (async)\n");
+                        if let Some((diag, symbols)) = parse_with_timeout(text, 200)
+                        {
+                            doc_symbols.insert(uri.clone(), symbols);
+                            log.write("lsp: publish diagnostics (didChange)\n");
+                            publish_diagnostics(stdout, &uri, diag)?;
+                        }
+                        else
+                        {
+                            log.write("lsp: didChange parse timeout\n");
+                            publish_empty_diagnostics(stdout, &uri)?;
+                        }
                     }
                 }
             }

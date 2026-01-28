@@ -571,6 +571,14 @@ fn handle_request(
                     log.write("lsp: publish diagnostics (didOpen)\n");
                     publish_diagnostics(stdout, &uri, diag)?;
                 }
+                else
+                {
+                    log.write("lsp: didOpen missing uri/text\n");
+                }
+            }
+            else
+            {
+                log.write("lsp: didOpen missing textDocument\n");
             }
             return Ok(LoopControl::Continue);
         }

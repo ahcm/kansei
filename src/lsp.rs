@@ -6,12 +6,23 @@ use std::io::{self, BufRead, Write};
 use std::fs::OpenOptions;
 use libc::{SIGPIPE, SIG_IGN};
 
-fn parse_source(source: &str) -> Result<(), String>
+fn parse_source(source: &str, suppress: bool) -> Result<(), String>
 {
     let parse_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let lexer = Lexer::new(source);
-        let mut parser = Parser::new(lexer);
-        parser.parse()
+        if suppress
+        {
+            with_suppressed_eprintln(|| {
+                let lexer = Lexer::new(source);
+                let mut parser = Parser::new(lexer);
+                parser.parse()
+            })
+        }
+        else
+        {
+            let lexer = Lexer::new(source);
+            let mut parser = Parser::new(lexer);
+            parser.parse()
+        }
     }));
     match parse_result
     {
@@ -61,6 +72,34 @@ fn parse_error_location(message: &str) -> (usize, usize, String)
     (line, col, message.to_string())
 }
 
+fn with_suppressed_eprintln<F, R>(f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    #[cfg(unix)]
+    unsafe {
+        let saved = libc::dup(libc::STDERR_FILENO);
+        let devnull = libc::open(b"/dev/null\0".as_ptr() as *const libc::c_char, libc::O_WRONLY);
+        if devnull >= 0
+        {
+            libc::dup2(devnull, libc::STDERR_FILENO);
+            libc::close(devnull);
+        }
+        let result = f();
+        if saved >= 0
+        {
+            libc::dup2(saved, libc::STDERR_FILENO);
+            libc::close(saved);
+        }
+        return result;
+    }
+
+    #[cfg(not(unix))]
+    {
+        f()
+    }
+}
+
 fn send_response(
     stdout: &mut dyn Write,
     id: &serde_json::Value,
@@ -101,7 +140,7 @@ fn publish_diagnostics(stdout: &mut dyn Write, uri: &str, message: Option<String
 {
     let diagnostics = if let Some(message) = message
     {
-        let (line, col, msg) = parse_error_location(&message);
+    let (line, col, msg) = parse_error_location(&message);
         vec![json!({
             "range": {
                 "start": { "line": line, "character": col },
@@ -257,9 +296,11 @@ pub fn run_lsp() -> i32
 fn parse_ast_quiet(source: &str) -> Result<crate::ast::Expr, String>
 {
     let parse_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let lexer = Lexer::new(source);
-        let mut parser = Parser::new(lexer);
-        parser.parse()
+        with_suppressed_eprintln(|| {
+            let lexer = Lexer::new(source);
+            let mut parser = Parser::new(lexer);
+            parser.parse()
+        })
     }));
     match parse_result
     {
@@ -572,7 +613,7 @@ fn handle_request(
                     let uri = uri.as_str().unwrap_or_default().to_string();
                     let text = text.as_str().unwrap_or_default().to_string();
                     log.write("lsp: didOpen parsing\n");
-                    let diag = parse_source(&text).err();
+                    let diag = parse_source(&text, true).err();
                     log.write("lsp: didOpen parsed\n");
                     docs.insert(uri.clone(), text);
                     log.write("lsp: didOpen stored text\n");
@@ -613,7 +654,7 @@ fn handle_request(
                 {
                     if let Some(text) = change.get("text").and_then(|t| t.as_str())
                     {
-                        let diag = parse_source(text).err();
+                        let diag = parse_source(text, true).err();
                         docs.insert(uri.clone(), text.to_string());
                         if let Ok(ast) = parse_ast_quiet(docs.get(&uri).unwrap())
                         {

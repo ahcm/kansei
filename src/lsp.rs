@@ -180,178 +180,29 @@ pub fn run_lsp() -> i32
         let method = value.get("method").and_then(|m| m.as_str());
         let id = value.get("id").cloned();
 
-        match method
+        let handle_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            handle_request(
+                &mut stdout,
+                &value,
+                method,
+                id,
+                &mut docs,
+                &mut doc_symbols,
+            )
+        }));
+
+        match handle_result
         {
-            Some("initialize") =>
+            Ok(Ok(LoopControl::Continue)) => {}
+            Ok(Ok(LoopControl::Break)) => break,
+            Ok(Err(err)) =>
             {
-                if let Some(id) = id
+                if err.kind() == io::ErrorKind::BrokenPipe
                 {
-                    if let Err(err) = send_response(
-                        &mut stdout,
-                        &id,
-                        json!({
-                            "capabilities": {
-                                "textDocumentSync": 1,
-                                "hoverProvider": true
-                            }
-                        }),
-                    )
-                    {
-                        if err.kind() == io::ErrorKind::BrokenPipe
-                        {
-                            break;
-                        }
-                    }
+                    break;
                 }
             }
-            Some("shutdown") =>
-            {
-                if let Some(id) = id
-                {
-                    if let Err(err) = send_response(&mut stdout, &id, json!(null))
-                    {
-                        if err.kind() == io::ErrorKind::BrokenPipe
-                        {
-                            break;
-                        }
-                    }
-                }
-            }
-            Some("exit") => break,
-            Some("textDocument/didOpen") =>
-            {
-                let params = value.get("params").cloned().unwrap_or(json!({}));
-                if let Some(text_doc) = params.get("textDocument")
-                {
-                    if let (Some(uri), Some(text)) =
-                        (text_doc.get("uri"), text_doc.get("text"))
-                    {
-                        let uri = uri.as_str().unwrap_or_default().to_string();
-                        let text = text.as_str().unwrap_or_default().to_string();
-                        let diag = parse_source(&text).err();
-                        docs.insert(uri.clone(), text);
-                        if let Ok(ast) = parse_ast_quiet(docs.get(&uri).unwrap())
-                        {
-                            let symbols = collect_symbols(&ast);
-                            doc_symbols.insert(uri.clone(), symbols);
-                        }
-                        if let Err(err) = publish_diagnostics(&mut stdout, &uri, diag)
-                        {
-                            if err.kind() == io::ErrorKind::BrokenPipe
-                            {
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            Some("textDocument/didChange") =>
-            {
-                let params = value.get("params").cloned().unwrap_or(json!({}));
-                let uri = params
-                    .get("textDocument")
-                    .and_then(|doc| doc.get("uri"))
-                    .and_then(|u| u.as_str())
-                    .unwrap_or_default()
-                    .to_string();
-                if let Some(changes) = params.get("contentChanges").and_then(|c| c.as_array())
-                {
-                    if let Some(change) = changes.last()
-                    {
-                        if let Some(text) = change.get("text").and_then(|t| t.as_str())
-                        {
-                            let diag = parse_source(text).err();
-                            docs.insert(uri.clone(), text.to_string());
-                            if let Ok(ast) = parse_ast_quiet(docs.get(&uri).unwrap())
-                            {
-                                let symbols = collect_symbols(&ast);
-                                doc_symbols.insert(uri.clone(), symbols);
-                            }
-                            if let Err(err) = publish_diagnostics(&mut stdout, &uri, diag)
-                            {
-                                if err.kind() == io::ErrorKind::BrokenPipe
-                                {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            Some("textDocument/hover") =>
-            {
-                let params = value.get("params").cloned().unwrap_or(json!({}));
-                let uri = params
-                    .get("textDocument")
-                    .and_then(|doc| doc.get("uri"))
-                    .and_then(|u| u.as_str())
-                    .unwrap_or_default()
-                    .to_string();
-                let pos = params.get("position").cloned().unwrap_or(json!({}));
-                let line = pos.get("line").and_then(|l| l.as_u64()).unwrap_or(0) as usize;
-                let character = pos
-                    .get("character")
-                    .and_then(|c| c.as_u64())
-                    .unwrap_or(0) as usize;
-                let symbol = docs
-                    .get(&uri)
-                    .and_then(|text| word_at_position(text, line, character));
-                let mut contents = None;
-                if let Some(symbol) = symbol
-                {
-                    if let Some(symbols) = doc_symbols.get(&uri)
-                    {
-                        if let Some((def_line, def_col)) = symbols.get(&symbol)
-                        {
-                            contents = Some(format!(
-                                "`{symbol}` defined at line {}:{}",
-                                def_line + 1,
-                                def_col + 1
-                            ));
-                        }
-                    }
-                    if contents.is_none()
-                    {
-                        contents = Some(format!("`{symbol}`"));
-                    }
-                }
-                if let Some(id) = id
-                {
-                    let result = if let Some(contents) = contents
-                    {
-                        json!({
-                            "contents": {
-                                "kind": "markdown",
-                                "value": contents
-                            }
-                        })
-                    }
-                    else
-                    {
-                        json!(null)
-                    };
-                    if let Err(err) = send_response(&mut stdout, &id, result)
-                    {
-                        if err.kind() == io::ErrorKind::BrokenPipe
-                        {
-                            break;
-                        }
-                    }
-                }
-            }
-            _ =>
-            {
-                if let Some(id) = id
-                {
-                    if let Err(err) = send_response(&mut stdout, &id, json!(null))
-                    {
-                        if err.kind() == io::ErrorKind::BrokenPipe
-                        {
-                            break;
-                        }
-                    }
-                }
-            }
+            Err(_) => {}
         }
     }
 
@@ -588,4 +439,158 @@ fn word_at_position(source: &str, line: usize, character: usize) -> Option<Strin
 fn is_ident_byte(b: u8) -> bool
 {
     b.is_ascii_alphanumeric() || b == b'_'
+}
+
+enum LoopControl
+{
+    Continue,
+    Break,
+}
+
+fn handle_request(
+    stdout: &mut dyn Write,
+    value: &serde_json::Value,
+    method: Option<&str>,
+    id: Option<serde_json::Value>,
+    docs: &mut HashMap<String, String>,
+    doc_symbols: &mut HashMap<String, HashMap<String, (usize, usize)>>,
+) -> io::Result<LoopControl>
+{
+    match method
+    {
+        Some("initialize") =>
+        {
+            if let Some(id) = id
+            {
+                send_response(
+                    stdout,
+                    &id,
+                    json!({
+                        "capabilities": {
+                            "textDocumentSync": 1,
+                            "hoverProvider": true
+                        }
+                    }),
+                )?;
+            }
+        }
+        Some("shutdown") =>
+        {
+            if let Some(id) = id
+            {
+                send_response(stdout, &id, json!(null))?;
+            }
+        }
+        Some("exit") => return Ok(LoopControl::Break),
+        Some("textDocument/didOpen") =>
+        {
+            let params = value.get("params").cloned().unwrap_or(json!({}));
+            if let Some(text_doc) = params.get("textDocument")
+            {
+                if let (Some(uri), Some(text)) = (text_doc.get("uri"), text_doc.get("text"))
+                {
+                    let uri = uri.as_str().unwrap_or_default().to_string();
+                    let text = text.as_str().unwrap_or_default().to_string();
+                    let diag = parse_source(&text).err();
+                    docs.insert(uri.clone(), text);
+                    if let Ok(ast) = parse_ast_quiet(docs.get(&uri).unwrap())
+                    {
+                        let symbols = collect_symbols(&ast);
+                        doc_symbols.insert(uri.clone(), symbols);
+                    }
+                    publish_diagnostics(stdout, &uri, diag)?;
+                }
+            }
+        }
+        Some("textDocument/didChange") =>
+        {
+            let params = value.get("params").cloned().unwrap_or(json!({}));
+            let uri = params
+                .get("textDocument")
+                .and_then(|doc| doc.get("uri"))
+                .and_then(|u| u.as_str())
+                .unwrap_or_default()
+                .to_string();
+            if let Some(changes) = params.get("contentChanges").and_then(|c| c.as_array())
+            {
+                if let Some(change) = changes.last()
+                {
+                    if let Some(text) = change.get("text").and_then(|t| t.as_str())
+                    {
+                        let diag = parse_source(text).err();
+                        docs.insert(uri.clone(), text.to_string());
+                        if let Ok(ast) = parse_ast_quiet(docs.get(&uri).unwrap())
+                        {
+                            let symbols = collect_symbols(&ast);
+                            doc_symbols.insert(uri.clone(), symbols);
+                        }
+                        publish_diagnostics(stdout, &uri, diag)?;
+                    }
+                }
+            }
+        }
+        Some("textDocument/hover") =>
+        {
+            let params = value.get("params").cloned().unwrap_or(json!({}));
+            let uri = params
+                .get("textDocument")
+                .and_then(|doc| doc.get("uri"))
+                .and_then(|u| u.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let pos = params.get("position").cloned().unwrap_or(json!({}));
+            let line = pos.get("line").and_then(|l| l.as_u64()).unwrap_or(0) as usize;
+            let character = pos
+                .get("character")
+                .and_then(|c| c.as_u64())
+                .unwrap_or(0) as usize;
+            let symbol = docs
+                .get(&uri)
+                .and_then(|text| word_at_position(text, line, character));
+            let mut contents = None;
+            if let Some(symbol) = symbol
+            {
+                if let Some(symbols) = doc_symbols.get(&uri)
+                {
+                    if let Some((def_line, def_col)) = symbols.get(&symbol)
+                    {
+                        contents = Some(format!(
+                            "`{symbol}` defined at line {}:{}",
+                            def_line + 1,
+                            def_col + 1
+                        ));
+                    }
+                }
+                if contents.is_none()
+                {
+                    contents = Some(format!("`{symbol}`"));
+                }
+            }
+            if let Some(id) = id
+            {
+                let result = if let Some(contents) = contents
+                {
+                    json!({
+                        "contents": {
+                            "kind": "markdown",
+                            "value": contents
+                        }
+                    })
+                }
+                else
+                {
+                    json!(null)
+                };
+                send_response(stdout, &id, result)?;
+            }
+        }
+        _ =>
+        {
+            if let Some(id) = id
+            {
+                send_response(stdout, &id, json!(null))?;
+            }
+        }
+    }
+    Ok(LoopControl::Continue)
 }

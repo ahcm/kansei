@@ -4,6 +4,7 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::fs::OpenOptions;
+use libc::{SIGPIPE, SIG_IGN};
 
 fn parse_source(source: &str) -> Result<(), String>
 {
@@ -173,6 +174,9 @@ fn read_message(reader: &mut dyn BufRead, log: &mut LspLog) -> Option<String>
 pub fn run_lsp() -> i32
 {
     std::panic::set_hook(Box::new(|_| {}));
+    unsafe {
+        libc::signal(SIGPIPE, SIG_IGN);
+    }
     let stdin = io::stdin();
     let mut reader = io::BufReader::new(stdin.lock());
     let mut stdout = io::stdout();
@@ -570,6 +574,7 @@ fn handle_request(
                     }
                     log.write("lsp: publish diagnostics (didOpen)\n");
                     publish_diagnostics(stdout, &uri, diag)?;
+                    log.write("lsp: published diagnostics (didOpen)\n");
                 }
                 else
                 {

@@ -128,18 +128,25 @@ fn publish_diagnostics(stdout: &mut dyn Write, uri: &str, message: Option<String
 fn read_message(reader: &mut dyn BufRead) -> Option<String>
 {
     let mut content_length = None;
-    let mut line = String::new();
     loop
     {
-        line.clear();
-        if reader.read_line(&mut line).ok()? == 0
+        let mut line = String::new();
+        let bytes = reader.read_line(&mut line).ok()?;
+        if bytes == 0
         {
             return None;
         }
         let line_trim = line.trim_end_matches(&['\r', '\n'][..]);
         if line_trim.is_empty()
         {
-            break;
+            if let Some(len) = content_length
+            {
+                let mut buf = vec![0u8; len];
+                reader.read_exact(&mut buf).ok()?;
+                return String::from_utf8(buf).ok();
+            }
+            content_length = None;
+            continue;
         }
         let lower = line_trim.to_ascii_lowercase();
         if let Some(rest) = lower.strip_prefix("content-length:")
@@ -151,10 +158,6 @@ fn read_message(reader: &mut dyn BufRead) -> Option<String>
             }
         }
     }
-    let len = content_length?;
-    let mut buf = vec![0u8; len];
-    reader.read_exact(&mut buf).ok()?;
-    String::from_utf8(buf).ok()
 }
 
 pub fn run_lsp() -> i32

@@ -26,7 +26,7 @@ The language server is started with:
 ```
 kansei lsp
 ```
-It provides basic diagnostics on file open/change.
+It provides diagnostics and hover on symbols defined in the current document.
 
 ### Vim (vim-lsp)
 Example `~/.vimrc`:
@@ -62,7 +62,9 @@ if not configs.kansei then
   }
 end
 
-lspconfig.kansei.setup({})
+lspconfig.kansei.setup({
+  capabilities = vim.lsp.protocol.make_client_capabilities(),
+})
 ```
 
 ### Helix

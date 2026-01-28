@@ -16,23 +16,12 @@ extern "C" fn lsp_signal_handler(_sig: i32)
     LSP_SHUTDOWN.store(true, Ordering::SeqCst);
 }
 
-fn parse_source(source: &str, suppress: bool) -> Result<(), String>
+fn parse_source(source: &str) -> Result<(), String>
 {
     let parse_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        if suppress
-        {
-            with_suppressed_eprintln(|| {
-                let lexer = Lexer::new(source);
-                let mut parser = Parser::new(lexer);
-                parser.parse()
-            })
-        }
-        else
-        {
-            let lexer = Lexer::new(source);
-            let mut parser = Parser::new(lexer);
-            parser.parse()
-        }
+        let lexer = Lexer::new(source);
+        let mut parser = Parser::new(lexer);
+        parser.parse()
     }));
     match parse_result
     {
@@ -80,34 +69,6 @@ fn parse_error_location(message: &str) -> (usize, usize, String)
         }
     }
     (line, col, message.to_string())
-}
-
-fn with_suppressed_eprintln<F, R>(f: F) -> R
-where
-    F: FnOnce() -> R,
-{
-    #[cfg(unix)]
-    unsafe {
-        let saved = libc::dup(libc::STDERR_FILENO);
-        let devnull = libc::open(b"/dev/null\0".as_ptr() as *const libc::c_char, libc::O_WRONLY);
-        if devnull >= 0
-        {
-            libc::dup2(devnull, libc::STDERR_FILENO);
-            libc::close(devnull);
-        }
-        let result = f();
-        if saved >= 0
-        {
-            libc::dup2(saved, libc::STDERR_FILENO);
-            libc::close(saved);
-        }
-        return result;
-    }
-
-    #[cfg(not(unix))]
-    {
-        f()
-    }
 }
 
 fn send_response(
@@ -242,7 +203,7 @@ pub fn run_lsp() -> i32
     std::thread::spawn(move || {
         while let Ok(req) = parse_rx.recv()
         {
-            let diag = parse_source(&req.text, true).err();
+            let diag = parse_source(&req.text).err();
             let symbols = parse_ast_quiet(&req.text)
                 .ok()
                 .map(|ast| collect_symbols(&ast))
@@ -335,6 +296,7 @@ pub fn run_lsp() -> i32
             {
                 continue;
             }
+            log.write(&format!("lsp: diagnostics ready for {}\n", result.uri));
             doc_symbols.insert(result.uri.clone(), result.symbols);
             if let Err(err) = publish_diagnostics(&mut stdout, &result.uri, result.diag)
             {
@@ -344,6 +306,10 @@ pub fn run_lsp() -> i32
                     log.write("lsp: exit (BrokenPipe) after diagnostics\n");
                     break;
                 }
+            }
+            else
+            {
+                log.write(&format!("lsp: diagnostics published for {}\n", result.uri));
             }
         }
     }
@@ -355,11 +321,9 @@ pub fn run_lsp() -> i32
 fn parse_ast_quiet(source: &str) -> Result<crate::ast::Expr, String>
 {
     let parse_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        with_suppressed_eprintln(|| {
-            let lexer = Lexer::new(source);
-            let mut parser = Parser::new(lexer);
-            parser.parse()
-        })
+        let lexer = Lexer::new(source);
+        let mut parser = Parser::new(lexer);
+        parser.parse()
     }));
     match parse_result
     {

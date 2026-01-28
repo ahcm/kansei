@@ -225,7 +225,10 @@ pub fn run_lsp() -> i32
 
         match handle_result
         {
-            Ok(Ok(LoopControl::Continue)) => {}
+            Ok(Ok(LoopControl::Continue)) =>
+            {
+                log.write("lsp: loop continue\n");
+            }
             Ok(Ok(LoopControl::Break)) =>
             {
                 log.write("lsp: exit (LoopControl::Break)\n");
@@ -558,11 +561,14 @@ fn handle_request(
         Some("exit") => return Ok(LoopControl::Break),
         Some("textDocument/didOpen") =>
         {
+            log.write("lsp: didOpen handler start\n");
             let params = value.get("params").cloned().unwrap_or(json!({}));
             if let Some(text_doc) = params.get("textDocument")
             {
+                log.write("lsp: didOpen has textDocument\n");
                 if let (Some(uri), Some(text)) = (text_doc.get("uri"), text_doc.get("text"))
                 {
+                    log.write("lsp: didOpen has uri/text\n");
                     let uri = uri.as_str().unwrap_or_default().to_string();
                     let text = text.as_str().unwrap_or_default().to_string();
                     let diag = parse_source(&text).err();

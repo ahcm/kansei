@@ -52,6 +52,11 @@ fn main() -> rustyline::Result<()>
         println!("{}", version_string());
         return Ok(());
     }
+    if args.iter().any(|arg| arg == "--get-dirs")
+    {
+        run_get_dirs();
+        return Ok(());
+    }
     if let Some(code) = handle_subcommand(&args)
     {
         std::process::exit(code);
@@ -498,6 +503,7 @@ fn print_usage(bin: &str)
     println!(
         "Usage: {bin} [options] [script] [args...]
   -V, --version         Show version
+      --get-dirs        Show module/wasm search paths
   -h, --help            Show this help
   -e, --evaluate <src>  Evaluate a one-liner
       --dump-ast        Dump AST
@@ -513,7 +519,6 @@ Commands:
   {bin} test <path>     Run .ks files and compare against .out/.err if present
   {bin} install [path]  Install modules from kansei.toml or local paths
   {bin} lsp             Start language server on stdio
-  {bin} get-dirs        Show module/wasm search paths
 
 Version: {version}",
         version = version_string()
@@ -773,10 +778,6 @@ fn handle_subcommand(args: &[String]) -> Option<i32>
         {
             let code = lsp::run_lsp();
             Some(code)
-        }
-        "get-dirs" =>
-        {
-            Some(run_get_dirs())
         }
         _ => None,
     }

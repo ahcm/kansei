@@ -11725,7 +11725,7 @@ fn default_module_search_paths(main_path: Option<&std::path::Path>) -> Vec<PathB
     }
     if let Ok(home) = env::var("HOME")
     {
-        out.push(PathBuf::from(home).join(".local/share/kansei/modules"));
+        out.push(PathBuf::from(home.clone()).join(".local/share/kansei/modules"));
         out.push(PathBuf::from(home).join(".local/lib/kansei/modules"));
     }
     out.push(PathBuf::from("/usr/local/lib/kansei/modules"));
@@ -11758,7 +11758,7 @@ fn default_wasm_search_paths(main_path: Option<&std::path::Path>) -> Vec<PathBuf
     }
     if let Ok(home) = env::var("HOME")
     {
-        out.push(PathBuf::from(home).join(".local/share/kansei/wasm"));
+        out.push(PathBuf::from(home.clone()).join(".local/share/kansei/wasm"));
         out.push(PathBuf::from(home).join(".local/lib/kansei/wasm"));
     }
     out.push(PathBuf::from("/usr/local/lib/kansei/wasm"));

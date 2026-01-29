@@ -47,6 +47,11 @@ fn native_program_exit(args: &[value::Value]) -> Result<value::Value, String>
 fn main() -> rustyline::Result<()>
 {
     let args: Vec<String> = env::args().collect();
+    if args.iter().any(|arg| arg == "--version" || arg == "-V")
+    {
+        println!("{}", version_string());
+        return Ok(());
+    }
     if let Some(code) = handle_subcommand(&args)
     {
         std::process::exit(code);
@@ -492,6 +497,7 @@ fn print_usage(bin: &str)
 {
     println!(
         "Usage: {bin} [options] [script] [args...]
+  -V, --version         Show version
   -h, --help            Show this help
   -e, --evaluate <src>  Evaluate a one-liner
       --dump-ast        Dump AST
@@ -506,8 +512,16 @@ Commands:
   {bin} check <path>    Parse .ks files and exit non-zero on errors
   {bin} test <path>     Run .ks files and compare against .out/.err if present
   {bin} install [path]  Install modules from kansei.toml or local paths
-  {bin} lsp             Start language server on stdio"
+  {bin} lsp             Start language server on stdio
+
+Version: {version}",
+        version = version_string()
     );
+}
+
+fn version_string() -> String
+{
+    format!("Kansei v{}", env!("CARGO_PKG_VERSION"))
 }
 
 fn run_repl(mut interpreter: eval::Interpreter) -> rustyline::Result<()>

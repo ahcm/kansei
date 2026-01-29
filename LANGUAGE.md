@@ -680,13 +680,26 @@ puts files
 name = "Ada"
 puts `echo {name}`
 
+## Memory Model
+Kansei uses Rust reference counting for memory management. Values backed by
+`Rc<RefCell<...>>` are freed when the last reference drops. There is no tracing
+GC, so reference cycles will not be collected.
+
+Interned strings and symbols are cached globally and can live for the lifetime
+of the process.
+
+For WASM modules, memory is owned by the module. Kansei reads/writes the
+exported `memory` and uses the module's allocator (`alloc`/`dealloc` or
+wasm-bindgen malloc/free) to manage buffers.
+
 ## WASM Modules
 Use `load wasm::name` to load a WebAssembly module. Kansei searches
 `KANSEI_WASM_PATH` (colon-separated). If unset, it looks in:
 1) `<main-file-dir>/wasm`
-2) `/usr/local/lib/kansei/wasm`
-3) `/usr/lib/kansei/wasm`
-4) `~/.local/lib/kansei/wasm`
+2) `~/.local/share/kansei/wasm`
+3) `~/.local/lib/kansei/wasm`
+4) `/usr/local/lib/kansei/wasm`
+5) `/usr/lib/kansei/wasm`
 
 The module is exposed under the `wasm` namespace.
 

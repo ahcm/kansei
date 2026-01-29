@@ -513,6 +513,7 @@ Commands:
   {bin} test <path>     Run .ks files and compare against .out/.err if present
   {bin} install [path]  Install modules from kansei.toml or local paths
   {bin} lsp             Start language server on stdio
+  {bin} get-dirs        Show module/wasm search paths
 
 Version: {version}",
         version = version_string()
@@ -522,6 +523,28 @@ Version: {version}",
 fn version_string() -> String
 {
     format!("Kansei v{}", env!("CARGO_PKG_VERSION"))
+}
+
+fn run_get_dirs() -> i32
+{
+    let cwd = env::current_dir().ok();
+    let main_path = cwd.as_deref();
+    let module_paths = eval::module_search_paths_for(main_path);
+    let wasm_paths = eval::wasm_search_paths_for(main_path);
+
+    println!("Modules:");
+    for path in module_paths
+    {
+        println!("  {}", path.display());
+    }
+
+    println!("Wasm:");
+    for path in wasm_paths
+    {
+        println!("  {}", path.display());
+    }
+
+    0
 }
 
 fn run_repl(mut interpreter: eval::Interpreter) -> rustyline::Result<()>
@@ -750,6 +773,10 @@ fn handle_subcommand(args: &[String]) -> Option<i32>
         {
             let code = lsp::run_lsp();
             Some(code)
+        }
+        "get-dirs" =>
+        {
+            Some(run_get_dirs())
         }
         _ => None,
     }

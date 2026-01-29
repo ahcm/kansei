@@ -11764,6 +11764,16 @@ fn default_wasm_search_paths(main_path: Option<&std::path::Path>) -> Vec<PathBuf
     out
 }
 
+pub fn module_search_paths_for(main_path: Option<&std::path::Path>) -> Vec<PathBuf>
+{
+    default_module_search_paths(main_path)
+}
+
+pub fn wasm_search_paths_for(main_path: Option<&std::path::Path>) -> Vec<PathBuf>
+{
+    default_wasm_search_paths(main_path)
+}
+
 struct ModuleCacheEntry
 {
     exports: Rc<RefCell<MapValue>>,

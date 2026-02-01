@@ -1,2 +1,6 @@
 [alias]
 wasm-build = "run --release scripts/build-wasm.ks"
+
+[build]
+rustflags = ["-C", "target-cpu=native"]
+

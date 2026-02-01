@@ -16,9 +16,6 @@ codegen-units = 1  # Reduce parallelism to allow better optimization
 panic = "abort"    # Removes unwinding logic (smaller & slightly faster)
 opt-level = 3      # Maximize speed (default is 3, but good to be explicit)
 
-[build]
-rustflags = ["-C", "target-cpu=native"]
-
 [dependencies]
 directories = "6.0.0"
 rustc-hash = "2.1.1"

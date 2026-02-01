@@ -905,6 +905,26 @@ Tui.run(16, |ui, event| {
 })
 ```
 
+### std::lib::zellij
+`std::lib::zellij` provides a thin Zellij client (feature: `lib-zellij`).
+
+```ruby
+use std::lib::zellij
+zellij = std::lib::zellij
+
+puts zellij.list_sessions()
+zellij.attach("mysession")
+zellij.new_session("mysession")
+zellij.kill_session("mysession")
+puts zellij.version()
+```
+
+Notes:
+- `attach(nil)` will use `$ZELLIJ_SESSION_NAME` if set, otherwise it will attach to the only
+  active session if exactly one exists.
+- `new_session` will attach if the session already exists. If it does not exist, it shells out to
+  the `zellij` binary (`zellij -s <name>`).
+
 ### std::lib::Mmap
 ```ruby
 use std::lib::Mmap

@@ -44,6 +44,8 @@ pub mod tui;
 pub mod uuid;
 #[cfg(feature = "lib-yaml")]
 pub mod yaml;
+#[cfg(feature = "lib-zellij")]
+pub mod zellij;
 
 use crate::value::{MapValue, Value};
 use rustc_hash::FxHashMap;
@@ -101,5 +103,7 @@ pub fn build_lib_module() -> Value
     uuid::register(&mut lib_map);
     #[cfg(feature = "lib-yaml")]
     yaml::register(&mut lib_map);
+    #[cfg(feature = "lib-zellij")]
+    zellij::register(&mut lib_map);
     Value::Map(Rc::new(RefCell::new(MapValue::new(lib_map))))
 }

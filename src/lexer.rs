@@ -405,6 +405,38 @@ impl Lexer
             }
         }
 
+        let mut exponent: i32 = 0;
+        let mut saw_exponent = false;
+        if self.position < self.input.len()
+            && matches!(self.input[self.position], 'e' | 'E')
+        {
+            let mut exp_pos = self.position + 1;
+            let mut exp_sign: i32 = 1;
+            if exp_pos < self.input.len()
+                && matches!(self.input[exp_pos], '+' | '-')
+            {
+                if self.input[exp_pos] == '-'
+                {
+                    exp_sign = -1;
+                }
+                exp_pos += 1;
+            }
+            if exp_pos < self.input.len() && self.input[exp_pos].is_digit(10)
+            {
+                self.position = exp_pos;
+                let mut exp_val: i32 = 0;
+                while self.position < self.input.len()
+                    && self.input[self.position].is_digit(10)
+                {
+                    let digit = (self.input[self.position] as u8 - b'0') as i32;
+                    exp_val = exp_val.saturating_mul(10).saturating_add(digit);
+                    self.position += 1;
+                }
+                exponent = exp_val.saturating_mul(exp_sign);
+                saw_exponent = true;
+            }
+        }
+
         let mut kind = FloatKind::F64;
         let mut has_suffix = false;
         if self.position + 1 < self.input.len()
@@ -428,7 +460,7 @@ impl Lexer
             };
         }
 
-        if saw_fraction || has_suffix
+        if saw_fraction || saw_exponent || has_suffix
         {
             let int_part = if overflowed { 0 } else { int_val };
             let value = if saw_fraction
@@ -438,6 +470,14 @@ impl Lexer
             else
             {
                 int_part as f64
+            };
+            let value = if saw_exponent
+            {
+                value * 10f64.powi(exponent)
+            }
+            else
+            {
+                value
             };
             Token::Float { value, kind }
         }

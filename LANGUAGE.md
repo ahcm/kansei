@@ -19,6 +19,7 @@ x = 10 # Inline comment
 - **Float**: `1.0`, `3.14`, `-0.01`
   - Default float literals are `f64`.
   - Use suffixes like `1.0f32`, `1.0f64`, `1.0f128` to pick other float sizes.
+  - Scientific notation is supported: `2e4`, `3.5E-2`.
 - **String**: `"Hello"`, `"World"`
 - **Boolean**: `true`, `false`
 - **Nil**: `nil`

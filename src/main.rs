@@ -249,7 +249,7 @@ fn main() -> rustyline::Result<()>
     program_map.insert(intern::intern("env"), env_val);
     program_map.insert(
         intern::intern("wasm_backend"),
-        value::Value::String(intern::intern_owned("wasmi".to_string())),
+        value::Value::String(intern::intern_owned("wasmtime".to_string())),
     );
     program_map.insert(
         intern::intern("wasm_backends"),

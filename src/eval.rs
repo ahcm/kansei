@@ -12945,7 +12945,7 @@ impl Interpreter
                     .map_err(|message| RuntimeError::simple(message, line));
             }
         }
-        Ok(WasmBackend::Wasmi)
+        Ok(WasmBackend::Wasmtime)
     }
 
     fn import_path(&mut self, path: &[SymbolId], line: usize) -> EvalResult

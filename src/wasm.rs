@@ -3,14 +3,15 @@ use std::cell::RefCell;
 use std::fs;
 use std::path::Path;
 use std::rc::Rc;
+#[cfg(feature = "wasmi")]
 use wasmi::core::ValueType as WasmiValueType;
+#[cfg(feature = "wasmi")]
 use wasmi::{
     Engine as WasmiEngine, ExternType as WasmiExternType, Func as WasmiFunc,
     FuncType as WasmiFuncType, Instance as WasmiInstance, Linker as WasmiLinker,
     Memory as WasmiMemory, Module as WasmiModule, Store as WasmiStore, Value as WasmiValue,
 };
 
-#[cfg(feature = "wasmtime")]
 use wasmtime::{
     Engine as WasmtimeEngine, ExternType as WasmtimeExternType, Func as WasmtimeFunc,
     FuncType as WasmtimeFuncType, Instance as WasmtimeInstance, Linker as WasmtimeLinker,
@@ -21,8 +22,8 @@ use wasmtime::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WasmBackend
 {
+    #[cfg(feature = "wasmi")]
     Wasmi,
-    #[cfg(feature = "wasmtime")]
     Wasmtime,
 }
 
@@ -33,8 +34,8 @@ impl WasmBackend
     {
         match self
         {
+            #[cfg(feature = "wasmi")]
             WasmBackend::Wasmi => "wasmi",
-            #[cfg(feature = "wasmtime")]
             WasmBackend::Wasmtime => "wasmtime",
         }
     }
@@ -44,17 +45,20 @@ pub fn parse_wasm_backend(name: &str) -> Result<WasmBackend, String>
 {
     match name
     {
-        "wasmi" => Ok(WasmBackend::Wasmi),
+        "wasmi" =>
+        {
+            #[cfg(feature = "wasmi")]
+            {
+                Ok(WasmBackend::Wasmi)
+            }
+            #[cfg(not(feature = "wasmi"))]
+            {
+                Err("wasmi backend not enabled (compile with --features wasmi)".to_string())
+            }
+        }
         "wasmtime" =>
         {
-            #[cfg(feature = "wasmtime")]
-            {
-                Ok(WasmBackend::Wasmtime)
-            }
-            #[cfg(not(feature = "wasmtime"))]
-            {
-                Err("wasmtime backend not enabled (compile with --features wasmtime)".to_string())
-            }
+            Ok(WasmBackend::Wasmtime)
         }
         _ => Err(format!("Unknown wasm backend '{}'", name)),
     }
@@ -62,13 +66,15 @@ pub fn parse_wasm_backend(name: &str) -> Result<WasmBackend, String>
 
 pub fn available_wasm_backends() -> Vec<&'static str>
 {
-    #[cfg(feature = "wasmtime")]
+    #[cfg(feature = "wasmi")]
     {
-        vec!["wasmi", "wasmtime"]
+        let mut out = vec!["wasmtime"];
+        out.push("wasmi");
+        out
     }
-    #[cfg(not(feature = "wasmtime"))]
+    #[cfg(not(feature = "wasmi"))]
     {
-        vec!["wasmi"]
+        vec!["wasmtime"]
     }
 }
 
@@ -100,27 +106,27 @@ pub struct WasmFuncType
 #[derive(Debug, Clone)]
 pub enum WasmFuncHandle
 {
+    #[cfg(feature = "wasmi")]
     Wasmi(WasmiFunc),
-    #[cfg(feature = "wasmtime")]
     Wasmtime(WasmtimeFunc),
 }
 
 #[derive(Debug)]
 pub enum WasmMemoryHandle
 {
+    #[cfg(feature = "wasmi")]
     Wasmi(WasmiMemory),
-    #[cfg(feature = "wasmtime")]
     Wasmtime(WasmtimeMemory),
 }
 
 #[derive(Debug)]
+#[cfg(feature = "wasmi")]
 struct WasmiBackend
 {
     store: WasmiStore<()>,
     instance: WasmiInstance,
 }
 
-#[cfg(feature = "wasmtime")]
 #[derive(Debug)]
 struct WasmtimeBackend
 {
@@ -132,8 +138,8 @@ struct WasmtimeBackend
 pub struct WasmModule
 {
     backend: WasmBackend,
+    #[cfg(feature = "wasmi")]
     wasmi: Option<WasmiBackend>,
-    #[cfg(feature = "wasmtime")]
     wasmtime: Option<WasmtimeBackend>,
     pub memory: Option<WasmMemoryHandle>,
     pub alloc: Option<WasmFuncHandle>,
@@ -152,6 +158,7 @@ pub struct WasmFunction
     pub module: Rc<RefCell<WasmModule>>,
 }
 
+#[cfg(feature = "wasmi")]
 fn map_wasmi_valtype(value: WasmiValueType) -> Result<WasmValueType, String>
 {
     match value
@@ -164,7 +171,6 @@ fn map_wasmi_valtype(value: WasmiValueType) -> Result<WasmValueType, String>
     }
 }
 
-#[cfg(feature = "wasmtime")]
 fn map_wasmtime_valtype(value: WasmtimeValType) -> Result<WasmValueType, String>
 {
     match value
@@ -177,6 +183,7 @@ fn map_wasmtime_valtype(value: WasmtimeValType) -> Result<WasmValueType, String>
     }
 }
 
+#[cfg(feature = "wasmi")]
 fn wasmi_value_from(value: WasmValue) -> WasmiValue
 {
     match value
@@ -188,6 +195,7 @@ fn wasmi_value_from(value: WasmValue) -> WasmiValue
     }
 }
 
+#[cfg(feature = "wasmi")]
 fn wasm_value_from_wasmi(value: WasmiValue) -> Result<WasmValue, String>
 {
     match value
@@ -200,7 +208,6 @@ fn wasm_value_from_wasmi(value: WasmiValue) -> Result<WasmValue, String>
     }
 }
 
-#[cfg(feature = "wasmtime")]
 fn wasmtime_value_from(value: WasmValue) -> WasmtimeVal
 {
     match value
@@ -212,7 +219,6 @@ fn wasmtime_value_from(value: WasmValue) -> WasmtimeVal
     }
 }
 
-#[cfg(feature = "wasmtime")]
 fn wasm_value_from_wasmtime(value: WasmtimeVal) -> Result<WasmValue, String>
 {
     match value
@@ -227,6 +233,7 @@ fn wasm_value_from_wasmtime(value: WasmtimeVal) -> Result<WasmValue, String>
 
 impl WasmFuncType
 {
+    #[cfg(feature = "wasmi")]
     fn from_wasmi(func_type: &WasmiFuncType) -> Result<Self, String>
     {
         let mut params = Vec::new();
@@ -242,7 +249,6 @@ impl WasmFuncType
         Ok(Self { params, results })
     }
 
-    #[cfg(feature = "wasmtime")]
     fn from_wasmtime(func_type: &WasmtimeFuncType) -> Result<Self, String>
     {
         let mut params = Vec::new();
@@ -265,8 +271,8 @@ impl WasmModule
     {
         match backend
         {
+            #[cfg(feature = "wasmi")]
             WasmBackend::Wasmi => Self::load_wasmi(path),
-            #[cfg(feature = "wasmtime")]
             WasmBackend::Wasmtime => Self::load_wasmtime(path),
         }
     }
@@ -285,6 +291,7 @@ impl WasmModule
         }
         match self.backend
         {
+            #[cfg(feature = "wasmi")]
             WasmBackend::Wasmi =>
             {
                 if let Some(backend) = self.wasmi.as_ref()
@@ -296,7 +303,6 @@ impl WasmModule
                     self.memory = memory.map(WasmMemoryHandle::Wasmi);
                 }
             }
-            #[cfg(feature = "wasmtime")]
             WasmBackend::Wasmtime =>
             {
                 if let Some(backend) = self.wasmtime.as_mut()
@@ -313,23 +319,23 @@ impl WasmModule
         self.ensure_memory();
         match self.backend
         {
+            #[cfg(feature = "wasmi")]
             WasmBackend::Wasmi =>
             {
                 let backend = self.wasmi.as_mut()?;
                 match self.memory.as_ref()?
                 {
                     WasmMemoryHandle::Wasmi(mem) => Some(mem.data(&backend.store)),
-                    #[cfg(feature = "wasmtime")]
                     WasmMemoryHandle::Wasmtime(_) => None,
                 }
             }
-            #[cfg(feature = "wasmtime")]
             WasmBackend::Wasmtime =>
             {
                 let backend = self.wasmtime.as_mut()?;
                 match self.memory.as_ref()?
                 {
                     WasmMemoryHandle::Wasmtime(mem) => Some(mem.data(&backend.store)),
+                    #[cfg(feature = "wasmi")]
                     WasmMemoryHandle::Wasmi(_) => None,
                 }
             }
@@ -341,23 +347,23 @@ impl WasmModule
         self.ensure_memory();
         match self.backend
         {
+            #[cfg(feature = "wasmi")]
             WasmBackend::Wasmi =>
             {
                 let backend = self.wasmi.as_mut()?;
                 match self.memory.as_ref()?
                 {
                     WasmMemoryHandle::Wasmi(mem) => Some(mem.data_mut(&mut backend.store)),
-                    #[cfg(feature = "wasmtime")]
                     WasmMemoryHandle::Wasmtime(_) => None,
                 }
             }
-            #[cfg(feature = "wasmtime")]
             WasmBackend::Wasmtime =>
             {
                 let backend = self.wasmtime.as_mut()?;
                 match self.memory.as_ref()?
                 {
                     WasmMemoryHandle::Wasmtime(mem) => Some(mem.data_mut(&mut backend.store)),
+                    #[cfg(feature = "wasmi")]
                     WasmMemoryHandle::Wasmi(_) => None,
                 }
             }
@@ -373,6 +379,7 @@ impl WasmModule
     {
         match (self.backend, func)
         {
+            #[cfg(feature = "wasmi")]
             (WasmBackend::Wasmi, WasmFuncHandle::Wasmi(func)) =>
             {
                 let mut wasm_results: Vec<WasmiValue> = vec![WasmiValue::I32(0); results.len()];
@@ -390,7 +397,6 @@ impl WasmModule
                 }
                 Ok(())
             }
-            #[cfg(feature = "wasmtime")]
             (WasmBackend::Wasmtime, WasmFuncHandle::Wasmtime(func)) =>
             {
                 let mut wasm_results: Vec<WasmtimeVal> = vec![WasmtimeVal::I32(0); results.len()];
@@ -408,11 +414,12 @@ impl WasmModule
                 }
                 Ok(())
             }
-            #[cfg(feature = "wasmtime")]
+            #[cfg(feature = "wasmi")]
             _ => Err("Wasm backend mismatch".to_string()),
         }
     }
 
+    #[cfg(feature = "wasmi")]
     fn load_wasmi(path: &Path) -> Result<Rc<RefCell<WasmModule>>, String>
     {
         let engine = WasmiEngine::default();
@@ -499,8 +506,8 @@ impl WasmModule
 
         Ok(Rc::new(RefCell::new(WasmModule {
             backend: WasmBackend::Wasmi,
+            #[cfg(feature = "wasmi")]
             wasmi: Some(WasmiBackend { store, instance }),
-            #[cfg(feature = "wasmtime")]
             wasmtime: None,
             memory,
             alloc,
@@ -513,7 +520,6 @@ impl WasmModule
         })))
     }
 
-    #[cfg(feature = "wasmtime")]
     fn load_wasmtime(path: &Path) -> Result<Rc<RefCell<WasmModule>>, String>
     {
         let engine = WasmtimeEngine::default();
@@ -591,6 +597,7 @@ impl WasmModule
 
         Ok(Rc::new(RefCell::new(WasmModule {
             backend: WasmBackend::Wasmtime,
+            #[cfg(feature = "wasmi")]
             wasmi: None,
             wasmtime: Some(WasmtimeBackend { store, instance }),
             memory,

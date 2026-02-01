@@ -714,9 +714,9 @@ result = Json.parse(f"{1 + 2}")
 ```
 
 Select the runtime backend by setting `program.wasm_backend` before loading modules.
-The default is `"wasmi"`. The available backends are listed in
-`program.wasm_backends` (for example, `"wasmtime"` only exists when compiled with
-`--features wasmtime`).
+The default is `"wasmtime"`. The available backends are listed in
+`program.wasm_backends` (for example, `"wasmi"` only exists when compiled with
+`--features wasmi`).
 
 ```ruby
 program.wasm_backend = "wasmtime"

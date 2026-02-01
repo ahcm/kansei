@@ -55,7 +55,8 @@ fn polars_usize_arg(args: &[Value], idx: usize, default: usize, name: &str)
 fn native_polars_read_csv(args: &[Value]) -> Result<Value, String>
 {
     let path = polars_str_arg(args, 0, "Polars.read_csv")?;
-    let df = CsvReader::from_path(&path)
+    let df = CsvReadOptions::default()
+        .try_into_reader_with_file_path(Some(path.as_str().into()))
         .map_err(|e| format!("Polars.read_csv failed: {e}"))?
         .finish()
         .map_err(|e| format!("Polars.read_csv failed: {e}"))?;
@@ -134,7 +135,7 @@ fn native_polars_select(args: &[Value]) -> Result<Value, String>
     let cols_ref = cols.iter().map(|s| s.as_str()).collect::<Vec<_>>();
     let selected = df
         .borrow()
-        .select(&cols_ref)
+        .select(cols_ref)
         .map_err(|e| format!("Polars.select failed: {e}"))?;
     Ok(Value::DataFrame(Rc::new(RefCell::new(selected))))
 }

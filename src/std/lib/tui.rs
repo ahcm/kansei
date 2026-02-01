@@ -347,7 +347,7 @@ fn tui_run(interp: &mut Interpreter, args: &[Value]) -> Result<Value, String>
         let commands = TUI_COMMANDS.with(|commands| commands.borrow().clone());
         terminal
             .draw(|frame| {
-                let area = frame.size();
+                let area = frame.area();
                 frame.render_widget(Clear, area);
                 for command in commands
                 {

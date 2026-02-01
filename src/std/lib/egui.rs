@@ -252,7 +252,7 @@ fn egui_run(interp: &mut Interpreter, args: &[Value]) -> Result<Value, String>
         ..Default::default()
     };
 
-    eframe::run_native("Kansei", options, Box::new(|_cc| Box::new(app)))
+    eframe::run_native("Kansei", options, Box::new(|_cc| Ok(Box::new(app))))
         .map_err(|e| format!("egui.run failed: {e}"))?;
 
     Ok(Value::Nil)

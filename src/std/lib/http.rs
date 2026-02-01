@@ -3,6 +3,7 @@ use crate::intern;
 use crate::value::{MapValue, Value};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
+use std::io::Read;
 use std::rc::Rc;
 
 fn str_arg(args: &[Value], idx: usize, name: &str) -> Result<String, String>
@@ -34,8 +35,12 @@ fn native_http_get(args: &[Value]) -> Result<Value, String>
     let resp = ureq::get(&url)
         .call()
         .map_err(|e| format!("Http.get failed: {e}"))?;
-    let status = resp.status() as i64;
-    let body = resp.into_string().unwrap_or_default();
+    let status = resp.status().as_u16() as i64;
+    let mut body = String::new();
+    resp.into_body()
+        .into_reader()
+        .read_to_string(&mut body)
+        .map_err(|e| format!("Http.get failed: {e}"))?;
     Ok(response_map(status, body))
 }
 
@@ -44,10 +49,14 @@ fn native_http_post(args: &[Value]) -> Result<Value, String>
     let url = str_arg(args, 0, "Http.post")?;
     let body = str_arg(args, 1, "Http.post")?;
     let resp = ureq::post(&url)
-        .send_string(&body)
+        .send(body.as_str())
         .map_err(|e| format!("Http.post failed: {e}"))?;
-    let status = resp.status() as i64;
-    let body = resp.into_string().unwrap_or_default();
+    let status = resp.status().as_u16() as i64;
+    let mut body = String::new();
+    resp.into_body()
+        .into_reader()
+        .read_to_string(&mut body)
+        .map_err(|e| format!("Http.post failed: {e}"))?;
     Ok(response_map(status, body))
 }
 

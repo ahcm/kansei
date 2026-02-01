@@ -98,7 +98,7 @@ fn native_crypto_random_bytes(args: &[Value]) -> Result<Value, String>
 {
     let n = int_arg(args, 0, "Crypto.random_bytes")?;
     let mut buf = vec![0u8; n];
-    rand::thread_rng().fill_bytes(&mut buf);
+    rand::rng().fill_bytes(&mut buf);
     Ok(Value::String(intern::intern_owned(hex_encode(&buf))))
 }
 
@@ -106,7 +106,7 @@ fn native_crypto_random_bytes_buf(args: &[Value]) -> Result<Value, String>
 {
     let n = int_arg(args, 0, "Crypto.random_bytes_buf")?;
     let mut buf = vec![0u8; n];
-    rand::thread_rng().fill_bytes(&mut buf);
+    rand::rng().fill_bytes(&mut buf);
     Ok(Value::Bytes(Rc::new(buf)))
 }
 

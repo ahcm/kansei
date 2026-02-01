@@ -406,7 +406,7 @@ x = "Now a string"
 ```
 
 ## Operators
-- Arithmetic: `+`, `-`, `*`, `/`
+- Arithmetic: `+`, `-`, `*`, `/`, `**`
 - Comparison: `==`, `!=`, `<`, `>`
 - Boolean: `not`, `and`, `&&`, `or`, `||`
 - String Concatenation: `"Hello " + "World"`

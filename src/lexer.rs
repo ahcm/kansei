@@ -24,6 +24,7 @@ pub enum Token
     Plus,
     Minus,
     Star,
+    StarStar,
     Slash,
     Percent,
     Equals,
@@ -162,8 +163,16 @@ impl Lexer
                 }
                 '*' =>
                 {
-                    self.position += 1;
-                    Token::Star
+                    if self.peek() == '*'
+                    {
+                        self.position += 2;
+                        Token::StarStar
+                    }
+                    else
+                    {
+                        self.position += 1;
+                        Token::Star
+                    }
                 }
                 '/' =>
                 {

@@ -241,7 +241,7 @@ impl Parser
 
     fn parse_term(&mut self) -> Expr
     {
-        let mut left = self.parse_factor();
+        let mut left = self.parse_power();
 
         while self.current_token.token == Token::Star || self.current_token.token == Token::Slash
         {
@@ -258,6 +258,29 @@ impl Parser
                 ExprKind::BinaryOp {
                     left: Box::new(left),
                     op,
+                    right: Box::new(right),
+                },
+                span.line,
+                span.column,
+                span.source.clone(),
+            );
+        }
+        left
+    }
+
+    fn parse_power(&mut self) -> Expr
+    {
+        let mut left = self.parse_factor();
+
+        if self.current_token.token == Token::StarStar
+        {
+            let span = self.current_token.clone();
+            self.eat();
+            let right = self.parse_power();
+            left = self.make_expr(
+                ExprKind::BinaryOp {
+                    left: Box::new(left),
+                    op: Op::Power,
                     right: Box::new(right),
                 },
                 span.line,

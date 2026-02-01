@@ -9,6 +9,7 @@ pub enum Op
     Subtract,
     Multiply,
     Divide,
+    Power,
     Equal,
     NotEqual,
     LessThan,

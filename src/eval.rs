@@ -2016,6 +2016,34 @@ fn promote_float_kind(left: FloatKind, right: FloatKind) -> FloatKind
     }
 }
 
+fn pow_signed_int(base: i128, exp: i128, kind: IntKind) -> Value
+{
+    if exp < 0
+    {
+        return make_float((base as f64).powf(exp as f64), FloatKind::F64);
+    }
+    if let Ok(exp_u32) = u32::try_from(exp)
+    {
+        make_signed_int(base.pow(exp_u32), kind)
+    }
+    else
+    {
+        make_float((base as f64).powf(exp as f64), FloatKind::F64)
+    }
+}
+
+fn pow_unsigned_int(base: u128, exp: u128, kind: IntKind) -> Value
+{
+    if let Ok(exp_u32) = u32::try_from(exp)
+    {
+        make_unsigned_int(base.pow(exp_u32), kind)
+    }
+    else
+    {
+        make_float((base as f64).powf(exp as f64), FloatKind::F64)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 enum BinOpKind
 {
@@ -2023,6 +2051,7 @@ enum BinOpKind
     Sub,
     Mul,
     Div,
+    Pow,
     Eq,
     Gt,
     Lt,
@@ -2050,6 +2079,7 @@ fn eval_binop(op: BinOpKind, l: Value, r: Value) -> EvalResult
                 BinOpKind::Sub => make_signed_int(i1 - i2, kind),
                 BinOpKind::Mul => make_signed_int(i1 * i2, kind),
                 BinOpKind::Div => make_signed_int(i1 / i2, kind),
+                BinOpKind::Pow => pow_signed_int(i1, i2, kind),
                 BinOpKind::Eq => Value::Boolean(i1 == i2),
                 BinOpKind::Gt => Value::Boolean(i1 > i2),
                 BinOpKind::Lt => Value::Boolean(i1 < i2),
@@ -2073,6 +2103,7 @@ fn eval_binop(op: BinOpKind, l: Value, r: Value) -> EvalResult
                 BinOpKind::Sub => make_unsigned_int(u1 - u2, kind),
                 BinOpKind::Mul => make_unsigned_int(u1 * u2, kind),
                 BinOpKind::Div => make_unsigned_int(u1 / u2, kind),
+                BinOpKind::Pow => pow_unsigned_int(u1, u2, kind),
                 BinOpKind::Eq => Value::Boolean(u1 == u2),
                 BinOpKind::Gt => Value::Boolean(u1 > u2),
                 BinOpKind::Lt => Value::Boolean(u1 < u2),
@@ -2087,6 +2118,7 @@ fn eval_binop(op: BinOpKind, l: Value, r: Value) -> EvalResult
                 BinOpKind::Sub => make_signed_int(i1 - u2_i, IntKind::I128),
                 BinOpKind::Mul => make_signed_int(i1 * u2_i, IntKind::I128),
                 BinOpKind::Div => make_signed_int(i1 / u2_i, IntKind::I128),
+                BinOpKind::Pow => pow_signed_int(i1, u2_i, IntKind::I128),
                 BinOpKind::Eq => Value::Boolean(i1 == u2_i),
                 BinOpKind::Gt => Value::Boolean(i1 > u2_i),
                 BinOpKind::Lt => Value::Boolean(i1 < u2_i),
@@ -2101,6 +2133,7 @@ fn eval_binop(op: BinOpKind, l: Value, r: Value) -> EvalResult
                 BinOpKind::Sub => make_signed_int(u1_i - i2, IntKind::I128),
                 BinOpKind::Mul => make_signed_int(u1_i * i2, IntKind::I128),
                 BinOpKind::Div => make_signed_int(u1_i / i2, IntKind::I128),
+                BinOpKind::Pow => pow_signed_int(u1_i, i2, IntKind::I128),
                 BinOpKind::Eq => Value::Boolean(u1_i == i2),
                 BinOpKind::Gt => Value::Boolean(u1_i > i2),
                 BinOpKind::Lt => Value::Boolean(u1_i < i2),
@@ -2124,6 +2157,7 @@ fn eval_binop(op: BinOpKind, l: Value, r: Value) -> EvalResult
                 BinOpKind::Sub => make_float(f1 - f2, kind),
                 BinOpKind::Mul => make_float(f1 * f2, kind),
                 BinOpKind::Div => make_float(f1 / f2, kind),
+                BinOpKind::Pow => make_float(f1.powf(f2), kind),
                 BinOpKind::Eq => Value::Boolean(f1 == f2),
                 BinOpKind::Gt => Value::Boolean(f1 > f2),
                 BinOpKind::Lt => Value::Boolean(f1 < f2),
@@ -2139,6 +2173,7 @@ fn eval_binop(op: BinOpKind, l: Value, r: Value) -> EvalResult
                 BinOpKind::Sub => make_float(f1 - f, kind),
                 BinOpKind::Mul => make_float(f1 * f, kind),
                 BinOpKind::Div => make_float(f1 / f, kind),
+                BinOpKind::Pow => make_float(f1.powf(f), kind),
                 BinOpKind::Eq => Value::Boolean(f1 == f),
                 BinOpKind::Gt => Value::Boolean(f1 > f),
                 BinOpKind::Lt => Value::Boolean(f1 < f),
@@ -2154,6 +2189,7 @@ fn eval_binop(op: BinOpKind, l: Value, r: Value) -> EvalResult
                 BinOpKind::Sub => make_float(f - f2, kind),
                 BinOpKind::Mul => make_float(f * f2, kind),
                 BinOpKind::Div => make_float(f / f2, kind),
+                BinOpKind::Pow => make_float(f.powf(f2), kind),
                 BinOpKind::Eq => Value::Boolean(f == f2),
                 BinOpKind::Gt => Value::Boolean(f > f2),
                 BinOpKind::Lt => Value::Boolean(f < f2),
@@ -2225,6 +2261,7 @@ fn eval_cached_binop(
                         BinOpKind::Sub => make_float(f1 - f2, kind),
                         BinOpKind::Mul => make_float(f1 * f2, kind),
                         BinOpKind::Div => make_float(f1 / f2, kind),
+                        BinOpKind::Pow => make_float(f1.powf(*f2), kind),
                         BinOpKind::Eq => Value::Boolean(f1 == f2),
                         BinOpKind::Gt => Value::Boolean(f1 > f2),
                         BinOpKind::Lt => Value::Boolean(f1 < f2),
@@ -2253,6 +2290,7 @@ fn eval_cached_binop(
                         BinOpKind::Sub => make_signed_int(*i1 - *i2, kind),
                         BinOpKind::Mul => make_signed_int(*i1 * *i2, kind),
                         BinOpKind::Div => make_signed_int(*i1 / *i2, kind),
+                        BinOpKind::Pow => pow_signed_int(*i1, *i2, kind),
                         BinOpKind::Eq => Value::Boolean(i1 == i2),
                         BinOpKind::Gt => Value::Boolean(i1 > i2),
                         BinOpKind::Lt => Value::Boolean(i1 < i2),
@@ -2281,6 +2319,7 @@ fn eval_cached_binop(
                         BinOpKind::Sub => make_unsigned_int(*u1 - *u2, kind),
                         BinOpKind::Mul => make_unsigned_int(*u1 * *u2, kind),
                         BinOpKind::Div => make_unsigned_int(*u1 / *u2, kind),
+                        BinOpKind::Pow => pow_unsigned_int(*u1, *u2, kind),
                         BinOpKind::Eq => Value::Boolean(u1 == u2),
                         BinOpKind::Gt => Value::Boolean(u1 > u2),
                         BinOpKind::Lt => Value::Boolean(u1 < u2),
@@ -2323,6 +2362,7 @@ fn reg_binop_from_op(op: &Op) -> Option<RegBinOp>
         Op::Subtract => Some(RegBinOp::Sub),
         Op::Multiply => Some(RegBinOp::Mul),
         Op::Divide => Some(RegBinOp::Div),
+        Op::Power => Some(RegBinOp::Pow),
         Op::Equal => Some(RegBinOp::Eq),
         Op::GreaterThan => Some(RegBinOp::Gt),
         Op::LessThan => Some(RegBinOp::Lt),
@@ -4478,6 +4518,19 @@ fn compile_expr(
                             code.push(Instruction::Div);
                         }
                     }
+                    Op::Power =>
+                    {
+                        if use_caches
+                        {
+                            code.push(Instruction::PowCached(Rc::new(RefCell::new(
+                                BinaryOpCache::default(),
+                            ))));
+                        }
+                        else
+                        {
+                            code.push(Instruction::Pow);
+                        }
+                    }
                     Op::Equal => code.push(Instruction::Eq),
                     Op::GreaterThan => code.push(Instruction::Gt),
                     Op::LessThan => code.push(Instruction::Lt),
@@ -5323,7 +5376,8 @@ fn collect_cache_metrics(code: &[Instruction])
             Instruction::AddCached(cache)
             | Instruction::SubCached(cache)
             | Instruction::MulCached(cache)
-            | Instruction::DivCached(cache) =>
+            | Instruction::DivCached(cache)
+            | Instruction::PowCached(cache) =>
             {
                 let cache = cache.borrow();
                 bin_hits += cache.hits;
@@ -6535,6 +6589,7 @@ fn compile_fast_float_expr(
                 Op::Subtract => RegBinOp::Sub,
                 Op::Multiply => RegBinOp::Mul,
                 Op::Divide => RegBinOp::Div,
+                Op::Power => RegBinOp::Pow,
                 _ => return None,
             };
             let dst = *next_reg;
@@ -7770,6 +7825,7 @@ fn reg_binop_kind(op: RegBinOp) -> BinOpKind
         RegBinOp::Sub => BinOpKind::Sub,
         RegBinOp::Mul => BinOpKind::Mul,
         RegBinOp::Div => BinOpKind::Div,
+        RegBinOp::Pow => BinOpKind::Pow,
         RegBinOp::Eq => BinOpKind::Eq,
         RegBinOp::Gt => BinOpKind::Gt,
         RegBinOp::Lt => BinOpKind::Lt,
@@ -8369,6 +8425,7 @@ fn try_execute_fast_float_reg(fast: &FastRegFunction, slots: &mut [Value]) -> Op
                     RegBinOp::Sub => l - r,
                     RegBinOp::Mul => l * r,
                     RegBinOp::Div => l / r,
+                    RegBinOp::Pow => l.powf(r),
                     _ => return None,
                 };
             }
@@ -8497,6 +8554,7 @@ fn build_hot_cache(code: &[Instruction]) -> Rc<Vec<Option<HotInstr>>>
             Instruction::Sub => Some(HotInstr::BinOp(BinOpKind::Sub)),
             Instruction::Mul => Some(HotInstr::BinOp(BinOpKind::Mul)),
             Instruction::Div => Some(HotInstr::BinOp(BinOpKind::Div)),
+            Instruction::Pow => Some(HotInstr::BinOp(BinOpKind::Pow)),
             Instruction::Eq => Some(HotInstr::BinOp(BinOpKind::Eq)),
             Instruction::Gt => Some(HotInstr::BinOp(BinOpKind::Gt)),
             Instruction::Lt => Some(HotInstr::BinOp(BinOpKind::Lt)),
@@ -8515,6 +8573,10 @@ fn build_hot_cache(code: &[Instruction]) -> Rc<Vec<Option<HotInstr>>>
             Instruction::DivCached(cache) =>
             {
                 Some(HotInstr::BinOpCached(BinOpKind::Div, cache.clone()))
+            }
+            Instruction::PowCached(cache) =>
+            {
+                Some(HotInstr::BinOpCached(BinOpKind::Pow, cache.clone()))
             }
             Instruction::IndexCached(cache) => Some(HotInstr::IndexCached(cache.clone())),
             Instruction::F64IndexCached(cache) => Some(HotInstr::F64IndexCached(cache.clone())),
@@ -9249,6 +9311,7 @@ fn execute_instructions(
                 | Instruction::Sub
                 | Instruction::Mul
                 | Instruction::Div
+                | Instruction::Pow
                 | Instruction::Eq
                 | Instruction::Gt
                 | Instruction::Lt =>
@@ -9261,6 +9324,7 @@ fn execute_instructions(
                         Instruction::Sub => BinOpKind::Sub,
                         Instruction::Mul => BinOpKind::Mul,
                         Instruction::Div => BinOpKind::Div,
+                        Instruction::Pow => BinOpKind::Pow,
                         Instruction::Eq => BinOpKind::Eq,
                         Instruction::Gt => BinOpKind::Gt,
                         Instruction::Lt => BinOpKind::Lt,
@@ -9274,7 +9338,8 @@ fn execute_instructions(
                 Instruction::AddCached(cache)
                 | Instruction::SubCached(cache)
                 | Instruction::MulCached(cache)
-                | Instruction::DivCached(cache) =>
+                | Instruction::DivCached(cache)
+                | Instruction::PowCached(cache) =>
                 {
                     let r = frame.stack.pop().unwrap();
                     let l = frame.stack.pop().unwrap();
@@ -9284,6 +9349,7 @@ fn execute_instructions(
                         Instruction::SubCached(_) => BinOpKind::Sub,
                         Instruction::MulCached(_) => BinOpKind::Mul,
                         Instruction::DivCached(_) => BinOpKind::Div,
+                        Instruction::PowCached(_) => BinOpKind::Pow,
                         _ => unreachable!(),
                     };
                     let res = eval_cached_binop(op, cache, l, r)?;
@@ -9416,6 +9482,13 @@ fn execute_instructions(
                     let r = frame.stack.pop().unwrap();
                     let l = frame.stack.pop().unwrap();
                     let res = eval_cached_binop(BinOpKind::Div, &cache, l, r)?;
+                    frame.stack.push(res);
+                }
+                Instruction::PowCached(cache) =>
+                {
+                    let r = frame.stack.pop().unwrap();
+                    let l = frame.stack.pop().unwrap();
+                    let res = eval_cached_binop(BinOpKind::Pow, &cache, l, r)?;
                     frame.stack.push(res);
                 }
                 Instruction::JumpIfFalse(target) =>
@@ -11319,6 +11392,7 @@ fn execute_instructions(
                 | Instruction::Sub
                 | Instruction::Mul
                 | Instruction::Div
+                | Instruction::Pow
                 | Instruction::Eq
                 | Instruction::Gt
                 | Instruction::Lt =>
@@ -11331,6 +11405,7 @@ fn execute_instructions(
                         Instruction::Sub => BinOpKind::Sub,
                         Instruction::Mul => BinOpKind::Mul,
                         Instruction::Div => BinOpKind::Div,
+                        Instruction::Pow => BinOpKind::Pow,
                         Instruction::Eq => BinOpKind::Eq,
                         Instruction::Gt => BinOpKind::Gt,
                         Instruction::Lt => BinOpKind::Lt,
@@ -16289,6 +16364,7 @@ impl Interpreter
                             Op::Subtract => Ok(make_signed_int(i1 - i2, kind)),
                             Op::Multiply => Ok(make_signed_int(i1 * i2, kind)),
                             Op::Divide => Ok(make_signed_int(i1 / i2, kind)),
+                            Op::Power => Ok(pow_signed_int(i1, i2, kind)),
                             Op::GreaterThan => Ok(Value::Boolean(i1 > i2)),
                             Op::LessThan => Ok(Value::Boolean(i1 < i2)),
                             Op::Equal => Ok(Value::Boolean(i1 == i2)),
@@ -16313,6 +16389,7 @@ impl Interpreter
                             Op::Subtract => Ok(make_unsigned_int(u1 - u2, kind)),
                             Op::Multiply => Ok(make_unsigned_int(u1 * u2, kind)),
                             Op::Divide => Ok(make_unsigned_int(u1 / u2, kind)),
+                            Op::Power => Ok(pow_unsigned_int(u1, u2, kind)),
                             Op::GreaterThan => Ok(Value::Boolean(u1 > u2)),
                             Op::LessThan => Ok(Value::Boolean(u1 < u2)),
                             Op::Equal => Ok(Value::Boolean(u1 == u2)),
@@ -16329,6 +16406,7 @@ impl Interpreter
                             Op::Subtract => Ok(make_signed_int(i1 - u2_i, kind)),
                             Op::Multiply => Ok(make_signed_int(i1 * u2_i, kind)),
                             Op::Divide => Ok(make_signed_int(i1 / u2_i, kind)),
+                            Op::Power => Ok(pow_signed_int(i1, u2_i, kind)),
                             Op::GreaterThan => Ok(Value::Boolean(i1 > u2_i)),
                             Op::LessThan => Ok(Value::Boolean(i1 < u2_i)),
                             Op::Equal => Ok(Value::Boolean(i1 == u2_i)),
@@ -16345,6 +16423,7 @@ impl Interpreter
                             Op::Subtract => Ok(make_signed_int(u1_i - i2, kind)),
                             Op::Multiply => Ok(make_signed_int(u1_i * i2, kind)),
                             Op::Divide => Ok(make_signed_int(u1_i / i2, kind)),
+                            Op::Power => Ok(pow_signed_int(u1_i, i2, kind)),
                             Op::GreaterThan => Ok(Value::Boolean(u1_i > i2)),
                             Op::LessThan => Ok(Value::Boolean(u1_i < i2)),
                             Op::Equal => Ok(Value::Boolean(u1_i == i2)),
@@ -16369,6 +16448,7 @@ impl Interpreter
                             Op::Subtract => Ok(make_float(f1 - f2, kind)),
                             Op::Multiply => Ok(make_float(f1 * f2, kind)),
                             Op::Divide => Ok(make_float(f1 / f2, kind)),
+                            Op::Power => Ok(make_float(f1.powf(f2), kind)),
                             Op::GreaterThan => Ok(Value::Boolean(f1 > f2)),
                             Op::LessThan => Ok(Value::Boolean(f1 < f2)),
                             Op::Equal => Ok(Value::Boolean(f1 == f2)),
@@ -16385,6 +16465,7 @@ impl Interpreter
                             Op::Subtract => Ok(make_float(f1 - f, kind)),
                             Op::Multiply => Ok(make_float(f1 * f, kind)),
                             Op::Divide => Ok(make_float(f1 / f, kind)),
+                            Op::Power => Ok(make_float(f1.powf(f), kind)),
                             Op::GreaterThan => Ok(Value::Boolean(f1 > f)),
                             Op::LessThan => Ok(Value::Boolean(f1 < f)),
                             Op::Equal => Ok(Value::Boolean(f1 == f)),
@@ -16401,6 +16482,7 @@ impl Interpreter
                             Op::Subtract => Ok(make_float(f - f2, kind)),
                             Op::Multiply => Ok(make_float(f * f2, kind)),
                             Op::Divide => Ok(make_float(f / f2, kind)),
+                            Op::Power => Ok(make_float(f.powf(f2), kind)),
                             Op::GreaterThan => Ok(Value::Boolean(f > f2)),
                             Op::LessThan => Ok(Value::Boolean(f < f2)),
                             Op::Equal => Ok(Value::Boolean(f == f2)),

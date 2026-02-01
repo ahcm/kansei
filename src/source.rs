@@ -645,6 +645,7 @@ fn format_op(op: &Op) -> &'static str
         Op::Subtract => "-",
         Op::Multiply => "*",
         Op::Divide => "/",
+        Op::Power => "**",
         Op::Equal => "==",
         Op::NotEqual => "!=",
         Op::LessThan => "<",

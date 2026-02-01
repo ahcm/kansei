@@ -13,6 +13,7 @@ mod value;
 mod wasm;
 mod pm;
 mod lsp;
+mod wasm_pm;
 
 use directories::ProjectDirs;
 use rustc_hash::FxHashMap;
@@ -518,6 +519,8 @@ Commands:
   {bin} check <path>    Parse .ks files and exit non-zero on errors
   {bin} test <path>     Run .ks files and compare against .out/.err if present
   {bin} install [path]  Install modules from kansei.toml or local paths
+  {bin} wasm install <name> [--wasm-modules-repo <path-or-url>]
+                      Build and install a wasm module from a repo
   {bin} lsp             Start language server on stdio
 
 Version: {version}",
@@ -777,6 +780,11 @@ fn handle_subcommand(args: &[String]) -> Option<i32>
         "lsp" =>
         {
             let code = lsp::run_lsp();
+            Some(code)
+        }
+        "wasm" =>
+        {
+            let code = wasm_pm::run_wasm_command(&args[2..]);
             Some(code)
         }
         _ => None,

@@ -23,7 +23,17 @@ CLI helpers:
 - `kansei check <path>` parses `.ks` files and exits non-zero on errors
 - `kansei test <path>` runs `.ks` files and compares against `.out`/`.err` if present
 - `kansei install [path]` installs dependencies from `kansei.toml` or local module paths
+- `kansei wasm install <name>` builds and installs a wasm module from the wasm-modules repo
 - `kansei lsp` starts a minimal Language Server over stdio (diagnostics only)
+
+WASM install defaults:
+- Repo: `../kansei-wasm-modules` if present, otherwise `https://github.com/ahcm/kansei-wasm-modules`
+- Target: `wasm32-wasip1` (override with `--wasm-target`)
+
+Custom repo/target:
+```
+kansei wasm install <name> --wasm-modules-repo <path-or-url> --wasm-target <target>
+```
 ---
 Have fun and may the force be with you!
 

@@ -7,6 +7,9 @@ Inspired by Ruby 1.8 and functional programming.
 ```ruby
 # This is a comment
 x = 10 # Inline comment
+
+# Nested block comments (SML-style)
+(* Outer (* nested *) still outer *)
 ```
 
 ## Data Types

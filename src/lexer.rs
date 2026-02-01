@@ -146,6 +146,11 @@ impl Lexer
                 self.skip_comment();
                 continue;
             }
+            if ch == '(' && self.peek() == '*'
+            {
+                self.skip_block_comment();
+                continue;
+            }
 
             let token = match ch
             {
@@ -349,6 +354,45 @@ impl Lexer
         while self.position < self.input.len() && self.input[self.position] != '\n'
         {
             self.position += 1;
+        }
+    }
+
+    fn skip_block_comment(&mut self)
+    {
+        if self.position + 1 >= self.input.len()
+        {
+            return;
+        }
+        // Consume opening "(*"
+        self.position += 2;
+        let mut depth = 1usize;
+        while self.position < self.input.len() && depth > 0
+        {
+            let ch = self.input[self.position];
+            if ch == '\n'
+            {
+                self.line += 1;
+                self.line_start = self.position + 1;
+                self.position += 1;
+                continue;
+            }
+            if ch == '(' && self.peek() == '*'
+            {
+                depth += 1;
+                self.position += 2;
+                continue;
+            }
+            if ch == '*' && self.peek() == ')'
+            {
+                depth = depth.saturating_sub(1);
+                self.position += 2;
+                continue;
+            }
+            self.position += 1;
+        }
+        if depth > 0
+        {
+            panic!("Unterminated block comment");
         }
     }
 

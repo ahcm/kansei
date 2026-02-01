@@ -519,7 +519,7 @@ Commands:
   {bin} check <path>    Parse .ks files and exit non-zero on errors
   {bin} test <path>     Run .ks files and compare against .out/.err if present
   {bin} install [path]  Install modules from kansei.toml or local paths
-  {bin} wasm install <name> [--wasm-modules-repo <path-or-url>]
+  {bin} wasm install <name> [--wasm-modules-repo <path-or-url>] [--wasm-target <target>]
                       Build and install a wasm module from a repo
   {bin} lsp             Start language server on stdio
 

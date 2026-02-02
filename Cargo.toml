@@ -2,6 +2,11 @@
 name = "kansei"
 version = "0.0.1"
 edition = "2024"
+authors = ["Andreas Hauser <andreas@creative-memory.net>"]
+description = "Kansei programming language"
+license = "EUPL-1.2"
+keywords = ["programming language"]
+repository = "https://github.com/ahcm/kansei"
 
 [workspace]
 members = [

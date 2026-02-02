@@ -5,7 +5,7 @@ edition = "2024"
 authors = ["Andreas Hauser <andreas@creative-memory.net>"]
 description = "Kansei programming language"
 license = "EUPL-1.2"
-keywords = ["programming language"]
+keywords = ["programming" "language"]
 repository = "https://github.com/ahcm/kansei"
 
 [workspace]

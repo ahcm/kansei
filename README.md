@@ -1,7 +1,7 @@
 # About
-Kansei (感性) is a language based on Rust in the spirit of Ruby 1.8.
+Kansei (感性) is a language based on Rust inspired by Ruby 1.8 with a functional flavour.
 
-Not supporting Rails is seen as a benefit.
+The language is desribed in [LANGUAGE.md](LANGUAGE.md), which gets synced from time to time to [kansei-language/LANGUAGE.md](https://github.com/ahcm/kansei-language/LANGUAGE.md])
 
 A number of snippets can be found in files in the tests/ directory.
 

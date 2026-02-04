@@ -6072,6 +6072,26 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
     );
 
     out.push_str(
+        "  (func $is_func (param $v i64) (result i32)\n\
+            (local $ptr i32)\n\
+            local.get $v\n\
+            global.get $TAG_PTR\n\
+            call $is_tag\n\
+            if (result i32)\n\
+              local.get $v\n\
+              call $ptr_of\n\
+              local.set $ptr\n\
+              local.get $ptr\n\
+              i32.load\n\
+              global.get $TYPE_FUNC\n\
+              i32.eq\n\
+            else\n\
+              i32.const 0\n\
+            end\n\
+          )\n",
+    );
+
+    out.push_str(
         "  (func $call_func (param $func i64) (param $args_ptr i32) (param $argc i32) (result i64)\n\
             (local $func_idx i32)\n\
             (local $env i64)\n\
@@ -6189,6 +6209,348 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
             i64.shl\n\
             global.get $TAG_PTR\n\
             i64.or\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $string_concat (param $a i64) (param $b i64) (result i64)\n\
+            (local $pa i32)\n\
+            (local $pb i32)\n\
+            (local $la i32)\n\
+            (local $lb i32)\n\
+            (local $dst i32)\n\
+            local.get $a\n\
+            call $ptr_of\n\
+            local.set $pa\n\
+            local.get $b\n\
+            call $ptr_of\n\
+            local.set $pb\n\
+            local.get $pa\n\
+            i32.const 4\n\
+            i32.add\n\
+            i32.load\n\
+            local.set $la\n\
+            local.get $pb\n\
+            i32.const 4\n\
+            i32.add\n\
+            i32.load\n\
+            local.set $lb\n\
+            local.get $la\n\
+            local.get $lb\n\
+            i32.add\n\
+            call $alloc\n\
+            local.set $dst\n\
+            local.get $dst\n\
+            local.get $pa\n\
+            i32.const 8\n\
+            i32.add\n\
+            local.get $la\n\
+            memory.copy\n\
+            local.get $dst\n\
+            local.get $la\n\
+            i32.add\n\
+            local.get $pb\n\
+            i32.const 8\n\
+            i32.add\n\
+            local.get $lb\n\
+            memory.copy\n\
+            local.get $dst\n\
+            local.get $la\n\
+            local.get $lb\n\
+            i32.add\n\
+            call $string_new_from_data\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $value_to_string (param $v i64) (result i32 i32)\n\
+            (local $ptr i32)\n\
+            (local $len i32)\n\
+            (local $tmp i32)\n\
+            local.get $v\n\
+            global.get $TAG_INT\n\
+            call $is_tag\n\
+            if\n\
+              local.get $v\n\
+              call $untag_int\n\
+              call $int_to_string\n\
+              local.set $len\n\
+              local.set $ptr\n\
+            else\n\
+              local.get $v\n\
+              global.get $TAG_BOOL\n\
+              call $is_tag\n\
+              if\n\
+                local.get $v\n\
+                call $untag_int\n\
+                i64.eqz\n\
+                if\n\
+                  i32.const 5\n\
+                  call $alloc\n\
+                  local.set $ptr\n\
+                  local.get $ptr\n\
+                  i32.const 102\n\
+                  i32.store8\n\
+                  local.get $ptr\n\
+                  i32.const 1\n\
+                  i32.add\n\
+                  i32.const 97\n\
+                  i32.store8\n\
+                  local.get $ptr\n\
+                  i32.const 2\n\
+                  i32.add\n\
+                  i32.const 108\n\
+                  i32.store8\n\
+                  local.get $ptr\n\
+                  i32.const 3\n\
+                  i32.add\n\
+                  i32.const 115\n\
+                  i32.store8\n\
+                  local.get $ptr\n\
+                  i32.const 4\n\
+                  i32.add\n\
+                  i32.const 101\n\
+                  i32.store8\n\
+                  i32.const 5\n\
+                  local.set $len\n\
+                else\n\
+                  i32.const 4\n\
+                  call $alloc\n\
+                  local.set $ptr\n\
+                  local.get $ptr\n\
+                  i32.const 116\n\
+                  i32.store8\n\
+                  local.get $ptr\n\
+                  i32.const 1\n\
+                  i32.add\n\
+                  i32.const 114\n\
+                  i32.store8\n\
+                  local.get $ptr\n\
+                  i32.const 2\n\
+                  i32.add\n\
+                  i32.const 117\n\
+                  i32.store8\n\
+                  local.get $ptr\n\
+                  i32.const 3\n\
+                  i32.add\n\
+                  i32.const 101\n\
+                  i32.store8\n\
+                  i32.const 4\n\
+                  local.set $len\n\
+                end\n\
+              else\n\
+                local.get $v\n\
+                global.get $TAG_NIL\n\
+                call $is_tag\n\
+                if\n\
+                  i32.const 3\n\
+                  call $alloc\n\
+                  local.set $ptr\n\
+                  local.get $ptr\n\
+                  i32.const 110\n\
+                  i32.store8\n\
+                  local.get $ptr\n\
+                  i32.const 1\n\
+                  i32.add\n\
+                  i32.const 105\n\
+                  i32.store8\n\
+                  local.get $ptr\n\
+                  i32.const 2\n\
+                  i32.add\n\
+                  i32.const 108\n\
+                  i32.store8\n\
+                  i32.const 3\n\
+                  local.set $len\n\
+                else\n\
+                  local.get $v\n\
+                  global.get $TAG_PTR\n\
+                  call $is_tag\n\
+                  if\n\
+                    local.get $v\n\
+                    call $ptr_of\n\
+                    local.set $tmp\n\
+                    local.get $tmp\n\
+                    i32.load\n\
+                    global.get $TYPE_STRING\n\
+                    i32.eq\n\
+                    if\n\
+                      local.get $tmp\n\
+                      i32.const 4\n\
+                      i32.add\n\
+                      i32.load\n\
+                      local.set $len\n\
+                      local.get $tmp\n\
+                      i32.const 8\n\
+                      i32.add\n\
+                      local.set $ptr\n\
+                    else\n\
+                      local.get $tmp\n\
+                      i32.load\n\
+                      global.get $TYPE_ARRAY\n\
+                      i32.eq\n\
+                      if\n\
+                        i32.const 5\n\
+                        call $alloc\n\
+                        local.set $ptr\n\
+                        local.get $ptr\n\
+                        i32.const 97\n\
+                        i32.store8\n\
+                        local.get $ptr\n\
+                        i32.const 1\n\
+                        i32.add\n\
+                        i32.const 114\n\
+                        i32.store8\n\
+                        local.get $ptr\n\
+                        i32.const 2\n\
+                        i32.add\n\
+                        i32.const 114\n\
+                        i32.store8\n\
+                        local.get $ptr\n\
+                        i32.const 3\n\
+                        i32.add\n\
+                        i32.const 97\n\
+                        i32.store8\n\
+                        local.get $ptr\n\
+                        i32.const 4\n\
+                        i32.add\n\
+                        i32.const 121\n\
+                        i32.store8\n\
+                        i32.const 5\n\
+                        local.set $len\n\
+                      else\n\
+                        local.get $tmp\n\
+                        i32.load\n\
+                        global.get $TYPE_MAP\n\
+                        i32.eq\n\
+                        if\n\
+                          i32.const 3\n\
+                          call $alloc\n\
+                          local.set $ptr\n\
+                          local.get $ptr\n\
+                          i32.const 109\n\
+                          i32.store8\n\
+                          local.get $ptr\n\
+                          i32.const 1\n\
+                          i32.add\n\
+                          i32.const 97\n\
+                          i32.store8\n\
+                          local.get $ptr\n\
+                          i32.const 2\n\
+                          i32.add\n\
+                          i32.const 112\n\
+                          i32.store8\n\
+                          i32.const 3\n\
+                          local.set $len\n\
+                        else\n\
+                          local.get $tmp\n\
+                          i32.load\n\
+                          global.get $TYPE_F64\n\
+                          i32.eq\n\
+                          if\n\
+                            i32.const 5\n\
+                            call $alloc\n\
+                            local.set $ptr\n\
+                            local.get $ptr\n\
+                            i32.const 102\n\
+                            i32.store8\n\
+                            local.get $ptr\n\
+                            i32.const 1\n\
+                            i32.add\n\
+                            i32.const 108\n\
+                            i32.store8\n\
+                            local.get $ptr\n\
+                            i32.const 2\n\
+                            i32.add\n\
+                            i32.const 111\n\
+                            i32.store8\n\
+                            local.get $ptr\n\
+                            i32.const 3\n\
+                            i32.add\n\
+                            i32.const 97\n\
+                            i32.store8\n\
+                            local.get $ptr\n\
+                            i32.const 4\n\
+                            i32.add\n\
+                            i32.const 116\n\
+                            i32.store8\n\
+                            i32.const 5\n\
+                            local.set $len\n\
+                          else\n\
+                            i32.const 3\n\
+                            call $alloc\n\
+                            local.set $ptr\n\
+                            local.get $ptr\n\
+                            i32.const 110\n\
+                            i32.store8\n\
+                            local.get $ptr\n\
+                            i32.const 1\n\
+                            i32.add\n\
+                            i32.const 105\n\
+                            i32.store8\n\
+                            local.get $ptr\n\
+                            i32.const 2\n\
+                            i32.add\n\
+                            i32.const 108\n\
+                            i32.store8\n\
+                            i32.const 3\n\
+                            local.set $len\n\
+                          end\n\
+                        end\n\
+                      end\n\
+                    end\n\
+                  else\n\
+                    i32.const 3\n\
+                    call $alloc\n\
+                    local.set $ptr\n\
+                    local.get $ptr\n\
+                    i32.const 110\n\
+                    i32.store8\n\
+                    local.get $ptr\n\
+                    i32.const 1\n\
+                    i32.add\n\
+                    i32.const 105\n\
+                    i32.store8\n\
+                    local.get $ptr\n\
+                    i32.const 2\n\
+                    i32.add\n\
+                    i32.const 108\n\
+                    i32.store8\n\
+                    i32.const 3\n\
+                    local.set $len\n\
+                  end\n\
+                end\n\
+              end\n\
+            end\n\
+            local.get $ptr\n\
+            local.get $len\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $coerce_to_string (param $v i64) (result i64)\n\
+            (local $ptr i32)\n\
+            (local $len i32)\n\
+            local.get $v\n\
+            global.get $TAG_PTR\n\
+            call $is_tag\n\
+            if\n\
+              local.get $v\n\
+              call $ptr_of\n\
+              i32.load\n\
+              global.get $TYPE_STRING\n\
+              i32.eq\n\
+              if\n\
+                local.get $v\n\
+                return\n\
+              end\n\
+            end\n\
+            local.get $v\n\
+            call $value_to_string\n\
+            local.set $len\n\
+            local.set $ptr\n\
+            local.get $ptr\n\
+            local.get $len\n\
+            call $string_new_from_data\n\
           )\n",
     );
 
@@ -6944,6 +7306,58 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
     );
 
     out.push_str(
+        "  (func $map_keys (param $map i64) (result i64)\n\
+            (local $ptr i32)\n\
+            (local $node i32)\n\
+            (local $count i32)\n\
+            (local $out i64)\n\
+            (local $i i32)\n\
+            local.get $map\n\
+            call $ptr_of\n\
+            local.set $ptr\n\
+            local.get $ptr\n\
+            i32.const 4\n\
+            i32.add\n\
+            i32.load\n\
+            local.set $count\n\
+            local.get $count\n\
+            call $array_new\n\
+            local.set $out\n\
+            local.get $ptr\n\
+            i32.const 8\n\
+            i32.add\n\
+            i32.load\n\
+            local.set $node\n\
+            i32.const 0\n\
+            local.set $i\n\
+            block $exit\n\
+              loop $loop\n\
+                local.get $node\n\
+                i32.eqz\n\
+                br_if $exit\n\
+                local.get $out\n\
+                local.get $i\n\
+                local.get $node\n\
+                i64.load\n\
+                call $array_set\n\
+                drop\n\
+                local.get $i\n\
+                i32.const 1\n\
+                i32.add\n\
+                local.set $i\n\
+                local.get $node\n\
+                i32.const 16\n\
+                i32.add\n\
+                i32.load\n\
+                local.set $node\n\
+                br $loop\n\
+              end\n\
+            end\n\
+            local.get $out\n\
+          )\n",
+    );
+
+    out.push_str(
         "  (func $array_new (param $len i32) (result i64)\n\
             (local $ptr i32)\n\
             (local $data i32)\n\
@@ -6974,6 +7388,19 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
             i64.shl\n\
             global.get $TAG_PTR\n\
             i64.or\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $array_len (param $arr i64) (result i32)\n\
+            (local $ptr i32)\n\
+            local.get $arr\n\
+            call $ptr_of\n\
+            local.set $ptr\n\
+            local.get $ptr\n\
+            i32.const 4\n\
+            i32.add\n\
+            i32.load\n\
           )\n",
     );
 
@@ -7042,6 +7469,113 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
             local.get $value\n\
             i64.store\n\
             local.get $value\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $array_slice (param $arr i64) (param $start i32) (param $end i32) (result i64)\n\
+            (local $len i32)\n\
+            (local $s i32)\n\
+            (local $e i32)\n\
+            (local $out i64)\n\
+            (local $i i32)\n\
+            local.get $arr\n\
+            call $array_len\n\
+            local.set $len\n\
+            local.get $start\n\
+            local.get $len\n\
+            i32.min_u\n\
+            local.set $s\n\
+            local.get $end\n\
+            local.get $len\n\
+            i32.min_u\n\
+            local.set $e\n\
+            local.get $s\n\
+            local.get $e\n\
+            i32.ge_u\n\
+            if\n\
+              i32.const 0\n\
+              call $array_new\n\
+              return\n\
+            end\n\
+            local.get $e\n\
+            local.get $s\n\
+            i32.sub\n\
+            call $array_new\n\
+            local.set $out\n\
+            i32.const 0\n\
+            local.set $i\n\
+            block $exit\n\
+              loop $loop\n\
+                local.get $i\n\
+                local.get $e\n\
+                local.get $s\n\
+                i32.sub\n\
+                i32.ge_u\n\
+                br_if $exit\n\
+                local.get $out\n\
+                local.get $i\n\
+                local.get $arr\n\
+                local.get $s\n\
+                local.get $i\n\
+                i32.add\n\
+                call $array_get\n\
+                call $array_set\n\
+                drop\n\
+                local.get $i\n\
+                i32.const 1\n\
+                i32.add\n\
+                local.set $i\n\
+                br $loop\n\
+              end\n\
+            end\n\
+            local.get $out\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $string_slice (param $sval i64) (param $start i32) (param $end i32) (result i64)\n\
+            (local $ptr i32)\n\
+            (local $len i32)\n\
+            (local $s i32)\n\
+            (local $e i32)\n\
+            (local $src i32)\n\
+            local.get $sval\n\
+            call $ptr_of\n\
+            local.set $ptr\n\
+            local.get $ptr\n\
+            i32.const 4\n\
+            i32.add\n\
+            i32.load\n\
+            local.set $len\n\
+            local.get $start\n\
+            local.get $len\n\
+            i32.min_u\n\
+            local.set $s\n\
+            local.get $end\n\
+            local.get $len\n\
+            i32.min_u\n\
+            local.set $e\n\
+            local.get $s\n\
+            local.get $e\n\
+            i32.ge_u\n\
+            if\n\
+              i32.const 0\n\
+              i32.const 0\n\
+              call $string_new_from_data\n\
+              return\n\
+            end\n\
+            local.get $ptr\n\
+            i32.const 8\n\
+            i32.add\n\
+            local.set $src\n\
+            local.get $src\n\
+            local.get $s\n\
+            i32.add\n\
+            local.get $e\n\
+            local.get $s\n\
+            i32.sub\n\
+            call $string_new_from_data\n\
           )\n",
     );
 
@@ -7404,10 +7938,33 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
             emit_expr_value(ctx, iterable)?;
             ctx.out.push_str("    local.set $tmp\n");
             ctx.out.push_str("    local.get $tmp\n");
+            ctx.out.push_str("    global.get $TAG_PTR\n");
+            ctx.out.push_str("    call $is_tag\n");
+            ctx.out.push_str("    i32.eqz\n");
+            ctx.out.push_str("    if\n");
+            ctx.out.push_str("      unreachable\n");
+            ctx.out.push_str("    end\n");
+            ctx.out.push_str("    local.get $tmp\n");
             ctx.out.push_str("    call $ptr_of\n");
             ctx.out.push_str("    local.set $tmp_ptr\n");
             ctx.out.push_str("    local.get $tmp_ptr\n");
             ctx.out.push_str("    i32.load\n");
+            ctx.out.push_str("    local.set $tmp_i32\n");
+            ctx.out.push_str("    local.get $tmp_i32\n");
+            ctx.out.push_str("    global.get $TYPE_MAP\n");
+            ctx.out.push_str("    i32.eq\n");
+            ctx.out.push_str("    if\n");
+            ctx.out.push_str("      local.get $tmp\n");
+            ctx.out.push_str("      call $map_keys\n");
+            ctx.out.push_str("      local.set $tmp\n");
+            ctx.out.push_str("      local.get $tmp\n");
+            ctx.out.push_str("      call $ptr_of\n");
+            ctx.out.push_str("      local.set $tmp_ptr\n");
+            ctx.out.push_str("      local.get $tmp_ptr\n");
+            ctx.out.push_str("      i32.load\n");
+            ctx.out.push_str("      local.set $tmp_i32\n");
+            ctx.out.push_str("    end\n");
+            ctx.out.push_str("    local.get $tmp_i32\n");
             ctx.out.push_str("    global.get $TYPE_ARRAY\n");
             ctx.out.push_str("    i32.ne\n");
             ctx.out.push_str("    if\n");
@@ -7526,13 +8083,130 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
             ctx.out.push_str("    end\n");
             ctx.out.push_str("    local.get $tmp\n");
         }
+        ExprKind::Collect {
+            count,
+            into: Some(into),
+            var_slot: Some(var_slot),
+            body,
+            ..
+        } =>
+        {
+            emit_expr_value(ctx, count)?;
+            ctx.out.push_str("    call $untag_int\n");
+            ctx.out.push_str("    i32.wrap_i64\n");
+            ctx.out.push_str("    local.set $tmp_i32\n");
+            emit_expr_value(ctx, into)?;
+            ctx.out.push_str("    local.set $tmp\n");
+            ctx.out.push_str("    local.get $tmp\n");
+            ctx.out.push_str("    global.get $TAG_PTR\n");
+            ctx.out.push_str("    call $is_tag\n");
+            ctx.out.push_str("    i32.eqz\n");
+            ctx.out.push_str("    if\n");
+            ctx.out.push_str("      unreachable\n");
+            ctx.out.push_str("    end\n");
+            ctx.out.push_str("    local.get $tmp\n");
+            ctx.out.push_str("    call $ptr_of\n");
+            ctx.out.push_str("    i32.load\n");
+            ctx.out.push_str("    global.get $TYPE_ARRAY\n");
+            ctx.out.push_str("    i32.ne\n");
+            ctx.out.push_str("    if\n");
+            ctx.out.push_str("      unreachable\n");
+            ctx.out.push_str("    end\n");
+            ctx.out.push_str("    local.get $tmp\n");
+            ctx.out.push_str("    call $array_len\n");
+            ctx.out.push_str("    local.get $tmp_i32\n");
+            ctx.out.push_str("    i32.ne\n");
+            ctx.out.push_str("    if\n");
+            ctx.out.push_str("      unreachable\n");
+            ctx.out.push_str("    end\n");
+            ctx.out.push_str("    i32.const 0\n");
+            ctx.out.push_str("    local.set $tmp_ptr\n");
+            ctx.out.push_str("    block $collect_into_exit\n");
+            ctx.out.push_str("      loop $collect_into_loop\n");
+            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        local.get $tmp_i32\n");
+            ctx.out.push_str("        i32.ge_u\n");
+            ctx.out.push_str("        br_if $collect_into_exit\n");
+            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        i64.extend_i32_u\n");
+            ctx.out.push_str("        call $tag_int\n");
+            ctx.out.push_str(&format!("        local.set $r{var_slot}\n"));
+            emit_expr_value(ctx, body)?;
+            ctx.out.push_str("        local.set $tmp2\n");
+            ctx.out.push_str("        local.get $tmp\n");
+            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        local.get $tmp2\n");
+            ctx.out.push_str("        call $array_set\n");
+            ctx.out.push_str("        drop\n");
+            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        i32.const 1\n");
+            ctx.out.push_str("        i32.add\n");
+            ctx.out.push_str("        local.set $tmp_ptr\n");
+            ctx.out.push_str("        br $collect_into_loop\n");
+            ctx.out.push_str("      end\n");
+            ctx.out.push_str("    end\n");
+            ctx.out.push_str("    local.get $tmp\n");
+        }
         ExprKind::Collect { .. } =>
         {
             return Err("WAT dump only supports collect into new arrays".to_string());
         }
-        ExprKind::ArrayGenerator { .. } =>
+        ExprKind::ArrayGenerator { generator, size } =>
         {
-            return Err("WAT dump does not support array generators yet".to_string());
+            emit_expr_value(ctx, size)?;
+            ctx.out.push_str("    call $untag_int\n");
+            ctx.out.push_str("    i32.wrap_i64\n");
+            ctx.out.push_str("    local.set $tmp_i32\n");
+            emit_expr_value(ctx, generator)?;
+            ctx.out.push_str("    local.set $tmp3\n");
+            ctx.out.push_str("    local.get $tmp_i32\n");
+            ctx.out.push_str("    call $array_new\n");
+            ctx.out.push_str("    local.set $tmp\n");
+            ctx.out.push_str("    i32.const 0\n");
+            ctx.out.push_str("    local.set $tmp_ptr\n");
+            ctx.out.push_str("    block $gen_exit\n");
+            ctx.out.push_str("      loop $gen_loop\n");
+            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        local.get $tmp_i32\n");
+            ctx.out.push_str("        i32.ge_u\n");
+            ctx.out.push_str("        br_if $gen_exit\n");
+            ctx.out.push_str("        local.get $tmp3\n");
+            ctx.out.push_str("        call $is_func\n");
+            ctx.out.push_str("        if\n");
+            ctx.out.push_str("          i32.const 8\n");
+            ctx.out.push_str("          call $alloc\n");
+            ctx.out.push_str("          local.set $tmp_ptr2\n");
+            ctx.out.push_str("          local.get $tmp_ptr2\n");
+            ctx.out.push_str("          local.get $tmp_ptr\n");
+            ctx.out.push_str("          i64.extend_i32_u\n");
+            ctx.out.push_str("          call $tag_int\n");
+            ctx.out.push_str("          i64.store\n");
+            ctx.out.push_str("          local.get $tmp3\n");
+            ctx.out.push_str("          local.get $tmp_ptr2\n");
+            ctx.out.push_str("          i32.const 1\n");
+            ctx.out.push_str("          call $call_func\n");
+            ctx.out.push_str("          local.set $tmp2\n");
+            ctx.out.push_str("        end\n");
+            ctx.out.push_str("        local.get $tmp3\n");
+            ctx.out.push_str("        call $is_func\n");
+            ctx.out.push_str("        i32.eqz\n");
+            ctx.out.push_str("        if\n");
+            ctx.out.push_str("          local.get $tmp3\n");
+            ctx.out.push_str("          local.set $tmp2\n");
+            ctx.out.push_str("        end\n");
+            ctx.out.push_str("        local.get $tmp\n");
+            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        local.get $tmp2\n");
+            ctx.out.push_str("        call $array_set\n");
+            ctx.out.push_str("        drop\n");
+            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        i32.const 1\n");
+            ctx.out.push_str("        i32.add\n");
+            ctx.out.push_str("        local.set $tmp_ptr\n");
+            ctx.out.push_str("        br $gen_loop\n");
+            ctx.out.push_str("      end\n");
+            ctx.out.push_str("    end\n");
+            ctx.out.push_str("    local.get $tmp\n");
         }
         ExprKind::Block(items) =>
         {
@@ -7582,6 +8256,85 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
                 ctx.out.push_str("    drop\n");
             }
             ctx.out.push_str("    local.get $tmp\n");
+        }
+        ExprKind::FormatString(parts) =>
+        {
+            ctx.out.push_str("    i32.const 0\n");
+            ctx.out.push_str("    i32.const 0\n");
+            ctx.out.push_str("    call $string_new_from_data\n");
+            ctx.out.push_str("    local.set $tmp\n");
+            for part in parts
+            {
+                match part
+                {
+                    crate::ast::FormatPart::Literal(text) =>
+                    {
+                        let bytes = text.as_bytes();
+                        let offset = ctx.push_data(bytes);
+                        ctx.out.push_str(&format!("    i32.const {offset}\n"));
+                        ctx.out
+                            .push_str(&format!("    i32.const {}\n", bytes.len()));
+                        ctx.out.push_str("    call $string_new_from_data\n");
+                        ctx.out.push_str("    local.set $tmp2\n");
+                    }
+                    crate::ast::FormatPart::Expr { expr, .. } =>
+                    {
+                        emit_expr_value(ctx, expr)?;
+                        ctx.out.push_str("    call $coerce_to_string\n");
+                        ctx.out.push_str("    local.set $tmp2\n");
+                    }
+                }
+                ctx.out.push_str("    local.get $tmp\n");
+                ctx.out.push_str("    local.get $tmp2\n");
+                ctx.out.push_str("    call $string_concat\n");
+                ctx.out.push_str("    local.set $tmp\n");
+            }
+            ctx.out.push_str("    local.get $tmp\n");
+        }
+        ExprKind::Slice { target, start, end } =>
+        {
+            emit_expr_value(ctx, target)?;
+            ctx.out.push_str("    local.set $tmp\n");
+            emit_expr_value(ctx, start)?;
+            ctx.out.push_str("    call $untag_int\n");
+            ctx.out.push_str("    i32.wrap_i64\n");
+            ctx.out.push_str("    local.set $tmp_ptr\n");
+            emit_expr_value(ctx, end)?;
+            ctx.out.push_str("    call $untag_int\n");
+            ctx.out.push_str("    i32.wrap_i64\n");
+            ctx.out.push_str("    local.set $tmp_ptr2\n");
+            ctx.out.push_str("    local.get $tmp\n");
+            ctx.out.push_str("    global.get $TAG_PTR\n");
+            ctx.out.push_str("    call $is_tag\n");
+            ctx.out.push_str("    i32.eqz\n");
+            ctx.out.push_str("    if\n");
+            ctx.out.push_str("      unreachable\n");
+            ctx.out.push_str("    end\n");
+            ctx.out.push_str("    local.get $tmp\n");
+            ctx.out.push_str("    call $ptr_of\n");
+            ctx.out.push_str("    local.set $tmp_i32\n");
+            ctx.out.push_str("    local.get $tmp_i32\n");
+            ctx.out.push_str("    i32.load\n");
+            ctx.out.push_str("    global.get $TYPE_STRING\n");
+            ctx.out.push_str("    i32.eq\n");
+            ctx.out.push_str("    if (result i64)\n");
+            ctx.out.push_str("      local.get $tmp\n");
+            ctx.out.push_str("      local.get $tmp_ptr\n");
+            ctx.out.push_str("      local.get $tmp_ptr2\n");
+            ctx.out.push_str("      call $string_slice\n");
+            ctx.out.push_str("    else\n");
+            ctx.out.push_str("      local.get $tmp_i32\n");
+            ctx.out.push_str("      i32.load\n");
+            ctx.out.push_str("      global.get $TYPE_ARRAY\n");
+            ctx.out.push_str("      i32.ne\n");
+            ctx.out.push_str("      if\n");
+            ctx.out.push_str("        unreachable\n");
+            ctx.out.push_str("      end\n");
+            ctx.out.push_str("      local.get $tmp\n");
+            ctx.out.push_str("      local.get $tmp_ptr\n");
+            ctx.out.push_str("      local.get $tmp_ptr2\n");
+            ctx.out.push_str("      call $array_slice\n");
+            ctx.out.push_str("    end\n");
         }
         ExprKind::Index { target, index } =>
         {
@@ -8359,7 +9112,9 @@ fn emit_function_value(
     }
     ctx.out.push_str("    (local $tmp i64)\n");
     ctx.out.push_str("    (local $tmp2 i64)\n");
+    ctx.out.push_str("    (local $tmp3 i64)\n");
     ctx.out.push_str("    (local $tmp_ptr i32)\n");
+    ctx.out.push_str("    (local $tmp_ptr2 i32)\n");
     ctx.out.push_str("    (local $tmp_i32 i32)\n");
     if param_count > 0
     {
@@ -8392,18 +9147,24 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
     ctx.out
         .push_str(&format!("  ;; kansei-wat wasi={}\n", wasi.as_str()));
     emit_wat_runtime(&mut ctx.out, wasi);
-    emit_wat_builtins(&mut ctx);
+    if wasi == WasiTarget::Wasip1
+    {
+        emit_wat_builtins(&mut ctx);
+    }
 
     let mut emitted = 0usize;
     let mut has_main = false;
     let mut globals = Vec::new();
     collect_global_symbols(ast, &mut globals, false);
-    for name in ["print", "puts", "eprint", "eputs", "log"]
+    if wasi == WasiTarget::Wasip1
     {
-        let sym = intern::intern_symbol(name);
-        if !globals.contains(&sym)
+        for name in ["print", "puts", "eprint", "eputs", "log"]
         {
-            globals.push(sym);
+            let sym = intern::intern_symbol(name);
+            if !globals.contains(&sym)
+            {
+                globals.push(sym);
+            }
         }
     }
     for (idx, sym) in globals.iter().enumerate()
@@ -8418,20 +9179,23 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
     collect_anonymous_functions(ast, &mut anon_exprs);
 
     let mut func_idx = 0usize;
-    for (name, internal) in [
-        ("print", "builtin_print"),
-        ("puts", "builtin_puts"),
-        ("eprint", "builtin_eprint"),
-        ("eputs", "builtin_eputs"),
-        ("log", "builtin_log"),
-    ]
+    if wasi == WasiTarget::Wasip1
     {
-        let sym = intern::intern_symbol(name);
-        ctx.builtin_names
-            .insert(sym, internal.to_string());
-        ctx.func_indices
-            .insert(internal.to_string(), func_idx as i32);
-        func_idx += 1;
+        for (name, internal) in [
+            ("print", "builtin_print"),
+            ("puts", "builtin_puts"),
+            ("eprint", "builtin_eprint"),
+            ("eputs", "builtin_eputs"),
+            ("log", "builtin_log"),
+        ]
+        {
+            let sym = intern::intern_symbol(name);
+            ctx.builtin_names
+                .insert(sym, internal.to_string());
+            ctx.func_indices
+                .insert(internal.to_string(), func_idx as i32);
+            func_idx += 1;
+        }
     }
     for func in functions.iter().cloned()
     {

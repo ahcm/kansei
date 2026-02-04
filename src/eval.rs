@@ -7811,7 +7811,8 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
             }
             else
             {
-                return Err("Unknown global".to_string());
+                let label = symbol_name(name);
+                return Err(format!("Unknown global: {}", label.as_str()));
             }
         }
         ExprKind::Assignment {
@@ -7834,7 +7835,7 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
                 .global_names
                 .get(&name)
                 .cloned()
-                .ok_or_else(|| "Unknown global".to_string())?;
+                .ok_or_else(|| format!("Unknown global: {}", symbol_name(name).as_str()))?;
             emit_expr_value(ctx, value)?;
             ctx.out.push_str(&format!("    i32.const {idx}\n"));
             ctx.out.push_str("    call $global_set\n");
@@ -8291,6 +8292,10 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
             }
             ctx.out.push_str("    local.get $tmp\n");
         }
+        ExprKind::FilePublic(expr) | ExprKind::FunctionPublic(expr) =>
+        {
+            emit_expr_value(ctx, expr)?;
+        }
         ExprKind::Slice { target, start, end } =>
         {
             emit_expr_value(ctx, target)?;
@@ -8722,6 +8727,10 @@ fn collect_global_symbols(expr: &Expr, out: &mut Vec<SymbolId>, in_function: boo
         {
             add(*name, out);
         }
+        ExprKind::FilePublic(expr) | ExprKind::FunctionPublic(expr) =>
+        {
+            collect_global_symbols(expr, out, in_function);
+        }
         ExprKind::AnonymousFunction { .. } => {}
         _ => {}
     }
@@ -8826,6 +8835,10 @@ fn collect_free_symbols(expr: &Expr, globals: &FxHashSet<SymbolId>, out: &mut Fx
                 collect_free_symbols(expr, globals, out);
             }
         }
+        ExprKind::FilePublic(expr) | ExprKind::FunctionPublic(expr) =>
+        {
+            collect_free_symbols(expr, globals, out);
+        }
         ExprKind::FunctionDef { .. } | ExprKind::AnonymousFunction { .. } => {}
         _ => {}
     }
@@ -8867,6 +8880,10 @@ fn collect_anonymous_functions(expr: &Expr, out: &mut Vec<WatAnonFunction>)
                 line: expr.line,
             });
             collect_anonymous_functions(body, out);
+        }
+        ExprKind::FilePublic(expr) | ExprKind::FunctionPublic(expr) =>
+        {
+            collect_anonymous_functions(expr, out);
         }
         ExprKind::FunctionDef { body, .. } => collect_anonymous_functions(body, out),
         ExprKind::Assignment { value, .. } => collect_anonymous_functions(value, out),
@@ -8986,6 +9003,10 @@ fn collect_named_functions(expr: &Expr, out: &mut Vec<WatNamedFunction>, in_func
         ExprKind::AnonymousFunction { body, .. } =>
         {
             collect_named_functions(body, out, true);
+        }
+        ExprKind::FilePublic(expr) | ExprKind::FunctionPublic(expr) =>
+        {
+            collect_named_functions(expr, out, in_function);
         }
         ExprKind::Assignment { value, .. } => collect_named_functions(value, out, in_function),
         ExprKind::IndexAssignment {
@@ -9153,6 +9174,7 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
     }
 
     let mut emitted = 0usize;
+    let mut last_err: Option<String> = None;
     let mut has_main = false;
     let mut globals = Vec::new();
     collect_global_symbols(ast, &mut globals, false);
@@ -9293,6 +9315,7 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
         }
         Err(err) =>
         {
+            last_err = Some(err.clone());
             ctx.out
                 .push_str(&format!("  ;; top-level unsupported: {err}\n"));
         }
@@ -9370,6 +9393,7 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
             Ok(()) => emitted += 1,
             Err(err) =>
             {
+                last_err = Some(err.clone());
                 ctx.out.push_str(&format!(
                     "  ;; skipped function at line {} ({err})\n",
                     func.line
@@ -9425,6 +9449,7 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
             Ok(()) => emitted += 1,
             Err(err) =>
             {
+                last_err = Some(err.clone());
                 ctx.out.push_str(&format!(
                     "  ;; skipped anon function at line {} ({err})\n",
                     anon.line
@@ -9467,8 +9492,11 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
 
     if emitted == 0
     {
-        return Err("WAT dump supports a limited f64 subset (no globals/strings/arrays/maps)."
-            .to_string());
+        if let Some(err) = last_err
+        {
+            return Err(format!("WAT dump failed: {err}"));
+        }
+        return Err("WAT dump failed: no supported functions could be emitted.".to_string());
     }
 
     for (offset, bytes) in ctx.data_segments.iter()

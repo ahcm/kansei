@@ -16,8 +16,8 @@ members = [
 
 [profile.release]
 strip = true
-lto = "fat"        # Link Time Optimization: mostly for size benefits
-codegen-units = 1  # Reduce parallelism to allow better optimization
+#lto = "fat"        # Link Time Optimization: mostly for size benefits
+#codegen-units = 1  # Reduce parallelism to allow better optimization
 panic = "abort"    # Removes unwinding logic (smaller & slightly faster)
 opt-level = 3      # Maximize speed (default is 3, but good to be explicit)
 

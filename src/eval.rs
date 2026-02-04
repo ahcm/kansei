@@ -5778,55 +5778,6 @@ pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String
 }
 
 
-fn expr_requires_slot(expr: &Expr) -> bool
-{
-    match &expr.kind
-    {
-        ExprKind::Identifier { slot, .. } => slot.is_none(),
-        ExprKind::Assignment { slot, .. } => slot.is_none(),
-        ExprKind::IndexAssignment { target, index, value } =>
-        {
-            expr_requires_slot(target) || expr_requires_slot(index) || expr_requires_slot(value)
-        }
-        ExprKind::BinaryOp { left, right, .. } =>
-        {
-            expr_requires_slot(left) || expr_requires_slot(right)
-        }
-        ExprKind::Not(expr) | ExprKind::Clone(expr) | ExprKind::EnvFreeze(expr) =>
-        {
-            expr_requires_slot(expr)
-        }
-        ExprKind::And { left, right }
-        | ExprKind::AndBool { left, right }
-        | ExprKind::Or { left, right }
-        | ExprKind::OrBool { left, right } =>
-        {
-            expr_requires_slot(left) || expr_requires_slot(right)
-        }
-        ExprKind::If {
-            condition,
-            then_branch,
-            else_branch,
-        } =>
-        {
-            expr_requires_slot(condition)
-                || expr_requires_slot(then_branch)
-                || else_branch
-                    .as_ref()
-                    .map_or(false, |expr| expr_requires_slot(expr))
-        }
-        ExprKind::While { condition, body } =>
-        {
-            expr_requires_slot(condition) || expr_requires_slot(body)
-        }
-        ExprKind::Block(items) => items.iter().any(expr_requires_slot),
-        ExprKind::Return(value) =>
-        {
-            value.as_ref().map_or(false, |expr| expr_requires_slot(expr))
-        }
-        _ => false,
-    }
-}
 
 fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
 {
@@ -5842,7 +5793,9 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
     out.push_str("  (global $TYPE_STRING i32 (i32.const 2))\n");
     out.push_str("  (global $TYPE_MAP i32 (i32.const 3))\n");
     out.push_str("  (global $TYPE_ARRAY i32 (i32.const 4))\n");
+    out.push_str("  (global $TYPE_FUNC i32 (i32.const 5))\n");
     out.push_str("  (global $globals_ptr (mut i32) (i32.const 0))\n");
+    out.push_str("  (type $fn (func (param i32 i32) (result i64)))\n");
 
     out.push_str(
         "  (func $alloc (param $size i32) (result i32)\n\
@@ -5913,6 +5866,70 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
             local.get $value\n\
             i64.store\n\
             local.get $value\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $make_func (param $func_idx i32) (param $env i64) (result i64)\n\
+            (local $ptr i32)\n\
+            i32.const 16\n\
+            call $alloc\n\
+            local.set $ptr\n\
+            local.get $ptr\n\
+            global.get $TYPE_FUNC\n\
+            i32.store\n\
+            local.get $ptr\n\
+            i32.const 4\n\
+            i32.add\n\
+            local.get $func_idx\n\
+            i32.store\n\
+            local.get $ptr\n\
+            i32.const 8\n\
+            i32.add\n\
+            local.get $env\n\
+            i64.store\n\
+            local.get $ptr\n\
+            i64.extend_i32_u\n\
+            i64.const 3\n\
+            i64.shl\n\
+            global.get $TAG_PTR\n\
+            i64.or\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $func_index_of (param $v i64) (result i32)\n\
+            (local $ptr i32)\n\
+            local.get $v\n\
+            global.get $TAG_PTR\n\
+            call $is_tag\n\
+            i32.eqz\n\
+            if\n\
+              unreachable\n\
+            end\n\
+            local.get $v\n\
+            call $ptr_of\n\
+            local.set $ptr\n\
+            local.get $ptr\n\
+            i32.load\n\
+            global.get $TYPE_FUNC\n\
+            i32.ne\n\
+            if\n\
+              unreachable\n\
+            end\n\
+            local.get $ptr\n\
+            i32.const 4\n\
+            i32.add\n\
+            i32.load\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $call_func (param $func_idx i32) (param $args_ptr i32) (param $argc i32) (result i64)\n\
+            local.get $args_ptr\n\
+            local.get $argc\n\
+            local.get $func_idx\n\
+            call_indirect (type $fn)\n\
           )\n",
     );
 
@@ -6649,6 +6666,8 @@ struct WatContext
     data_offset: i32,
     func_names: FxHashMap<SymbolId, String>,
     global_names: FxHashMap<SymbolId, usize>,
+    anon_names: FxHashMap<usize, String>,
+    func_indices: FxHashMap<String, i32>,
 }
 
 impl WatContext
@@ -6661,6 +6680,8 @@ impl WatContext
             data_offset: 4096,
             func_names: FxHashMap::default(),
             global_names: FxHashMap::default(),
+            anon_names: FxHashMap::default(),
+            func_indices: FxHashMap::default(),
         }
     }
 
@@ -6923,28 +6944,25 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
             {
                 return Err("WAT dump does not support call blocks yet".to_string());
             }
-            match &function.kind
+            ctx.out
+                .push_str(&format!("    i32.const {}\n", args.len() * 8));
+            ctx.out.push_str("    call $alloc\n");
+            ctx.out.push_str("    local.set $tmp_ptr\n");
+            for (idx, arg) in args.iter().enumerate()
             {
-                ExprKind::Identifier { name, .. } =>
-                {
-                    let internal = ctx
-                        .func_names
-                        .get(name)
-                        .cloned()
-                        .ok_or_else(|| {
-                            format!("WAT dump does not know function '{}'", symbol_name(*name))
-                        })?;
-                    for arg in args
-                    {
-                        emit_expr_value(ctx, arg)?;
-                    }
-                    ctx.out.push_str(&format!("    call ${internal}\n"));
-                }
-                _ =>
-                {
-                    return Err("WAT dump only supports direct calls to named functions".to_string());
-                }
+                ctx.out.push_str("    local.get $tmp_ptr\n");
+                ctx.out
+                    .push_str(&format!("    i32.const {}\n", idx * 8));
+                ctx.out.push_str("    i32.add\n");
+                emit_expr_value(ctx, arg)?;
+                ctx.out.push_str("    i64.store\n");
             }
+            emit_expr_value(ctx, function)?;
+            ctx.out.push_str("    call $func_index_of\n");
+            ctx.out.push_str("    local.get $tmp_ptr\n");
+            ctx.out
+                .push_str(&format!("    i32.const {}\n", args.len()));
+            ctx.out.push_str("    call $call_func\n");
         }
         ExprKind::FunctionDef { .. } =>
         {
@@ -6952,7 +6970,20 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
         }
         ExprKind::AnonymousFunction { .. } =>
         {
-            return Err("WAT dump does not support anonymous functions yet".to_string());
+            let key = expr as *const Expr as usize;
+            let internal = ctx
+                .anon_names
+                .get(&key)
+                .cloned()
+                .ok_or_else(|| "Unknown anonymous function".to_string())?;
+            let idx = ctx
+                .func_indices
+                .get(&internal)
+                .cloned()
+                .ok_or_else(|| "Unknown function index".to_string())?;
+            ctx.out.push_str(&format!("    i32.const {idx}\n"));
+            ctx.out.push_str("    call $tag_nil\n");
+            ctx.out.push_str("    call $make_func\n");
         }
         ExprKind::Return(value) =>
         {
@@ -7145,9 +7176,132 @@ fn collect_global_symbols(expr: &Expr, out: &mut Vec<SymbolId>)
                 collect_global_symbols(expr, out);
             }
         }
-        ExprKind::FunctionDef { body, .. } | ExprKind::AnonymousFunction { body, .. } =>
+        ExprKind::FunctionDef { name, body, .. } =>
+        {
+            add(*name, out);
+            collect_global_symbols(body, out);
+        }
+        ExprKind::AnonymousFunction { body, .. } =>
         {
             collect_global_symbols(body, out);
+        }
+        _ => {}
+    }
+}
+
+#[derive(Clone)]
+struct WatAnonFunction
+{
+    key: usize,
+    params: Vec<Param>,
+    body: Expr,
+    slots: Option<Rc<Vec<Rc<String>>>>,
+    line: usize,
+}
+
+fn collect_anonymous_functions(expr: &Expr, out: &mut Vec<WatAnonFunction>)
+{
+    match &expr.kind
+    {
+        ExprKind::AnonymousFunction { params, body, slots } =>
+        {
+            out.push(WatAnonFunction {
+                key: expr as *const Expr as usize,
+                params: params.clone(),
+                body: (*body.as_ref()).clone(),
+                slots: slots.clone(),
+                line: expr.line,
+            });
+            collect_anonymous_functions(body, out);
+        }
+        ExprKind::FunctionDef { body, .. } => collect_anonymous_functions(body, out),
+        ExprKind::Assignment { value, .. } => collect_anonymous_functions(value, out),
+        ExprKind::IndexAssignment {
+            target,
+            index,
+            value,
+        } =>
+        {
+            collect_anonymous_functions(target, out);
+            collect_anonymous_functions(index, out);
+            collect_anonymous_functions(value, out);
+        }
+        ExprKind::BinaryOp { left, right, .. } =>
+        {
+            collect_anonymous_functions(left, out);
+            collect_anonymous_functions(right, out);
+        }
+        ExprKind::Not(expr) | ExprKind::Clone(expr) | ExprKind::EnvFreeze(expr) =>
+        {
+            collect_anonymous_functions(expr, out);
+        }
+        ExprKind::And { left, right }
+        | ExprKind::AndBool { left, right }
+        | ExprKind::Or { left, right }
+        | ExprKind::OrBool { left, right } =>
+        {
+            collect_anonymous_functions(left, out);
+            collect_anonymous_functions(right, out);
+        }
+        ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } =>
+        {
+            collect_anonymous_functions(condition, out);
+            collect_anonymous_functions(then_branch, out);
+            if let Some(expr) = else_branch
+            {
+                collect_anonymous_functions(expr, out);
+            }
+        }
+        ExprKind::While { condition, body } =>
+        {
+            collect_anonymous_functions(condition, out);
+            collect_anonymous_functions(body, out);
+        }
+        ExprKind::Block(items) =>
+        {
+            for item in items
+            {
+                collect_anonymous_functions(item, out);
+            }
+        }
+        ExprKind::Call { function, args, .. } =>
+        {
+            collect_anonymous_functions(function, out);
+            for arg in args
+            {
+                collect_anonymous_functions(arg, out);
+            }
+        }
+        ExprKind::Array(items) =>
+        {
+            for item in items
+            {
+                collect_anonymous_functions(item, out);
+            }
+        }
+        ExprKind::Map(entries) =>
+        {
+            for (k, v) in entries
+            {
+                collect_anonymous_functions(k, out);
+                collect_anonymous_functions(v, out);
+            }
+        }
+        ExprKind::Index { target, index } =>
+        {
+            collect_anonymous_functions(target, out);
+            collect_anonymous_functions(index, out);
+        }
+        ExprKind::Return(value) =>
+        {
+            if let Some(expr) = value
+            {
+                collect_anonymous_functions(expr, out);
+            }
         }
         _ => {}
     }
@@ -7162,18 +7316,31 @@ fn emit_function_value(
     body: &Expr,
 ) -> Result<(), String>
 {
-    ctx.out.push_str(&format!("  (func ${internal_name}"));
+    ctx.out.push_str(&format!(
+        "  (func ${internal_name} (param $args_ptr i32) (param $argc i32) (result i64)\n"
+    ));
     for idx in 0..param_count
     {
-        ctx.out.push_str(&format!(" (param $r{idx} i64)"));
+        ctx.out.push_str(&format!("    (local $r{idx} i64)\n"));
     }
-    ctx.out.push_str(" (result i64)\n");
     for reg in param_count..local_count
     {
         ctx.out
             .push_str(&format!("    (local $r{reg} i64)\n"));
     }
     ctx.out.push_str("    (local $tmp i64)\n");
+    ctx.out.push_str("    (local $tmp_ptr i32)\n");
+    if param_count > 0
+    {
+        for idx in 0..param_count
+        {
+            ctx.out.push_str("    local.get $args_ptr\n");
+            ctx.out.push_str(&format!("    i32.const {}\n", idx * 8));
+            ctx.out.push_str("    i32.add\n");
+            ctx.out.push_str("    i64.load\n");
+            ctx.out.push_str(&format!("    local.set $r{idx}\n"));
+        }
+    }
     emit_expr_value(ctx, body)?;
     ctx.out.push_str("  )\n");
     if let Some(name) = export_name
@@ -7200,41 +7367,79 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
     {
         ctx.global_names.insert(*sym, idx);
     }
-    if expr_requires_slot(ast)
+    let local_count = local_count_for_expr(ast);
+    match emit_function_value(&mut ctx, "main", Some("main"), 0, local_count, ast)
     {
-        ctx.out
-            .push_str("  ;; top-level expression uses globals; unsupported in WAT dump\n");
-    }
-    else
-    {
-        let local_count = local_count_for_expr(ast);
-        match emit_function_value(&mut ctx, "main", Some("main"), 0, local_count, ast)
+        Ok(()) =>
         {
-            Ok(()) =>
-            {
-                emitted += 1;
-                has_main = true;
-            }
-            Err(err) =>
-            {
-                ctx.out
-                    .push_str(&format!("  ;; top-level unsupported: {err}\n"));
-            }
+            emitted += 1;
+            has_main = true;
+        }
+        Err(err) =>
+        {
+            ctx.out
+                .push_str(&format!("  ;; top-level unsupported: {err}\n"));
         }
     }
 
     let mut functions = Vec::new();
     collect_function_exprs(ast, &mut functions);
+    let mut anon_exprs = Vec::new();
+    collect_anonymous_functions(ast, &mut anon_exprs);
 
     let mut func_idx = 0usize;
-    for (name, params, body, slots, line) in functions.iter().cloned()
+    for (name, _params, _body, _slots, _line) in functions.iter().cloned()
     {
         let internal = format!("f{func_idx}");
+        ctx.func_indices.insert(internal.clone(), func_idx as i32);
         func_idx += 1;
         if let Some(sym) = name
         {
-            ctx.func_names.insert(sym, internal.clone());
+            ctx.func_names.insert(sym, internal);
         }
+    }
+    for anon in &anon_exprs
+    {
+        let internal = format!("f{func_idx}");
+        ctx.func_indices.insert(internal.clone(), func_idx as i32);
+        func_idx += 1;
+        ctx.anon_names
+            .insert(anon.key, internal);
+    }
+
+    if !ctx.func_indices.is_empty()
+    {
+        let mut elems = vec![String::new(); ctx.func_indices.len()];
+        for (name, idx) in &ctx.func_indices
+        {
+            elems[*idx as usize] = name.clone();
+        }
+        ctx.out.push_str("  (table $functable funcref (elem");
+        for name in &elems
+        {
+            ctx.out.push_str(&format!(" ${name}"));
+        }
+        ctx.out.push_str("))\n");
+    }
+
+    for (name, params, body, slots, line) in functions.iter().cloned()
+    {
+        let sym = match name
+        {
+            Some(sym) => sym,
+            None =>
+            {
+                ctx.out.push_str(&format!(
+                    "  ;; skipped unnamed function at line {line}\n"
+                ));
+                continue;
+            }
+        };
+        let internal = ctx
+            .func_names
+            .get(&sym)
+            .cloned()
+            .unwrap_or_else(|| "f0".to_string());
         let slot_names_opt = slots.clone();
         let (resolved_body, _slot_names) = if let Some(slot_names) = slots
         {
@@ -7274,12 +7479,75 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
         }
     }
 
+    for anon in &anon_exprs
+    {
+        let internal = ctx
+            .anon_names
+            .get(&anon.key)
+            .cloned()
+            .unwrap_or_else(|| "f0".to_string());
+        let (resolved_body, slot_names_opt) = if let Some(slot_names) = anon.slots.clone()
+        {
+            (anon.body.clone(), Some(slot_names))
+        }
+        else
+        {
+            let mut locals = HashSet::new();
+            collect_declarations(&anon.body, &mut locals);
+            let (slot_map, slot_names) = build_slot_map(&anon.params, locals);
+            let mut resolved = anon.body.clone();
+            resolve(&mut resolved, &slot_map);
+            (resolved, Some(Rc::new(slot_names)))
+        };
+        let local_count = slot_names_opt
+            .as_ref()
+            .map(|s| s.len())
+            .unwrap_or(anon.params.len());
+        match emit_function_value(
+            &mut ctx,
+            &internal,
+            None,
+            anon.params.len(),
+            local_count,
+            &resolved_body,
+        )
+        {
+            Ok(()) => emitted += 1,
+            Err(err) =>
+            {
+                ctx.out.push_str(&format!(
+                    "  ;; skipped anon function at line {} ({err})\n",
+                    anon.line
+                ));
+            }
+        }
+    }
+
     if has_main
     {
         ctx.out.push_str("  (func $_start\n");
         ctx.out
             .push_str(&format!("    i32.const {}\n", globals.len()));
         ctx.out.push_str("    call $globals_init\n");
+        for (sym, internal) in ctx.func_names.iter()
+        {
+            if let Some(idx) = ctx.global_names.get(sym)
+            {
+                let func_idx = ctx
+                    .func_indices
+                    .get(internal)
+                    .cloned()
+                    .unwrap_or(0);
+                ctx.out.push_str(&format!("    i32.const {func_idx}\n"));
+                ctx.out.push_str("    call $tag_nil\n");
+                ctx.out.push_str("    call $make_func\n");
+                ctx.out.push_str(&format!("    i32.const {idx}\n"));
+                ctx.out.push_str("    call $global_set\n");
+                ctx.out.push_str("    drop\n");
+            }
+        }
+        ctx.out.push_str("    i32.const 0\n");
+        ctx.out.push_str("    i32.const 0\n");
         ctx.out.push_str("    call $main\n");
         ctx.out.push_str("    drop\n");
         ctx.out.push_str("  )\n");

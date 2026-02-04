@@ -65,6 +65,8 @@ fn main() -> rustyline::Result<()>
     let mut dump_ast = false;
     let mut dump_ast_sexpr = false;
     let mut dump_bytecode = false;
+    let mut dump_wat = false;
+    let mut wasi_target = eval::WasiTarget::Wasip1;
     let mut bytecode_mode = eval::BytecodeMode::Simple;
     let mut script_path: Option<String> = None;
     let mut evaluate_source: Option<String> = None;
@@ -85,6 +87,7 @@ fn main() -> rustyline::Result<()>
             "--dump-ast" => dump_ast = true,
             "--dump-ast-sexpr" => dump_ast_sexpr = true,
             "--dump-bytecode" => dump_bytecode = true,
+            "--dump-wat" => dump_wat = true,
             "-e" | "--evaluate" =>
             {
                 if idx + 1 >= args.len()
@@ -123,6 +126,28 @@ fn main() -> rustyline::Result<()>
                     {
                         eprintln!(
                             "Unknown --bytecode value '{}'. Use off, simple, or advanced.",
+                            args[idx]
+                        );
+                        return Ok(());
+                    }
+                };
+            }
+            "--wasi" =>
+            {
+                if idx + 1 >= args.len()
+                {
+                    eprintln!("--wasi requires a value (wasip1|wasip2).");
+                    return Ok(());
+                }
+                idx += 1;
+                wasi_target = match args[idx].as_str()
+                {
+                    "wasip1" => eval::WasiTarget::Wasip1,
+                    "wasip2" => eval::WasiTarget::Wasip2,
+                    _ =>
+                    {
+                        eprintln!(
+                            "Unknown --wasi value '{}'. Use wasip1 or wasip2.",
                             args[idx]
                         );
                         return Ok(());
@@ -203,7 +228,7 @@ fn main() -> rustyline::Result<()>
 
     if script_path.is_none()
         && evaluate_source.is_none()
-        && (dump_ast || dump_ast_sexpr || dump_bytecode)
+        && (dump_ast || dump_ast_sexpr || dump_bytecode || dump_wat)
     {
         eprintln!("Dump flags require a file path or -e/--evaluate.");
         return Ok(());
@@ -270,7 +295,16 @@ fn main() -> rustyline::Result<()>
     if let Some(path) = script_path
     {
         interpreter.set_main_path(std::path::Path::new(&path));
-        run_file(&path, interpreter, dump_ast, dump_ast_sexpr, dump_bytecode, bytecode_mode);
+        run_file(
+            &path,
+            interpreter,
+            dump_ast,
+            dump_ast_sexpr,
+            dump_bytecode,
+            dump_wat,
+            wasi_target,
+            bytecode_mode,
+        );
         Ok(())
     }
     else if let Some(source) = evaluate_source
@@ -286,6 +320,8 @@ fn main() -> rustyline::Result<()>
             dump_ast,
             dump_ast_sexpr,
             dump_bytecode,
+            dump_wat,
+            wasi_target,
             bytecode_mode,
         );
         Ok(())
@@ -306,6 +342,8 @@ fn run_file(
     dump_ast: bool,
     dump_ast_sexpr: bool,
     dump_bytecode: bool,
+    dump_wat: bool,
+    wasi_target: eval::WasiTarget,
     bytecode_mode: eval::BytecodeMode,
 )
 {
@@ -335,6 +373,19 @@ fn run_file(
             if dump_bytecode
             {
                 println!("{}", eval::dump_bytecode(&ast, bytecode_mode));
+                return;
+            }
+            if dump_wat
+            {
+                match eval::dump_wat(&ast, wasi_target)
+                {
+                    Ok(text) => println!("{text}"),
+                    Err(err) =>
+                    {
+                        eprintln!("WAT dump failed: {err}");
+                        std::process::exit(1);
+                    }
+                }
                 return;
             }
             if dump_ast_sexpr
@@ -393,6 +444,8 @@ fn run_source(
     dump_ast: bool,
     dump_ast_sexpr: bool,
     dump_bytecode: bool,
+    dump_wat: bool,
+    wasi_target: eval::WasiTarget,
     bytecode_mode: eval::BytecodeMode,
 )
 {
@@ -411,6 +464,19 @@ fn run_source(
             if dump_bytecode
             {
                 println!("{}", eval::dump_bytecode(&ast, bytecode_mode));
+                return;
+            }
+            if dump_wat
+            {
+                match eval::dump_wat(&ast, wasi_target)
+                {
+                    Ok(text) => println!("{text}"),
+                    Err(err) =>
+                    {
+                        eprintln!("WAT dump failed: {err}");
+                        std::process::exit(1);
+                    }
+                }
                 return;
             }
             if dump_ast_sexpr
@@ -510,7 +576,9 @@ fn print_usage(bin: &str)
       --dump-ast        Dump AST
       --dump-ast-sexpr  Dump AST as S-Expr
       --dump-bytecode   Dump bytecode
+      --dump-wat        Dump WAT (fast-f64 subset)
       --bytecode <mode> Bytecode mode: off|simple|advanced
+      --wasi <target>   WAT WASI target: wasip1|wasip2
   -l, --log <path>      Write log output to a file (default: stderr)
 
 Commands:

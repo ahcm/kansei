@@ -17,7 +17,7 @@ use crate::value::{
 use crate::wasm::{
     WasmBackend, WasmFunction, WasmModule, WasmValue, WasmValueType, parse_wasm_backend,
 };
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::env;
@@ -5794,8 +5794,9 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
     out.push_str("  (global $TYPE_MAP i32 (i32.const 3))\n");
     out.push_str("  (global $TYPE_ARRAY i32 (i32.const 4))\n");
     out.push_str("  (global $TYPE_FUNC i32 (i32.const 5))\n");
+    out.push_str("  (global $TYPE_ENV i32 (i32.const 6))\n");
     out.push_str("  (global $globals_ptr (mut i32) (i32.const 0))\n");
-    out.push_str("  (type $fn (func (param i32 i32) (result i64)))\n");
+    out.push_str("  (type $fn (func (param i64 i32 i32) (result i64)))\n");
 
     out.push_str(
         "  (func $alloc (param $size i32) (result i32)\n\
@@ -5870,6 +5871,122 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
     );
 
     out.push_str(
+        "  (func $env_new (param $count i32) (result i64)\n\
+            (local $ptr i32)\n\
+            (local $i i32)\n\
+            local.get $count\n\
+            i32.const 8\n\
+            i32.mul\n\
+            i32.const 8\n\
+            i32.add\n\
+            call $alloc\n\
+            local.set $ptr\n\
+            local.get $ptr\n\
+            global.get $TYPE_ENV\n\
+            i32.store\n\
+            local.get $ptr\n\
+            i32.const 4\n\
+            i32.add\n\
+            local.get $count\n\
+            i32.store\n\
+            i32.const 0\n\
+            local.set $i\n\
+            block $exit\n\
+              loop $loop\n\
+                local.get $i\n\
+                local.get $count\n\
+                i32.ge_u\n\
+                br_if $exit\n\
+                local.get $ptr\n\
+                i32.const 8\n\
+                i32.add\n\
+                local.get $i\n\
+                i32.const 8\n\
+                i32.mul\n\
+                i32.add\n\
+                call $tag_nil\n\
+                i64.store\n\
+                local.get $i\n\
+                i32.const 1\n\
+                i32.add\n\
+                local.set $i\n\
+                br $loop\n\
+              end\n\
+            end\n\
+            local.get $ptr\n\
+            i64.extend_i32_u\n\
+            i64.const 3\n\
+            i64.shl\n\
+            global.get $TAG_PTR\n\
+            i64.or\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $env_get (param $env i64) (param $idx i32) (result i64)\n\
+            (local $ptr i32)\n\
+            local.get $env\n\
+            global.get $TAG_PTR\n\
+            call $is_tag\n\
+            i32.eqz\n\
+            if\n\
+              unreachable\n\
+            end\n\
+            local.get $env\n\
+            call $ptr_of\n\
+            local.set $ptr\n\
+            local.get $ptr\n\
+            i32.load\n\
+            global.get $TYPE_ENV\n\
+            i32.ne\n\
+            if\n\
+              unreachable\n\
+            end\n\
+            local.get $ptr\n\
+            i32.const 8\n\
+            i32.add\n\
+            local.get $idx\n\
+            i32.const 8\n\
+            i32.mul\n\
+            i32.add\n\
+            i64.load\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $env_set (param $env i64) (param $idx i32) (param $value i64) (result i64)\n\
+            (local $ptr i32)\n\
+            local.get $env\n\
+            global.get $TAG_PTR\n\
+            call $is_tag\n\
+            i32.eqz\n\
+            if\n\
+              unreachable\n\
+            end\n\
+            local.get $env\n\
+            call $ptr_of\n\
+            local.set $ptr\n\
+            local.get $ptr\n\
+            i32.load\n\
+            global.get $TYPE_ENV\n\
+            i32.ne\n\
+            if\n\
+              unreachable\n\
+            end\n\
+            local.get $ptr\n\
+            i32.const 8\n\
+            i32.add\n\
+            local.get $idx\n\
+            i32.const 8\n\
+            i32.mul\n\
+            i32.add\n\
+            local.get $value\n\
+            i64.store\n\
+            local.get $value\n\
+          )\n",
+    );
+
+    out.push_str(
         "  (func $make_func (param $func_idx i32) (param $env i64) (result i64)\n\
             (local $ptr i32)\n\
             i32.const 16\n\
@@ -5925,7 +6042,43 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
     );
 
     out.push_str(
-        "  (func $call_func (param $func_idx i32) (param $args_ptr i32) (param $argc i32) (result i64)\n\
+        "  (func $func_env_of (param $v i64) (result i64)\n\
+            (local $ptr i32)\n\
+            local.get $v\n\
+            global.get $TAG_PTR\n\
+            call $is_tag\n\
+            i32.eqz\n\
+            if\n\
+              unreachable\n\
+            end\n\
+            local.get $v\n\
+            call $ptr_of\n\
+            local.set $ptr\n\
+            local.get $ptr\n\
+            i32.load\n\
+            global.get $TYPE_FUNC\n\
+            i32.ne\n\
+            if\n\
+              unreachable\n\
+            end\n\
+            local.get $ptr\n\
+            i32.const 8\n\
+            i32.add\n\
+            i64.load\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $call_func (param $func i64) (param $args_ptr i32) (param $argc i32) (result i64)\n\
+            (local $func_idx i32)\n\
+            (local $env i64)\n\
+            local.get $func\n\
+            call $func_index_of\n\
+            local.set $func_idx\n\
+            local.get $func\n\
+            call $func_env_of\n\
+            local.set $env\n\
+            local.get $env\n\
             local.get $args_ptr\n\
             local.get $argc\n\
             local.get $func_idx\n\
@@ -6668,6 +6821,10 @@ struct WatContext
     global_names: FxHashMap<SymbolId, usize>,
     anon_names: FxHashMap<usize, String>,
     func_indices: FxHashMap<String, i32>,
+    anon_captures: FxHashMap<usize, Vec<SymbolId>>,
+    current_captures: FxHashMap<SymbolId, usize>,
+    current_locals: FxHashMap<SymbolId, usize>,
+    global_set: FxHashSet<SymbolId>,
 }
 
 impl WatContext
@@ -6682,6 +6839,10 @@ impl WatContext
             global_names: FxHashMap::default(),
             anon_names: FxHashMap::default(),
             func_indices: FxHashMap::default(),
+            anon_captures: FxHashMap::default(),
+            current_captures: FxHashMap::default(),
+            current_locals: FxHashMap::default(),
+            global_set: FxHashSet::default(),
         }
     }
 
@@ -6742,16 +6903,26 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
         }
         ExprKind::Identifier { slot: None, .. } =>
         {
-            let idx = ctx
-                .global_names
-                .get(&match &expr.kind
-                {
-                    ExprKind::Identifier { name, .. } => *name,
-                    _ => unreachable!(),
-                })
-                .ok_or_else(|| "Unknown global".to_string())?;
-            ctx.out.push_str(&format!("    i32.const {idx}\n"));
-            ctx.out.push_str("    call $global_get\n");
+            let name = match &expr.kind
+            {
+                ExprKind::Identifier { name, .. } => *name,
+                _ => unreachable!(),
+            };
+            if let Some(idx) = ctx.current_captures.get(&name)
+            {
+                ctx.out.push_str("    local.get $env\n");
+                ctx.out.push_str(&format!("    i32.const {idx}\n"));
+                ctx.out.push_str("    call $env_get\n");
+            }
+            else if let Some(idx) = ctx.global_names.get(&name)
+            {
+                ctx.out.push_str(&format!("    i32.const {idx}\n"));
+                ctx.out.push_str("    call $global_get\n");
+            }
+            else
+            {
+                return Err("Unknown global".to_string());
+            }
         }
         ExprKind::Assignment {
             slot: Some(slot),
@@ -6958,7 +7129,8 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
                 ctx.out.push_str("    i64.store\n");
             }
             emit_expr_value(ctx, function)?;
-            ctx.out.push_str("    call $func_index_of\n");
+            ctx.out.push_str("    local.set $tmp\n");
+            ctx.out.push_str("    local.get $tmp\n");
             ctx.out.push_str("    local.get $tmp_ptr\n");
             ctx.out
                 .push_str(&format!("    i32.const {}\n", args.len()));
@@ -6982,7 +7154,49 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
                 .cloned()
                 .ok_or_else(|| "Unknown function index".to_string())?;
             ctx.out.push_str(&format!("    i32.const {idx}\n"));
-            ctx.out.push_str("    call $tag_nil\n");
+            let captures = ctx
+                .anon_captures
+                .get(&key)
+                .cloned()
+                .unwrap_or_default();
+            if captures.is_empty()
+            {
+                ctx.out.push_str("    call $tag_nil\n");
+            }
+            else
+            {
+                ctx.out
+                    .push_str(&format!("    i32.const {}\n", captures.len()));
+                ctx.out.push_str("    call $env_new\n");
+                ctx.out.push_str("    local.set $tmp\n");
+                for (cap_idx, sym) in captures.iter().enumerate()
+                {
+                    ctx.out.push_str("    local.get $tmp\n");
+                    ctx.out.push_str(&format!("    i32.const {cap_idx}\n"));
+                    if let Some(slot) = ctx.current_locals.get(sym)
+                    {
+                        ctx.out.push_str(&format!("    local.get $r{slot}\n"));
+                    }
+                    else if let Some(env_idx) = ctx.current_captures.get(sym)
+                    {
+                        ctx.out.push_str("    local.get $env\n");
+                        ctx.out.push_str(&format!("    i32.const {env_idx}\n"));
+                        ctx.out.push_str("    call $env_get\n");
+                    }
+                    else if let Some(global_idx) = ctx.global_names.get(sym)
+                    {
+                        ctx.out.push_str(&format!("    i32.const {global_idx}\n"));
+                        ctx.out.push_str("    call $global_get\n");
+                    }
+                    else
+                    {
+                        return Err("Unknown capture".to_string());
+                    }
+                    ctx.out.push_str("    call $env_set\n");
+                    ctx.out.push_str("    drop\n");
+                }
+                ctx.out.push_str("    local.get $tmp\n");
+            }
             ctx.out.push_str("    call $make_func\n");
         }
         ExprKind::Return(value) =>
@@ -7076,7 +7290,7 @@ fn local_count_for_expr(expr: &Expr) -> usize
     max_slot.map(|s| s + 1).unwrap_or(0)
 }
 
-fn collect_global_symbols(expr: &Expr, out: &mut Vec<SymbolId>)
+fn collect_global_symbols(expr: &Expr, out: &mut Vec<SymbolId>, in_function: bool)
 {
     fn add(sym: SymbolId, out: &mut Vec<SymbolId>)
     {
@@ -7087,34 +7301,43 @@ fn collect_global_symbols(expr: &Expr, out: &mut Vec<SymbolId>)
     }
     match &expr.kind
     {
-        ExprKind::Identifier { name, slot: None } => add(*name, out),
+        ExprKind::Identifier { name, slot: None } =>
+        {
+            if !in_function
+            {
+                add(*name, out);
+            }
+        }
         ExprKind::Assignment { name, slot: None, value } =>
         {
-            add(*name, out);
-            collect_global_symbols(value, out);
+            if !in_function
+            {
+                add(*name, out);
+            }
+            collect_global_symbols(value, out, in_function);
         }
         ExprKind::IndexAssignment { target, index, value } =>
         {
-            collect_global_symbols(target, out);
-            collect_global_symbols(index, out);
-            collect_global_symbols(value, out);
+            collect_global_symbols(target, out, in_function);
+            collect_global_symbols(index, out, in_function);
+            collect_global_symbols(value, out, in_function);
         }
         ExprKind::BinaryOp { left, right, .. } =>
         {
-            collect_global_symbols(left, out);
-            collect_global_symbols(right, out);
+            collect_global_symbols(left, out, in_function);
+            collect_global_symbols(right, out, in_function);
         }
         ExprKind::Not(expr) | ExprKind::Clone(expr) | ExprKind::EnvFreeze(expr) =>
         {
-            collect_global_symbols(expr, out);
+            collect_global_symbols(expr, out, in_function);
         }
         ExprKind::And { left, right }
         | ExprKind::AndBool { left, right }
         | ExprKind::Or { left, right }
         | ExprKind::OrBool { left, right } =>
         {
-            collect_global_symbols(left, out);
-            collect_global_symbols(right, out);
+            collect_global_symbols(left, out, in_function);
+            collect_global_symbols(right, out, in_function);
         }
         ExprKind::If {
             condition,
@@ -7122,69 +7345,169 @@ fn collect_global_symbols(expr: &Expr, out: &mut Vec<SymbolId>)
             else_branch,
         } =>
         {
-            collect_global_symbols(condition, out);
-            collect_global_symbols(then_branch, out);
+            collect_global_symbols(condition, out, in_function);
+            collect_global_symbols(then_branch, out, in_function);
             if let Some(expr) = else_branch
             {
-                collect_global_symbols(expr, out);
+                collect_global_symbols(expr, out, in_function);
             }
         }
         ExprKind::While { condition, body } =>
         {
-            collect_global_symbols(condition, out);
-            collect_global_symbols(body, out);
+            collect_global_symbols(condition, out, in_function);
+            collect_global_symbols(body, out, in_function);
         }
         ExprKind::Block(items) =>
         {
             for item in items
             {
-                collect_global_symbols(item, out);
+                collect_global_symbols(item, out, in_function);
             }
         }
         ExprKind::Call { function, args, .. } =>
         {
-            collect_global_symbols(function, out);
+            collect_global_symbols(function, out, in_function);
             for arg in args
             {
-                collect_global_symbols(arg, out);
+                collect_global_symbols(arg, out, in_function);
             }
         }
         ExprKind::Array(items) =>
         {
             for item in items
             {
-                collect_global_symbols(item, out);
+                collect_global_symbols(item, out, in_function);
             }
         }
         ExprKind::Map(entries) =>
         {
             for (k, v) in entries
             {
-                collect_global_symbols(k, out);
-                collect_global_symbols(v, out);
+                collect_global_symbols(k, out, in_function);
+                collect_global_symbols(v, out, in_function);
             }
         }
         ExprKind::Index { target, index } =>
         {
-            collect_global_symbols(target, out);
-            collect_global_symbols(index, out);
+            collect_global_symbols(target, out, in_function);
+            collect_global_symbols(index, out, in_function);
         }
         ExprKind::Return(value) =>
         {
             if let Some(expr) = value
             {
-                collect_global_symbols(expr, out);
+                collect_global_symbols(expr, out, in_function);
             }
         }
-        ExprKind::FunctionDef { name, body, .. } =>
+        ExprKind::FunctionDef { name, .. } =>
         {
             add(*name, out);
-            collect_global_symbols(body, out);
         }
-        ExprKind::AnonymousFunction { body, .. } =>
+        ExprKind::AnonymousFunction { .. } => {}
+        _ => {}
+    }
+}
+
+fn collect_free_symbols(expr: &Expr, globals: &FxHashSet<SymbolId>, out: &mut FxHashSet<SymbolId>)
+{
+    match &expr.kind
+    {
+        ExprKind::Identifier { name, slot: None } =>
         {
-            collect_global_symbols(body, out);
+            if !globals.contains(name)
+            {
+                out.insert(*name);
+            }
         }
+        ExprKind::Assignment { value, .. } => collect_free_symbols(value, globals, out),
+        ExprKind::IndexAssignment {
+            target,
+            index,
+            value,
+        } =>
+        {
+            collect_free_symbols(target, globals, out);
+            collect_free_symbols(index, globals, out);
+            collect_free_symbols(value, globals, out);
+        }
+        ExprKind::BinaryOp { left, right, .. } =>
+        {
+            collect_free_symbols(left, globals, out);
+            collect_free_symbols(right, globals, out);
+        }
+        ExprKind::Not(expr) | ExprKind::Clone(expr) | ExprKind::EnvFreeze(expr) =>
+        {
+            collect_free_symbols(expr, globals, out);
+        }
+        ExprKind::And { left, right }
+        | ExprKind::AndBool { left, right }
+        | ExprKind::Or { left, right }
+        | ExprKind::OrBool { left, right } =>
+        {
+            collect_free_symbols(left, globals, out);
+            collect_free_symbols(right, globals, out);
+        }
+        ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } =>
+        {
+            collect_free_symbols(condition, globals, out);
+            collect_free_symbols(then_branch, globals, out);
+            if let Some(expr) = else_branch
+            {
+                collect_free_symbols(expr, globals, out);
+            }
+        }
+        ExprKind::While { condition, body } =>
+        {
+            collect_free_symbols(condition, globals, out);
+            collect_free_symbols(body, globals, out);
+        }
+        ExprKind::Block(items) =>
+        {
+            for item in items
+            {
+                collect_free_symbols(item, globals, out);
+            }
+        }
+        ExprKind::Call { function, args, .. } =>
+        {
+            collect_free_symbols(function, globals, out);
+            for arg in args
+            {
+                collect_free_symbols(arg, globals, out);
+            }
+        }
+        ExprKind::Array(items) =>
+        {
+            for item in items
+            {
+                collect_free_symbols(item, globals, out);
+            }
+        }
+        ExprKind::Map(entries) =>
+        {
+            for (k, v) in entries
+            {
+                collect_free_symbols(k, globals, out);
+                collect_free_symbols(v, globals, out);
+            }
+        }
+        ExprKind::Index { target, index } =>
+        {
+            collect_free_symbols(target, globals, out);
+            collect_free_symbols(index, globals, out);
+        }
+        ExprKind::Return(value) =>
+        {
+            if let Some(expr) = value
+            {
+                collect_free_symbols(expr, globals, out);
+            }
+        }
+        ExprKind::FunctionDef { .. } | ExprKind::AnonymousFunction { .. } => {}
         _ => {}
     }
 }
@@ -7313,11 +7636,21 @@ fn emit_function_value(
     export_name: Option<&str>,
     param_count: usize,
     local_count: usize,
+    captures: &[SymbolId],
+    locals: &FxHashMap<SymbolId, usize>,
     body: &Expr,
 ) -> Result<(), String>
 {
+    let mut capture_map = FxHashMap::default();
+    for (idx, sym) in captures.iter().enumerate()
+    {
+        capture_map.insert(*sym, idx);
+    }
+    let old_captures = std::mem::replace(&mut ctx.current_captures, capture_map);
+    let old_locals = std::mem::replace(&mut ctx.current_locals, locals.clone());
+
     ctx.out.push_str(&format!(
-        "  (func ${internal_name} (param $args_ptr i32) (param $argc i32) (result i64)\n"
+        "  (func ${internal_name} (param $env i64) (param $args_ptr i32) (param $argc i32) (result i64)\n"
     ));
     for idx in 0..param_count
     {
@@ -7348,6 +7681,9 @@ fn emit_function_value(
         ctx.out
             .push_str(&format!("  (export \"{name}\" (func ${internal_name}))\n"));
     }
+
+    ctx.current_captures = old_captures;
+    ctx.current_locals = old_locals;
     Ok(())
 }
 
@@ -7362,25 +7698,12 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
     let mut emitted = 0usize;
     let mut has_main = false;
     let mut globals = Vec::new();
-    collect_global_symbols(ast, &mut globals);
+    collect_global_symbols(ast, &mut globals, false);
     for (idx, sym) in globals.iter().enumerate()
     {
         ctx.global_names.insert(*sym, idx);
     }
-    let local_count = local_count_for_expr(ast);
-    match emit_function_value(&mut ctx, "main", Some("main"), 0, local_count, ast)
-    {
-        Ok(()) =>
-        {
-            emitted += 1;
-            has_main = true;
-        }
-        Err(err) =>
-        {
-            ctx.out
-                .push_str(&format!("  ;; top-level unsupported: {err}\n"));
-        }
-    }
+    ctx.global_set = globals.iter().cloned().collect();
 
     let mut functions = Vec::new();
     collect_function_exprs(ast, &mut functions);
@@ -7405,6 +7728,59 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
         func_idx += 1;
         ctx.anon_names
             .insert(anon.key, internal);
+    }
+
+    for anon in &anon_exprs
+    {
+        let (resolved_body, _slot_map) = if let Some(slot_names) = anon.slots.clone()
+        {
+            let mut locals_map = FxHashMap::default();
+            for (idx, name) in slot_names.iter().enumerate()
+            {
+                let sym = intern::intern_symbol(name.as_str());
+                locals_map.insert(sym, idx);
+            }
+            (anon.body.clone(), locals_map)
+        }
+        else
+        {
+            let mut locals = HashSet::new();
+            collect_declarations(&anon.body, &mut locals);
+            let (map, _) = build_slot_map(&anon.params, locals);
+            let mut resolved = anon.body.clone();
+            resolve(&mut resolved, &map);
+            (resolved, map)
+        };
+        let mut free = FxHashSet::default();
+        collect_free_symbols(&resolved_body, &ctx.global_set, &mut free);
+        let mut captures: Vec<SymbolId> = free.into_iter().collect();
+        captures.sort_unstable();
+        ctx.anon_captures.insert(anon.key, captures);
+    }
+
+    let local_count = local_count_for_expr(ast);
+    let empty_locals = FxHashMap::default();
+    match emit_function_value(
+        &mut ctx,
+        "main",
+        Some("main"),
+        0,
+        local_count,
+        &[],
+        &empty_locals,
+        ast,
+    )
+    {
+        Ok(()) =>
+        {
+            emitted += 1;
+            has_main = true;
+        }
+        Err(err) =>
+        {
+            ctx.out
+                .push_str(&format!("  ;; top-level unsupported: {err}\n"));
+        }
     }
 
     if !ctx.func_indices.is_empty()
@@ -7440,32 +7816,49 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
             .get(&sym)
             .cloned()
             .unwrap_or_else(|| "f0".to_string());
-        let slot_names_opt = slots.clone();
-        let (resolved_body, _slot_names) = if let Some(slot_names) = slots
+        let mut slot_map = FxHashMap::default();
+        let (resolved_body, slot_names) = if let Some(slot_names) = slots
         {
+            for (idx, name) in slot_names.iter().enumerate()
+            {
+                let sym = intern::intern_symbol(name.as_str());
+                slot_map.insert(sym, idx);
+            }
             (body, slot_names)
         }
         else
         {
             let mut locals = HashSet::new();
             collect_declarations(&body, &mut locals);
-            let (slot_map, slot_names) = build_slot_map(&params, locals);
+            let (map, slot_names) = build_slot_map(&params, locals);
             let mut resolved = body;
-            resolve(&mut resolved, &slot_map);
+            resolve(&mut resolved, &map);
+            slot_map = map;
             (resolved, Rc::new(slot_names))
         };
 
+        let mut free = FxHashSet::default();
+        collect_free_symbols(&resolved_body, &ctx.global_set, &mut free);
+        let mut captures: Vec<SymbolId> = free.into_iter().collect();
+        captures.sort_unstable();
+        if !captures.is_empty()
+        {
+            ctx.out.push_str(&format!(
+                "  ;; skipped function at line {line} (captures not supported for named functions)\n"
+            ));
+            continue;
+        }
+
         let export_name = name.map(|sym| symbol_name(sym).as_str().to_string());
-        let local_count = slot_names_opt
-            .as_ref()
-            .map(|s| s.len())
-            .unwrap_or(params.len());
+        let local_count = slot_names.len().max(params.len());
         match emit_function_value(
             &mut ctx,
             &internal,
             export_name.as_deref(),
             params.len(),
             local_count,
+            &captures,
+            &slot_map,
             &resolved_body,
         )
         {
@@ -7486,29 +7879,40 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
             .get(&anon.key)
             .cloned()
             .unwrap_or_else(|| "f0".to_string());
-        let (resolved_body, slot_names_opt) = if let Some(slot_names) = anon.slots.clone()
+        let mut slot_map = FxHashMap::default();
+        let (resolved_body, slot_names) = if let Some(slot_names) = anon.slots.clone()
         {
-            (anon.body.clone(), Some(slot_names))
+            for (idx, name) in slot_names.iter().enumerate()
+            {
+                let sym = intern::intern_symbol(name.as_str());
+                slot_map.insert(sym, idx);
+            }
+            (anon.body.clone(), slot_names)
         }
         else
         {
             let mut locals = HashSet::new();
             collect_declarations(&anon.body, &mut locals);
-            let (slot_map, slot_names) = build_slot_map(&anon.params, locals);
+            let (map, slot_names) = build_slot_map(&anon.params, locals);
             let mut resolved = anon.body.clone();
-            resolve(&mut resolved, &slot_map);
-            (resolved, Some(Rc::new(slot_names)))
+            resolve(&mut resolved, &map);
+            slot_map = map;
+            (resolved, Rc::new(slot_names))
         };
-        let local_count = slot_names_opt
-            .as_ref()
-            .map(|s| s.len())
-            .unwrap_or(anon.params.len());
+        let local_count = slot_names.len().max(anon.params.len());
+        let mut free = FxHashSet::default();
+        collect_free_symbols(&resolved_body, &ctx.global_set, &mut free);
+        let mut captures: Vec<SymbolId> = free.into_iter().collect();
+        captures.sort_unstable();
+        ctx.anon_captures.insert(anon.key, captures.clone());
         match emit_function_value(
             &mut ctx,
             &internal,
             None,
             anon.params.len(),
             local_count,
+            &captures,
+            &slot_map,
             &resolved_body,
         )
         {
@@ -7546,6 +7950,7 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
                 ctx.out.push_str("    drop\n");
             }
         }
+        ctx.out.push_str("    call $tag_nil\n");
         ctx.out.push_str("    i32.const 0\n");
         ctx.out.push_str("    i32.const 0\n");
         ctx.out.push_str("    call $main\n");

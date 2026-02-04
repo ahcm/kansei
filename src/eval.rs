@@ -6587,6 +6587,7 @@ struct WatContext
     out: String,
     data_segments: Vec<(i32, Vec<u8>)>,
     data_offset: i32,
+    func_names: FxHashMap<SymbolId, String>,
 }
 
 impl WatContext
@@ -6597,6 +6598,7 @@ impl WatContext
             out: String::new(),
             data_segments: Vec::new(),
             data_offset: 4096,
+            func_names: FxHashMap::default(),
         }
     }
 
@@ -6827,6 +6829,48 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
             emit_expr_value(ctx, value)?;
             ctx.out.push_str("    call $index_set\n");
         }
+        ExprKind::Call {
+            function,
+            args,
+            block,
+            ..
+        } =>
+        {
+            if block.is_some()
+            {
+                return Err("WAT dump does not support call blocks yet".to_string());
+            }
+            match &function.kind
+            {
+                ExprKind::Identifier { name, .. } =>
+                {
+                    let internal = ctx
+                        .func_names
+                        .get(name)
+                        .cloned()
+                        .ok_or_else(|| {
+                            format!("WAT dump does not know function '{}'", symbol_name(*name))
+                        })?;
+                    for arg in args
+                    {
+                        emit_expr_value(ctx, arg)?;
+                    }
+                    ctx.out.push_str(&format!("    call ${internal}\n"));
+                }
+                _ =>
+                {
+                    return Err("WAT dump only supports direct calls to named functions".to_string());
+                }
+            }
+        }
+        ExprKind::FunctionDef { .. } =>
+        {
+            ctx.out.push_str("    call $tag_nil\n");
+        }
+        ExprKind::AnonymousFunction { .. } =>
+        {
+            return Err("WAT dump does not support anonymous functions yet".to_string());
+        }
         ExprKind::Return(value) =>
         {
             if let Some(expr) = value
@@ -6986,8 +7030,14 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
     collect_function_exprs(ast, &mut functions);
 
     let mut func_idx = 0usize;
-    for (name, params, body, slots, line) in functions
+    for (name, params, body, slots, line) in functions.iter().cloned()
     {
+        let internal = format!("f{func_idx}");
+        func_idx += 1;
+        if let Some(sym) = name
+        {
+            ctx.func_names.insert(sym, internal.clone());
+        }
         let slot_names_opt = slots.clone();
         let (resolved_body, _slot_names) = if let Some(slot_names) = slots
         {
@@ -7004,8 +7054,6 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
         };
 
         let export_name = name.map(|sym| symbol_name(sym).as_str().to_string());
-        let internal = format!("f{func_idx}");
-        func_idx += 1;
         let local_count = slot_names_opt
             .as_ref()
             .map(|s| s.len())

@@ -5828,25 +5828,325 @@ fn expr_requires_slot(expr: &Expr) -> bool
     }
 }
 
-fn emit_expr_f64(out: &mut String, expr: &Expr) -> Result<(), String>
+fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
+{
+    let _ = wasi;
+    out.push_str("  (memory (export \"memory\") 1)\n");
+    out.push_str("  (global $heap_ptr (mut i32) (i32.const 1024))\n");
+    out.push_str("  (global $TAG_PTR i64 (i64.const 0))\n");
+    out.push_str("  (global $TAG_INT i64 (i64.const 1))\n");
+    out.push_str("  (global $TAG_BOOL i64 (i64.const 2))\n");
+    out.push_str("  (global $TAG_NIL i64 (i64.const 3))\n");
+    out.push_str("  (global $MASK_TAG i64 (i64.const 7))\n");
+    out.push_str("  (global $TYPE_F64 i32 (i32.const 1))\n");
+
+    out.push_str(
+        "  (func $alloc (param $size i32) (result i32)\n\
+            (local $old i32)\n\
+            global.get $heap_ptr\n\
+            local.set $old\n\
+            global.get $heap_ptr\n\
+            local.get $size\n\
+            i32.add\n\
+            global.set $heap_ptr\n\
+            local.get $old\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $tag_int (param $v i64) (result i64)\n\
+            local.get $v\n\
+            i64.const 3\n\
+            i64.shl\n\
+            global.get $TAG_INT\n\
+            i64.or\n\
+          )\n",
+    );
+    out.push_str(
+        "  (func $untag_int (param $v i64) (result i64)\n\
+            local.get $v\n\
+            i64.const 3\n\
+            i64.shr_s\n\
+          )\n",
+    );
+    out.push_str(
+        "  (func $tag_bool (param $v i32) (result i64)\n\
+            local.get $v\n\
+            i64.extend_i32_u\n\
+            i64.const 3\n\
+            i64.shl\n\
+            global.get $TAG_BOOL\n\
+            i64.or\n\
+          )\n",
+    );
+    out.push_str(
+        "  (func $tag_nil (result i64)\n\
+            global.get $TAG_NIL\n\
+          )\n",
+    );
+    out.push_str(
+        "  (func $ptr_of (param $v i64) (result i32)\n\
+            local.get $v\n\
+            i64.const 3\n\
+            i64.shr_u\n\
+            i32.wrap_i64\n\
+          )\n",
+    );
+    out.push_str(
+        "  (func $is_tag (param $v i64) (param $tag i64) (result i32)\n\
+            local.get $v\n\
+            global.get $MASK_TAG\n\
+            i64.and\n\
+            local.get $tag\n\
+            i64.eq\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $box_f64 (param $val f64) (result i64)\n\
+            (local $ptr i32)\n\
+            i32.const 16\n\
+            call $alloc\n\
+            local.set $ptr\n\
+            local.get $ptr\n\
+            global.get $TYPE_F64\n\
+            i32.store\n\
+            local.get $ptr\n\
+            i32.const 8\n\
+            i32.add\n\
+            local.get $val\n\
+            f64.store\n\
+            local.get $ptr\n\
+            i64.extend_i32_u\n\
+            i64.const 3\n\
+            i64.shl\n\
+            global.get $TAG_PTR\n\
+            i64.or\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $to_f64 (param $v i64) (result f64)\n\
+            (local $ptr i32)\n\
+            local.get $v\n\
+            global.get $TAG_INT\n\
+            call $is_tag\n\
+            if (result f64)\n\
+              local.get $v\n\
+              call $untag_int\n\
+              f64.convert_i64_s\n\
+            else\n\
+              local.get $v\n\
+              global.get $TAG_PTR\n\
+              call $is_tag\n\
+              if (result f64)\n\
+                local.get $v\n\
+                call $ptr_of\n\
+                local.set $ptr\n\
+                local.get $ptr\n\
+                i32.load\n\
+                global.get $TYPE_F64\n\
+                i32.eq\n\
+                if (result f64)\n\
+                  local.get $ptr\n\
+                  i32.const 8\n\
+                  i32.add\n\
+                  f64.load\n\
+                else\n\
+                  unreachable\n\
+                end\n\
+              else\n\
+                unreachable\n\
+              end\n\
+            end\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $is_truthy (param $v i64) (result i32)\n\
+            local.get $v\n\
+            global.get $TAG_NIL\n\
+            call $is_tag\n\
+            if (result i32)\n\
+              i32.const 0\n\
+            else\n\
+              local.get $v\n\
+              global.get $TAG_BOOL\n\
+              call $is_tag\n\
+              if (result i32)\n\
+                local.get $v\n\
+                call $untag_int\n\
+                i64.eqz\n\
+                i32.eqz\n\
+              else\n\
+                local.get $v\n\
+                global.get $TAG_INT\n\
+                call $is_tag\n\
+                if (result i32)\n\
+                  local.get $v\n\
+                  call $untag_int\n\
+                  i64.eqz\n\
+                  i32.eqz\n\
+                else\n\
+                  i32.const 1\n\
+                end\n\
+              end\n\
+            end\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $add (param $a i64) (param $b i64) (result i64)\n\
+            local.get $a\n\
+            global.get $TAG_INT\n\
+            call $is_tag\n\
+            local.get $b\n\
+            global.get $TAG_INT\n\
+            call $is_tag\n\
+            i32.and\n\
+            if (result i64)\n\
+              local.get $a\n\
+              call $untag_int\n\
+              local.get $b\n\
+              call $untag_int\n\
+              i64.add\n\
+              call $tag_int\n\
+            else\n\
+              local.get $a\n\
+              call $to_f64\n\
+              local.get $b\n\
+              call $to_f64\n\
+              f64.add\n\
+              call $box_f64\n\
+            end\n\
+          )\n",
+    );
+    out.push_str(
+        "  (func $sub (param $a i64) (param $b i64) (result i64)\n\
+            local.get $a\n\
+            global.get $TAG_INT\n\
+            call $is_tag\n\
+            local.get $b\n\
+            global.get $TAG_INT\n\
+            call $is_tag\n\
+            i32.and\n\
+            if (result i64)\n\
+              local.get $a\n\
+              call $untag_int\n\
+              local.get $b\n\
+              call $untag_int\n\
+              i64.sub\n\
+              call $tag_int\n\
+            else\n\
+              local.get $a\n\
+              call $to_f64\n\
+              local.get $b\n\
+              call $to_f64\n\
+              f64.sub\n\
+              call $box_f64\n\
+            end\n\
+          )\n",
+    );
+    out.push_str(
+        "  (func $mul (param $a i64) (param $b i64) (result i64)\n\
+            local.get $a\n\
+            global.get $TAG_INT\n\
+            call $is_tag\n\
+            local.get $b\n\
+            global.get $TAG_INT\n\
+            call $is_tag\n\
+            i32.and\n\
+            if (result i64)\n\
+              local.get $a\n\
+              call $untag_int\n\
+              local.get $b\n\
+              call $untag_int\n\
+              i64.mul\n\
+              call $tag_int\n\
+            else\n\
+              local.get $a\n\
+              call $to_f64\n\
+              local.get $b\n\
+              call $to_f64\n\
+              f64.mul\n\
+              call $box_f64\n\
+            end\n\
+          )\n",
+    );
+    out.push_str(
+        "  (func $div (param $a i64) (param $b i64) (result i64)\n\
+            local.get $a\n\
+            call $to_f64\n\
+            local.get $b\n\
+            call $to_f64\n\
+            f64.div\n\
+            call $box_f64\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $eq (param $a i64) (param $b i64) (result i64)\n\
+            local.get $a\n\
+            call $to_f64\n\
+            local.get $b\n\
+            call $to_f64\n\
+            f64.eq\n\
+            call $tag_bool\n\
+          )\n",
+    );
+    out.push_str(
+        "  (func $lt (param $a i64) (param $b i64) (result i64)\n\
+            local.get $a\n\
+            call $to_f64\n\
+            local.get $b\n\
+            call $to_f64\n\
+            f64.lt\n\
+            call $tag_bool\n\
+          )\n",
+    );
+    out.push_str(
+        "  (func $gt (param $a i64) (param $b i64) (result i64)\n\
+            local.get $a\n\
+            call $to_f64\n\
+            local.get $b\n\
+            call $to_f64\n\
+            f64.gt\n\
+            call $tag_bool\n\
+          )\n",
+    );
+}
+
+fn emit_expr_value(out: &mut String, expr: &Expr) -> Result<(), String>
 {
     match &expr.kind
     {
-        ExprKind::Integer { value, .. } => out.push_str(&format!("    f64.const {value}\n")),
-        ExprKind::Unsigned { value, .. } => out.push_str(&format!("    f64.const {value}\n")),
-        ExprKind::Float { value, .. } => out.push_str(&format!("    f64.const {value}\n")),
+        ExprKind::Integer { value, .. } =>
+        {
+            out.push_str(&format!("    i64.const {value}\n"));
+            out.push_str("    call $tag_int\n");
+        }
+        ExprKind::Unsigned { value, .. } =>
+        {
+            out.push_str(&format!("    i64.const {value}\n"));
+            out.push_str("    call $tag_int\n");
+        }
+        ExprKind::Float { value, .. } =>
+        {
+            out.push_str(&format!("    f64.const {value}\n"));
+            out.push_str("    call $box_f64\n");
+        }
         ExprKind::Boolean(value) =>
         {
-            if *value
-            {
-                out.push_str("    f64.const 1\n");
-            }
-            else
-            {
-                out.push_str("    f64.const 0\n");
-            }
+            out.push_str(&format!(
+                "    i32.const {}\n",
+                if *value { 1 } else { 0 }
+            ));
+            out.push_str("    call $tag_bool\n");
         }
-        ExprKind::Nil => out.push_str("    f64.const 0\n"),
+        ExprKind::Nil =>
+        {
+            out.push_str("    call $tag_nil\n");
+        }
         ExprKind::Identifier { slot: Some(slot), .. } =>
         {
             out.push_str(&format!("    local.get $r{slot}\n"));
@@ -5861,7 +6161,7 @@ fn emit_expr_f64(out: &mut String, expr: &Expr) -> Result<(), String>
             ..
         } =>
         {
-            emit_expr_f64(out, value)?;
+            emit_expr_value(out, value)?;
             out.push_str(&format!("    local.tee $r{slot}\n"));
         }
         ExprKind::Assignment { slot: None, .. } =>
@@ -5870,69 +6170,55 @@ fn emit_expr_f64(out: &mut String, expr: &Expr) -> Result<(), String>
         }
         ExprKind::BinaryOp { left, op, right } =>
         {
-            emit_expr_f64(out, left)?;
-            emit_expr_f64(out, right)?;
+            emit_expr_value(out, left)?;
+            emit_expr_value(out, right)?;
             match op
             {
-                Op::Add => out.push_str("    f64.add\n"),
-                Op::Subtract => out.push_str("    f64.sub\n"),
-                Op::Multiply => out.push_str("    f64.mul\n"),
-                Op::Divide => out.push_str("    f64.div\n"),
+                Op::Add => out.push_str("    call $add\n"),
+                Op::Subtract => out.push_str("    call $sub\n"),
+                Op::Multiply => out.push_str("    call $mul\n"),
+                Op::Divide => out.push_str("    call $div\n"),
                 Op::Power =>
                 {
                     return Err("WAT dump does not support pow yet".to_string());
                 }
-                Op::Equal =>
-                {
-                    out.push_str("    f64.eq\n");
-                    out.push_str("    f64.convert_i32_s\n");
-                }
-                Op::GreaterThan =>
-                {
-                    out.push_str("    f64.gt\n");
-                    out.push_str("    f64.convert_i32_s\n");
-                }
-                Op::LessThan =>
-                {
-                    out.push_str("    f64.lt\n");
-                    out.push_str("    f64.convert_i32_s\n");
-                }
+                Op::Equal => out.push_str("    call $eq\n"),
+                Op::GreaterThan => out.push_str("    call $gt\n"),
+                Op::LessThan => out.push_str("    call $lt\n"),
                 _ => return Err("WAT dump only supports basic comparisons".to_string()),
             }
         }
         ExprKind::Not(expr) =>
         {
-            emit_expr_f64(out, expr)?;
-            out.push_str("    f64.const 0\n");
-            out.push_str("    f64.eq\n");
-            out.push_str("    f64.convert_i32_s\n");
+            emit_expr_value(out, expr)?;
+            out.push_str("    call $is_truthy\n");
+            out.push_str("    i32.eqz\n");
+            out.push_str("    call $tag_bool\n");
         }
         ExprKind::And { left, right } | ExprKind::AndBool { left, right } =>
         {
-            emit_expr_f64(out, left)?;
-            out.push_str("    f64.const 0\n");
-            out.push_str("    f64.ne\n");
-            out.push_str("    if (result f64)\n");
-            emit_expr_f64(out, right)?;
-            out.push_str("      f64.const 0\n");
-            out.push_str("      f64.ne\n");
-            out.push_str("      f64.convert_i32_s\n");
+            emit_expr_value(out, left)?;
+            out.push_str("    call $is_truthy\n");
+            out.push_str("    if (result i64)\n");
+            emit_expr_value(out, right)?;
+            out.push_str("      call $is_truthy\n");
+            out.push_str("      call $tag_bool\n");
             out.push_str("    else\n");
-            out.push_str("      f64.const 0\n");
+            out.push_str("      i32.const 0\n");
+            out.push_str("      call $tag_bool\n");
             out.push_str("    end\n");
         }
         ExprKind::Or { left, right } | ExprKind::OrBool { left, right } =>
         {
-            emit_expr_f64(out, left)?;
-            out.push_str("    f64.const 0\n");
-            out.push_str("    f64.ne\n");
-            out.push_str("    if (result f64)\n");
-            out.push_str("      f64.const 1\n");
+            emit_expr_value(out, left)?;
+            out.push_str("    call $is_truthy\n");
+            out.push_str("    if (result i64)\n");
+            out.push_str("      i32.const 1\n");
+            out.push_str("      call $tag_bool\n");
             out.push_str("    else\n");
-            emit_expr_f64(out, right)?;
-            out.push_str("      f64.const 0\n");
-            out.push_str("      f64.ne\n");
-            out.push_str("      f64.convert_i32_s\n");
+            emit_expr_value(out, right)?;
+            out.push_str("      call $is_truthy\n");
+            out.push_str("      call $tag_bool\n");
             out.push_str("    end\n");
         }
         ExprKind::If {
@@ -5941,19 +6227,18 @@ fn emit_expr_f64(out: &mut String, expr: &Expr) -> Result<(), String>
             else_branch,
         } =>
         {
-            emit_expr_f64(out, condition)?;
-            out.push_str("    f64.const 0\n");
-            out.push_str("    f64.ne\n");
-            out.push_str("    if (result f64)\n");
-            emit_expr_f64(out, then_branch)?;
+            emit_expr_value(out, condition)?;
+            out.push_str("    call $is_truthy\n");
+            out.push_str("    if (result i64)\n");
+            emit_expr_value(out, then_branch)?;
             out.push_str("    else\n");
             if let Some(else_expr) = else_branch
             {
-                emit_expr_f64(out, else_expr)?;
+                emit_expr_value(out, else_expr)?;
             }
             else
             {
-                out.push_str("      f64.const 0\n");
+                out.push_str("      call $tag_nil\n");
             }
             out.push_str("    end\n");
         }
@@ -5961,42 +6246,42 @@ fn emit_expr_f64(out: &mut String, expr: &Expr) -> Result<(), String>
         {
             out.push_str("    block $while_exit\n");
             out.push_str("      loop $while_loop\n");
-            emit_expr_f64(out, condition)?;
-            out.push_str("        f64.const 0\n");
-            out.push_str("        f64.eq\n");
+            emit_expr_value(out, condition)?;
+            out.push_str("        call $is_truthy\n");
+            out.push_str("        i32.eqz\n");
             out.push_str("        br_if $while_exit\n");
-            emit_expr_f64(out, body)?;
+            emit_expr_value(out, body)?;
             out.push_str("        drop\n");
             out.push_str("        br $while_loop\n");
             out.push_str("      end\n");
             out.push_str("    end\n");
-            out.push_str("    f64.const 0\n");
+            out.push_str("    call $tag_nil\n");
         }
         ExprKind::Block(items) =>
         {
             if items.is_empty()
             {
-                out.push_str("    f64.const 0\n");
+                out.push_str("    call $tag_nil\n");
             }
             else
             {
                 for expr in items.iter().take(items.len() - 1)
                 {
-                    emit_expr_f64(out, expr)?;
+                    emit_expr_value(out, expr)?;
                     out.push_str("    drop\n");
                 }
-                emit_expr_f64(out, items.last().unwrap())?;
+                emit_expr_value(out, items.last().unwrap())?;
             }
         }
         ExprKind::Return(value) =>
         {
             if let Some(expr) = value
             {
-                emit_expr_f64(out, expr)?;
+                emit_expr_value(out, expr)?;
             }
             else
             {
-                out.push_str("    f64.const 0\n");
+                out.push_str("    call $tag_nil\n");
             }
             out.push_str("    return\n");
         }
@@ -6079,7 +6364,7 @@ fn local_count_for_expr(expr: &Expr) -> usize
     max_slot.map(|s| s + 1).unwrap_or(0)
 }
 
-fn emit_function_f64(
+fn emit_function_value(
     out: &mut String,
     internal_name: &str,
     export_name: Option<&str>,
@@ -6091,14 +6376,14 @@ fn emit_function_f64(
     out.push_str(&format!("  (func ${internal_name}"));
     for idx in 0..param_count
     {
-        out.push_str(&format!(" (param $r{idx} f64)"));
+        out.push_str(&format!(" (param $r{idx} i64)"));
     }
-    out.push_str(" (result f64)\n");
+    out.push_str(" (result i64)\n");
     for reg in param_count..local_count
     {
-        out.push_str(&format!("    (local $r{reg} f64)\n"));
+        out.push_str(&format!("    (local $r{reg} i64)\n"));
     }
-    emit_expr_f64(out, body)?;
+    emit_expr_value(out, body)?;
     out.push_str("  )\n");
     if let Some(name) = export_name
     {
@@ -6112,6 +6397,7 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
     let mut out = String::new();
     out.push_str("(module\n");
     out.push_str(&format!("  ;; kansei-wat wasi={}\n", wasi.as_str()));
+    emit_wat_runtime(&mut out, wasi);
 
     let mut emitted = 0usize;
     let mut has_main = false;
@@ -6122,7 +6408,7 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
     else
     {
         let local_count = local_count_for_expr(ast);
-        match emit_function_f64(&mut out, "main", Some("main"), 0, local_count, ast)
+        match emit_function_value(&mut out, "main", Some("main"), 0, local_count, ast)
         {
             Ok(()) =>
             {
@@ -6164,7 +6450,7 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
             .as_ref()
             .map(|s| s.len())
             .unwrap_or(params.len());
-        match emit_function_f64(
+        match emit_function_value(
             &mut out,
             &internal,
             export_name.as_deref(),

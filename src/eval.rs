@@ -5781,7 +5781,10 @@ pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String
 
 fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
 {
-    let _ = wasi;
+    if wasi == WasiTarget::Wasip1
+    {
+        out.push_str("  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n");
+    }
     out.push_str("  (memory (export \"memory\") 1)\n");
     out.push_str("  (global $heap_ptr (mut i32) (i32.const 1024))\n");
     out.push_str("  (global $TAG_PTR i64 (i64.const 0))\n");
@@ -6186,6 +6189,317 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
             i64.shl\n\
             global.get $TAG_PTR\n\
             i64.or\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $write_bytes (param $fd i32) (param $ptr i32) (param $len i32)\n\
+            (local $iovec i32)\n\
+            (local $nwritten i32)\n\
+            i32.const 8\n\
+            call $alloc\n\
+            local.set $iovec\n\
+            local.get $iovec\n\
+            local.get $ptr\n\
+            i32.store\n\
+            local.get $iovec\n\
+            i32.const 4\n\
+            i32.add\n\
+            local.get $len\n\
+            i32.store\n\
+            i32.const 4\n\
+            call $alloc\n\
+            local.set $nwritten\n\
+            local.get $fd\n\
+            local.get $iovec\n\
+            i32.const 1\n\
+            local.get $nwritten\n\
+            call $fd_write\n\
+            drop\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $int_to_string (param $v i64) (result i32 i32)\n\
+            (local $ptr i32)\n\
+            (local $start i32)\n\
+            (local $n i64)\n\
+            (local $neg i32)\n\
+            (local $digit i32)\n\
+            i32.const 32\n\
+            call $alloc\n\
+            local.set $ptr\n\
+            local.get $ptr\n\
+            i32.const 32\n\
+            i32.add\n\
+            local.set $start\n\
+            local.get $v\n\
+            local.set $n\n\
+            i32.const 0\n\
+            local.set $neg\n\
+            local.get $n\n\
+            i64.const 0\n\
+            i64.lt_s\n\
+            if\n\
+              i32.const 1\n\
+              local.set $neg\n\
+              i64.const 0\n\
+              local.get $n\n\
+              i64.sub\n\
+              local.set $n\n\
+            end\n\
+            local.get $n\n\
+            i64.eqz\n\
+            if\n\
+              local.get $start\n\
+              i32.const 1\n\
+              i32.sub\n\
+              local.set $start\n\
+              local.get $start\n\
+              i32.const 48\n\
+              i32.store8\n\
+            else\n\
+              block $done\n\
+                loop $loop\n\
+                  local.get $n\n\
+                  i64.const 0\n\
+                  i64.eq\n\
+                  br_if $done\n\
+                  local.get $n\n\
+                  i64.const 10\n\
+                  i64.rem_u\n\
+                  i32.wrap_i64\n\
+                  local.set $digit\n\
+                  local.get $n\n\
+                  i64.const 10\n\
+                  i64.div_u\n\
+                  local.set $n\n\
+                  local.get $start\n\
+                  i32.const 1\n\
+                  i32.sub\n\
+                  local.set $start\n\
+                  local.get $start\n\
+                  local.get $digit\n\
+                  i32.const 48\n\
+                  i32.add\n\
+                  i32.store8\n\
+                  br $loop\n\
+                end\n\
+              end\n\
+            end\n\
+            local.get $neg\n\
+            if\n\
+              local.get $start\n\
+              i32.const 1\n\
+              i32.sub\n\
+              local.set $start\n\
+              local.get $start\n\
+              i32.const 45\n\
+              i32.store8\n\
+            end\n\
+            local.get $start\n\
+            local.get $ptr\n\
+            i32.const 32\n\
+            i32.add\n\
+            local.get $start\n\
+            i32.sub\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $write_value (param $fd i32) (param $v i64) (param $newline i32) (result i64)\n\
+            (local $ptr i32)\n\
+            (local $len i32)\n\
+            (local $tmp i32)\n\
+            local.get $v\n\
+            global.get $TAG_INT\n\
+            call $is_tag\n\
+            if\n\
+              local.get $v\n\
+              call $untag_int\n\
+              call $int_to_string\n\
+              local.set $len\n\
+              local.set $ptr\n\
+            else\n\
+              local.get $v\n\
+              global.get $TAG_BOOL\n\
+              call $is_tag\n\
+              if\n\
+                local.get $v\n\
+                call $untag_int\n\
+                i64.eqz\n\
+                if\n\
+                  i32.const 5\n\
+                  call $alloc\n\
+                  local.set $ptr\n\
+                  local.get $ptr\n\
+                  i32.const 102\n\
+                  i32.store8\n\
+                  local.get $ptr\n\
+                  i32.const 1\n\
+                  i32.add\n\
+                  i32.const 97\n\
+                  i32.store8\n\
+                  local.get $ptr\n\
+                  i32.const 2\n\
+                  i32.add\n\
+                  i32.const 108\n\
+                  i32.store8\n\
+                  local.get $ptr\n\
+                  i32.const 3\n\
+                  i32.add\n\
+                  i32.const 115\n\
+                  i32.store8\n\
+                  local.get $ptr\n\
+                  i32.const 4\n\
+                  i32.add\n\
+                  i32.const 101\n\
+                  i32.store8\n\
+                  i32.const 5\n\
+                  local.set $len\n\
+                else\n\
+                  i32.const 4\n\
+                  call $alloc\n\
+                  local.set $ptr\n\
+                  local.get $ptr\n\
+                  i32.const 116\n\
+                  i32.store8\n\
+                  local.get $ptr\n\
+                  i32.const 1\n\
+                  i32.add\n\
+                  i32.const 114\n\
+                  i32.store8\n\
+                  local.get $ptr\n\
+                  i32.const 2\n\
+                  i32.add\n\
+                  i32.const 117\n\
+                  i32.store8\n\
+                  local.get $ptr\n\
+                  i32.const 3\n\
+                  i32.add\n\
+                  i32.const 101\n\
+                  i32.store8\n\
+                  i32.const 4\n\
+                  local.set $len\n\
+                end\n\
+              else\n\
+                local.get $v\n\
+                global.get $TAG_NIL\n\
+                call $is_tag\n\
+                if\n\
+                  i32.const 3\n\
+                  call $alloc\n\
+                  local.set $ptr\n\
+                  local.get $ptr\n\
+                  i32.const 110\n\
+                  i32.store8\n\
+                  local.get $ptr\n\
+                  i32.const 1\n\
+                  i32.add\n\
+                  i32.const 105\n\
+                  i32.store8\n\
+                  local.get $ptr\n\
+                  i32.const 2\n\
+                  i32.add\n\
+                  i32.const 108\n\
+                  i32.store8\n\
+                  i32.const 3\n\
+                  local.set $len\n\
+                else\n\
+                  local.get $v\n\
+                  global.get $TAG_PTR\n\
+                  call $is_tag\n\
+                  if\n\
+                    local.get $v\n\
+                    call $ptr_of\n\
+                    local.set $tmp\n\
+                    local.get $tmp\n\
+                    i32.load\n\
+                    global.get $TYPE_STRING\n\
+                    i32.eq\n\
+                    if\n\
+                      local.get $tmp\n\
+                      i32.const 4\n\
+                      i32.add\n\
+                      i32.load\n\
+                      local.set $len\n\
+                      local.get $tmp\n\
+                      i32.const 8\n\
+                      i32.add\n\
+                      local.set $ptr\n\
+                    else\n\
+                      i32.const 5\n\
+                      call $alloc\n\
+                      local.set $ptr\n\
+                      local.get $ptr\n\
+                      i32.const 102\n\
+                      i32.store8\n\
+                      local.get $ptr\n\
+                      i32.const 1\n\
+                      i32.add\n\
+                      i32.const 108\n\
+                      i32.store8\n\
+                      local.get $ptr\n\
+                      i32.const 2\n\
+                      i32.add\n\
+                      i32.const 111\n\
+                      i32.store8\n\
+                      local.get $ptr\n\
+                      i32.const 3\n\
+                      i32.add\n\
+                      i32.const 97\n\
+                      i32.store8\n\
+                      local.get $ptr\n\
+                      i32.const 4\n\
+                      i32.add\n\
+                      i32.const 116\n\
+                      i32.store8\n\
+                      i32.const 5\n\
+                      local.set $len\n\
+                    end\n\
+                  else\n\
+                    i32.const 3\n\
+                    call $alloc\n\
+                    local.set $ptr\n\
+                    local.get $ptr\n\
+                    i32.const 110\n\
+                    i32.store8\n\
+                    local.get $ptr\n\
+                    i32.const 1\n\
+                    i32.add\n\
+                    i32.const 105\n\
+                    i32.store8\n\
+                    local.get $ptr\n\
+                    i32.const 2\n\
+                    i32.add\n\
+                    i32.const 108\n\
+                    i32.store8\n\
+                    i32.const 3\n\
+                    local.set $len\n\
+                  end\n\
+                end\n\
+              end\n\
+            end\n\
+            local.get $fd\n\
+            local.get $ptr\n\
+            local.get $len\n\
+            call $write_bytes\n\
+            local.get $newline\n\
+            i32.eqz\n\
+            if\n\
+            else\n\
+              i32.const 1\n\
+              call $alloc\n\
+              local.set $ptr\n\
+              local.get $ptr\n\
+              i32.const 10\n\
+              i32.store8\n\
+              local.get $fd\n\
+              local.get $ptr\n\
+              i32.const 1\n\
+              call $write_bytes\n\
+            end\n\
+            call $tag_nil\n\
           )\n",
     );
 
@@ -6812,6 +7126,42 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
     );
 }
 
+fn emit_wat_builtins(ctx: &mut WatContext)
+{
+    fn emit_builtin(ctx: &mut WatContext, name: &str, fd: i32, newline: i32)
+    {
+        ctx.out.push_str(&format!(
+            "  (func ${name} (param $env i64) (param $args_ptr i32) (param $argc i32) (result i64)\n"
+        ));
+        ctx.out.push_str("    (local $val i64)\n");
+        ctx.out.push_str("    local.get $argc\n");
+        ctx.out.push_str("    i32.eqz\n");
+        ctx.out.push_str("    if\n");
+        ctx.out.push_str("      call $tag_nil\n");
+        ctx.out.push_str("      local.set $val\n");
+        ctx.out.push_str("    else\n");
+        ctx.out.push_str("      local.get $args_ptr\n");
+        ctx.out.push_str("      i64.load\n");
+        ctx.out.push_str("      local.set $val\n");
+        ctx.out.push_str("    end\n");
+        ctx.out
+            .push_str(&format!("    i32.const {fd}\n"));
+        ctx.out.push_str("    local.get $val\n");
+        ctx.out
+            .push_str(&format!("    i32.const {newline}\n"));
+        ctx.out.push_str("    call $write_value\n");
+        ctx.out.push_str("    drop\n");
+        ctx.out.push_str("    call $tag_nil\n");
+        ctx.out.push_str("  )\n");
+    }
+
+    emit_builtin(ctx, "builtin_print", 1, 0);
+    emit_builtin(ctx, "builtin_puts", 1, 1);
+    emit_builtin(ctx, "builtin_eprint", 2, 0);
+    emit_builtin(ctx, "builtin_eputs", 2, 1);
+    emit_builtin(ctx, "builtin_log", 2, 1);
+}
+
 struct WatContext
 {
     out: String,
@@ -6825,6 +7175,9 @@ struct WatContext
     current_captures: FxHashMap<SymbolId, usize>,
     current_locals: FxHashMap<SymbolId, usize>,
     global_set: FxHashSet<SymbolId>,
+    func_def_names: FxHashMap<usize, String>,
+    func_def_captures: FxHashMap<usize, Vec<SymbolId>>,
+    builtin_names: FxHashMap<SymbolId, String>,
 }
 
 impl WatContext
@@ -6843,6 +7196,9 @@ impl WatContext
             current_captures: FxHashMap::default(),
             current_locals: FxHashMap::default(),
             global_set: FxHashSet::default(),
+            func_def_names: FxHashMap::default(),
+            func_def_captures: FxHashMap::default(),
+            builtin_names: FxHashMap::default(),
         }
     }
 
@@ -7038,6 +7394,146 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
             ctx.out.push_str("    end\n");
             ctx.out.push_str("    call $tag_nil\n");
         }
+        ExprKind::For {
+            var_slot: Some(var_slot),
+            iterable,
+            body,
+            ..
+        } =>
+        {
+            emit_expr_value(ctx, iterable)?;
+            ctx.out.push_str("    local.set $tmp\n");
+            ctx.out.push_str("    local.get $tmp\n");
+            ctx.out.push_str("    call $ptr_of\n");
+            ctx.out.push_str("    local.set $tmp_ptr\n");
+            ctx.out.push_str("    local.get $tmp_ptr\n");
+            ctx.out.push_str("    i32.load\n");
+            ctx.out.push_str("    global.get $TYPE_ARRAY\n");
+            ctx.out.push_str("    i32.ne\n");
+            ctx.out.push_str("    if\n");
+            ctx.out.push_str("      unreachable\n");
+            ctx.out.push_str("    end\n");
+            ctx.out.push_str("    local.get $tmp_ptr\n");
+            ctx.out.push_str("    i32.const 4\n");
+            ctx.out.push_str("    i32.add\n");
+            ctx.out.push_str("    i32.load\n");
+            ctx.out.push_str("    local.set $tmp_i32\n");
+            ctx.out.push_str("    i32.const 0\n");
+            ctx.out.push_str("    local.set $tmp_ptr\n");
+            ctx.out.push_str("    block $for_exit\n");
+            ctx.out.push_str("      loop $for_loop\n");
+            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        local.get $tmp_i32\n");
+            ctx.out.push_str("        i32.ge_u\n");
+            ctx.out.push_str("        br_if $for_exit\n");
+            ctx.out.push_str("        local.get $tmp\n");
+            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        call $array_get\n");
+            ctx.out.push_str(&format!("        local.set $r{var_slot}\n"));
+            emit_expr_value(ctx, body)?;
+            ctx.out.push_str("        drop\n");
+            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        i32.const 1\n");
+            ctx.out.push_str("        i32.add\n");
+            ctx.out.push_str("        local.set $tmp_ptr\n");
+            ctx.out.push_str("        br $for_loop\n");
+            ctx.out.push_str("      end\n");
+            ctx.out.push_str("    end\n");
+            ctx.out.push_str("    call $tag_nil\n");
+        }
+        ExprKind::For { .. } =>
+        {
+            return Err("WAT dump requires a slot for for-loop variables".to_string());
+        }
+        ExprKind::Loop {
+            count,
+            var_slot: Some(var_slot),
+            body,
+            ..
+        } =>
+        {
+            emit_expr_value(ctx, count)?;
+            ctx.out.push_str("    call $untag_int\n");
+            ctx.out.push_str("    i32.wrap_i64\n");
+            ctx.out.push_str("    local.set $tmp_i32\n");
+            ctx.out.push_str("    i32.const 0\n");
+            ctx.out.push_str("    local.set $tmp_ptr\n");
+            ctx.out.push_str("    block $loop_exit\n");
+            ctx.out.push_str("      loop $loop_body\n");
+            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        local.get $tmp_i32\n");
+            ctx.out.push_str("        i32.ge_u\n");
+            ctx.out.push_str("        br_if $loop_exit\n");
+            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        i64.extend_i32_u\n");
+            ctx.out.push_str("        call $tag_int\n");
+            ctx.out.push_str(&format!("        local.set $r{var_slot}\n"));
+            emit_expr_value(ctx, body)?;
+            ctx.out.push_str("        drop\n");
+            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        i32.const 1\n");
+            ctx.out.push_str("        i32.add\n");
+            ctx.out.push_str("        local.set $tmp_ptr\n");
+            ctx.out.push_str("        br $loop_body\n");
+            ctx.out.push_str("      end\n");
+            ctx.out.push_str("    end\n");
+            ctx.out.push_str("    call $tag_nil\n");
+        }
+        ExprKind::Loop { .. } =>
+        {
+            return Err("WAT dump requires a slot for loop variables".to_string());
+        }
+        ExprKind::Collect {
+            count,
+            into: None,
+            var_slot: Some(var_slot),
+            body,
+            ..
+        } =>
+        {
+            emit_expr_value(ctx, count)?;
+            ctx.out.push_str("    call $untag_int\n");
+            ctx.out.push_str("    i32.wrap_i64\n");
+            ctx.out.push_str("    local.set $tmp_i32\n");
+            ctx.out.push_str("    local.get $tmp_i32\n");
+            ctx.out.push_str("    call $array_new\n");
+            ctx.out.push_str("    local.set $tmp\n");
+            ctx.out.push_str("    i32.const 0\n");
+            ctx.out.push_str("    local.set $tmp_ptr\n");
+            ctx.out.push_str("    block $collect_exit\n");
+            ctx.out.push_str("      loop $collect_loop\n");
+            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        local.get $tmp_i32\n");
+            ctx.out.push_str("        i32.ge_u\n");
+            ctx.out.push_str("        br_if $collect_exit\n");
+            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        i64.extend_i32_u\n");
+            ctx.out.push_str("        call $tag_int\n");
+            ctx.out.push_str(&format!("        local.set $r{var_slot}\n"));
+            emit_expr_value(ctx, body)?;
+            ctx.out.push_str("        local.set $tmp2\n");
+            ctx.out.push_str("        local.get $tmp\n");
+            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        local.get $tmp2\n");
+            ctx.out.push_str("        call $array_set\n");
+            ctx.out.push_str("        drop\n");
+            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        i32.const 1\n");
+            ctx.out.push_str("        i32.add\n");
+            ctx.out.push_str("        local.set $tmp_ptr\n");
+            ctx.out.push_str("        br $collect_loop\n");
+            ctx.out.push_str("      end\n");
+            ctx.out.push_str("    end\n");
+            ctx.out.push_str("    local.get $tmp\n");
+        }
+        ExprKind::Collect { .. } =>
+        {
+            return Err("WAT dump only supports collect into new arrays".to_string());
+        }
+        ExprKind::ArrayGenerator { .. } =>
+        {
+            return Err("WAT dump does not support array generators yet".to_string());
+        }
         ExprKind::Block(items) =>
         {
             if items.is_empty()
@@ -7136,9 +7632,79 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
                 .push_str(&format!("    i32.const {}\n", args.len()));
             ctx.out.push_str("    call $call_func\n");
         }
-        ExprKind::FunctionDef { .. } =>
+        ExprKind::FunctionDef { name, .. } =>
         {
-            ctx.out.push_str("    call $tag_nil\n");
+            let key = expr as *const Expr as usize;
+            let internal = ctx
+                .func_def_names
+                .get(&key)
+                .cloned()
+                .ok_or_else(|| "Unknown function definition".to_string())?;
+            let idx = ctx
+                .func_indices
+                .get(&internal)
+                .cloned()
+                .ok_or_else(|| "Unknown function index".to_string())?;
+            ctx.out.push_str(&format!("    i32.const {idx}\n"));
+            let captures = ctx
+                .func_def_captures
+                .get(&key)
+                .cloned()
+                .unwrap_or_default();
+            if captures.is_empty()
+            {
+                ctx.out.push_str("    call $tag_nil\n");
+            }
+            else
+            {
+                ctx.out
+                    .push_str(&format!("    i32.const {}\n", captures.len()));
+                ctx.out.push_str("    call $env_new\n");
+                ctx.out.push_str("    local.set $tmp\n");
+                for (cap_idx, sym) in captures.iter().enumerate()
+                {
+                    ctx.out.push_str("    local.get $tmp\n");
+                    ctx.out.push_str(&format!("    i32.const {cap_idx}\n"));
+                    if let Some(slot) = ctx.current_locals.get(sym)
+                    {
+                        ctx.out.push_str(&format!("    local.get $r{slot}\n"));
+                    }
+                    else if let Some(env_idx) = ctx.current_captures.get(sym)
+                    {
+                        ctx.out.push_str("    local.get $env\n");
+                        ctx.out.push_str(&format!("    i32.const {env_idx}\n"));
+                        ctx.out.push_str("    call $env_get\n");
+                    }
+                    else if let Some(global_idx) = ctx.global_names.get(sym)
+                    {
+                        ctx.out.push_str(&format!("    i32.const {global_idx}\n"));
+                        ctx.out.push_str("    call $global_get\n");
+                    }
+                    else
+                    {
+                        return Err("Unknown capture".to_string());
+                    }
+                    ctx.out.push_str("    call $env_set\n");
+                    ctx.out.push_str("    drop\n");
+                }
+                ctx.out.push_str("    local.get $tmp\n");
+            }
+            ctx.out.push_str("    call $make_func\n");
+            if let Some(slot) = ctx.current_locals.get(name)
+            {
+                ctx.out.push_str(&format!("    local.tee $r{slot}\n"));
+            }
+            else if let Some(global_idx) = ctx.global_names.get(name)
+            {
+                ctx.out.push_str("    local.set $tmp\n");
+                ctx.out.push_str(&format!("    i32.const {global_idx}\n"));
+                ctx.out.push_str("    local.get $tmp\n");
+                ctx.out.push_str("    call $global_set\n");
+            }
+            else
+            {
+                return Err("Unknown function binding".to_string());
+            }
         }
         ExprKind::AnonymousFunction { .. } =>
         {
@@ -7522,6 +8088,18 @@ struct WatAnonFunction
     line: usize,
 }
 
+#[derive(Clone)]
+struct WatNamedFunction
+{
+    key: usize,
+    name: SymbolId,
+    params: Vec<Param>,
+    body: Expr,
+    slots: Option<Rc<Vec<Rc<String>>>>,
+    line: usize,
+    is_top_level: bool,
+}
+
 fn collect_anonymous_functions(expr: &Expr, out: &mut Vec<WatAnonFunction>)
 {
     match &expr.kind
@@ -7630,6 +8208,124 @@ fn collect_anonymous_functions(expr: &Expr, out: &mut Vec<WatAnonFunction>)
     }
 }
 
+fn collect_named_functions(expr: &Expr, out: &mut Vec<WatNamedFunction>, in_function: bool)
+{
+    match &expr.kind
+    {
+        ExprKind::FunctionDef {
+            name,
+            params,
+            body,
+            slots,
+        } =>
+        {
+            out.push(WatNamedFunction {
+                key: expr as *const Expr as usize,
+                name: *name,
+                params: params.clone(),
+                body: (*body.as_ref()).clone(),
+                slots: slots.clone(),
+                line: expr.line,
+                is_top_level: !in_function,
+            });
+            collect_named_functions(body, out, true);
+        }
+        ExprKind::AnonymousFunction { body, .. } =>
+        {
+            collect_named_functions(body, out, true);
+        }
+        ExprKind::Assignment { value, .. } => collect_named_functions(value, out, in_function),
+        ExprKind::IndexAssignment {
+            target,
+            index,
+            value,
+        } =>
+        {
+            collect_named_functions(target, out, in_function);
+            collect_named_functions(index, out, in_function);
+            collect_named_functions(value, out, in_function);
+        }
+        ExprKind::BinaryOp { left, right, .. } =>
+        {
+            collect_named_functions(left, out, in_function);
+            collect_named_functions(right, out, in_function);
+        }
+        ExprKind::Not(expr) | ExprKind::Clone(expr) | ExprKind::EnvFreeze(expr) =>
+        {
+            collect_named_functions(expr, out, in_function);
+        }
+        ExprKind::And { left, right }
+        | ExprKind::AndBool { left, right }
+        | ExprKind::Or { left, right }
+        | ExprKind::OrBool { left, right } =>
+        {
+            collect_named_functions(left, out, in_function);
+            collect_named_functions(right, out, in_function);
+        }
+        ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } =>
+        {
+            collect_named_functions(condition, out, in_function);
+            collect_named_functions(then_branch, out, in_function);
+            if let Some(expr) = else_branch
+            {
+                collect_named_functions(expr, out, in_function);
+            }
+        }
+        ExprKind::While { condition, body } =>
+        {
+            collect_named_functions(condition, out, in_function);
+            collect_named_functions(body, out, in_function);
+        }
+        ExprKind::Block(items) =>
+        {
+            for item in items
+            {
+                collect_named_functions(item, out, in_function);
+            }
+        }
+        ExprKind::Call { function, args, .. } =>
+        {
+            collect_named_functions(function, out, in_function);
+            for arg in args
+            {
+                collect_named_functions(arg, out, in_function);
+            }
+        }
+        ExprKind::Array(items) =>
+        {
+            for item in items
+            {
+                collect_named_functions(item, out, in_function);
+            }
+        }
+        ExprKind::Map(entries) =>
+        {
+            for (k, v) in entries
+            {
+                collect_named_functions(k, out, in_function);
+                collect_named_functions(v, out, in_function);
+            }
+        }
+        ExprKind::Index { target, index } =>
+        {
+            collect_named_functions(target, out, in_function);
+            collect_named_functions(index, out, in_function);
+        }
+        ExprKind::Return(value) =>
+        {
+            if let Some(expr) = value
+            {
+                collect_named_functions(expr, out, in_function);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn emit_function_value(
     ctx: &mut WatContext,
     internal_name: &str,
@@ -7662,7 +8358,9 @@ fn emit_function_value(
             .push_str(&format!("    (local $r{reg} i64)\n"));
     }
     ctx.out.push_str("    (local $tmp i64)\n");
+    ctx.out.push_str("    (local $tmp2 i64)\n");
     ctx.out.push_str("    (local $tmp_ptr i32)\n");
+    ctx.out.push_str("    (local $tmp_i32 i32)\n");
     if param_count > 0
     {
         for idx in 0..param_count
@@ -7694,11 +8392,20 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
     ctx.out
         .push_str(&format!("  ;; kansei-wat wasi={}\n", wasi.as_str()));
     emit_wat_runtime(&mut ctx.out, wasi);
+    emit_wat_builtins(&mut ctx);
 
     let mut emitted = 0usize;
     let mut has_main = false;
     let mut globals = Vec::new();
     collect_global_symbols(ast, &mut globals, false);
+    for name in ["print", "puts", "eprint", "eputs", "log"]
+    {
+        let sym = intern::intern_symbol(name);
+        if !globals.contains(&sym)
+        {
+            globals.push(sym);
+        }
+    }
     for (idx, sym) in globals.iter().enumerate()
     {
         ctx.global_names.insert(*sym, idx);
@@ -7706,19 +8413,35 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
     ctx.global_set = globals.iter().cloned().collect();
 
     let mut functions = Vec::new();
-    collect_function_exprs(ast, &mut functions);
+    collect_named_functions(ast, &mut functions, false);
     let mut anon_exprs = Vec::new();
     collect_anonymous_functions(ast, &mut anon_exprs);
 
     let mut func_idx = 0usize;
-    for (name, _params, _body, _slots, _line) in functions.iter().cloned()
+    for (name, internal) in [
+        ("print", "builtin_print"),
+        ("puts", "builtin_puts"),
+        ("eprint", "builtin_eprint"),
+        ("eputs", "builtin_eputs"),
+        ("log", "builtin_log"),
+    ]
+    {
+        let sym = intern::intern_symbol(name);
+        ctx.builtin_names
+            .insert(sym, internal.to_string());
+        ctx.func_indices
+            .insert(internal.to_string(), func_idx as i32);
+        func_idx += 1;
+    }
+    for func in functions.iter().cloned()
     {
         let internal = format!("f{func_idx}");
         ctx.func_indices.insert(internal.clone(), func_idx as i32);
+        ctx.func_def_names.insert(func.key, internal.clone());
         func_idx += 1;
-        if let Some(sym) = name
+        if func.is_top_level
         {
-            ctx.func_names.insert(sym, internal);
+            ctx.func_names.entry(func.name).or_insert(internal);
         }
     }
     for anon in &anon_exprs
@@ -7756,6 +8479,34 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
         let mut captures: Vec<SymbolId> = free.into_iter().collect();
         captures.sort_unstable();
         ctx.anon_captures.insert(anon.key, captures);
+    }
+
+    for func in &functions
+    {
+        let (resolved_body, _slot_map) = if let Some(slot_names) = func.slots.clone()
+        {
+            let mut locals_map = FxHashMap::default();
+            for (idx, name) in slot_names.iter().enumerate()
+            {
+                let sym = intern::intern_symbol(name.as_str());
+                locals_map.insert(sym, idx);
+            }
+            (func.body.clone(), locals_map)
+        }
+        else
+        {
+            let mut locals = HashSet::new();
+            collect_declarations(&func.body, &mut locals);
+            let (map, _) = build_slot_map(&func.params, locals);
+            let mut resolved = func.body.clone();
+            resolve(&mut resolved, &map);
+            (resolved, map)
+        };
+        let mut free = FxHashSet::default();
+        collect_free_symbols(&resolved_body, &ctx.global_set, &mut free);
+        let mut captures: Vec<SymbolId> = free.into_iter().collect();
+        captures.sort_unstable();
+        ctx.func_def_captures.insert(func.key, captures);
     }
 
     let local_count = local_count_for_expr(ast);
@@ -7798,64 +8549,54 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
         ctx.out.push_str("))\n");
     }
 
-    for (name, params, body, slots, line) in functions.iter().cloned()
+    for func in functions.iter().cloned()
     {
-        let sym = match name
-        {
-            Some(sym) => sym,
-            None =>
-            {
-                ctx.out.push_str(&format!(
-                    "  ;; skipped unnamed function at line {line}\n"
-                ));
-                continue;
-            }
-        };
         let internal = ctx
-            .func_names
-            .get(&sym)
+            .func_def_names
+            .get(&func.key)
             .cloned()
             .unwrap_or_else(|| "f0".to_string());
         let mut slot_map = FxHashMap::default();
-        let (resolved_body, slot_names) = if let Some(slot_names) = slots
+        let (resolved_body, slot_names) = if let Some(slot_names) = func.slots
         {
             for (idx, name) in slot_names.iter().enumerate()
             {
                 let sym = intern::intern_symbol(name.as_str());
                 slot_map.insert(sym, idx);
             }
-            (body, slot_names)
+            (func.body, slot_names)
         }
         else
         {
             let mut locals = HashSet::new();
-            collect_declarations(&body, &mut locals);
-            let (map, slot_names) = build_slot_map(&params, locals);
-            let mut resolved = body;
+            collect_declarations(&func.body, &mut locals);
+            let (map, slot_names) = build_slot_map(&func.params, locals);
+            let mut resolved = func.body;
             resolve(&mut resolved, &map);
             slot_map = map;
             (resolved, Rc::new(slot_names))
         };
 
-        let mut free = FxHashSet::default();
-        collect_free_symbols(&resolved_body, &ctx.global_set, &mut free);
-        let mut captures: Vec<SymbolId> = free.into_iter().collect();
-        captures.sort_unstable();
-        if !captures.is_empty()
-        {
-            ctx.out.push_str(&format!(
-                "  ;; skipped function at line {line} (captures not supported for named functions)\n"
-            ));
-            continue;
-        }
+        let captures = ctx
+            .func_def_captures
+            .get(&func.key)
+            .cloned()
+            .unwrap_or_default();
 
-        let export_name = name.map(|sym| symbol_name(sym).as_str().to_string());
-        let local_count = slot_names.len().max(params.len());
+        let export_name = if func.is_top_level
+        {
+            Some(symbol_name(func.name).as_str().to_string())
+        }
+        else
+        {
+            None
+        };
+        let local_count = slot_names.len().max(func.params.len());
         match emit_function_value(
             &mut ctx,
             &internal,
             export_name.as_deref(),
-            params.len(),
+            func.params.len(),
             local_count,
             &captures,
             &slot_map,
@@ -7866,7 +8607,8 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
             Err(err) =>
             {
                 ctx.out.push_str(&format!(
-                    "  ;; skipped function at line {line} ({err})\n"
+                    "  ;; skipped function at line {} ({err})\n",
+                    func.line
                 ));
             }
         }
@@ -7900,11 +8642,11 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
             (resolved, Rc::new(slot_names))
         };
         let local_count = slot_names.len().max(anon.params.len());
-        let mut free = FxHashSet::default();
-        collect_free_symbols(&resolved_body, &ctx.global_set, &mut free);
-        let mut captures: Vec<SymbolId> = free.into_iter().collect();
-        captures.sort_unstable();
-        ctx.anon_captures.insert(anon.key, captures.clone());
+        let captures = ctx
+            .anon_captures
+            .get(&anon.key)
+            .cloned()
+            .unwrap_or_default();
         match emit_function_value(
             &mut ctx,
             &internal,
@@ -7933,7 +8675,7 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
         ctx.out
             .push_str(&format!("    i32.const {}\n", globals.len()));
         ctx.out.push_str("    call $globals_init\n");
-        for (sym, internal) in ctx.func_names.iter()
+        for (sym, internal) in ctx.builtin_names.iter()
         {
             if let Some(idx) = ctx.global_names.get(sym)
             {

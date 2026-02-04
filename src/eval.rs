@@ -5777,84 +5777,329 @@ pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String
     out
 }
 
-fn fast_reg_param_count(func: &FastRegFunction) -> usize
+
+fn expr_requires_slot(expr: &Expr) -> bool
 {
-    let mut max_slot: Option<usize> = None;
-    for inst in &func.code
+    match &expr.kind
     {
-        if let FastRegInstruction::LoadSlot { slot, .. } = inst
+        ExprKind::Identifier { slot, .. } => slot.is_none(),
+        ExprKind::Assignment { slot, .. } => slot.is_none(),
+        ExprKind::IndexAssignment { target, index, value } =>
         {
-            max_slot = Some(max_slot.map_or(*slot, |m| m.max(*slot)));
+            expr_requires_slot(target) || expr_requires_slot(index) || expr_requires_slot(value)
+        }
+        ExprKind::BinaryOp { left, right, .. } =>
+        {
+            expr_requires_slot(left) || expr_requires_slot(right)
+        }
+        ExprKind::Not(expr) | ExprKind::Clone(expr) | ExprKind::EnvFreeze(expr) =>
+        {
+            expr_requires_slot(expr)
+        }
+        ExprKind::And { left, right }
+        | ExprKind::AndBool { left, right }
+        | ExprKind::Or { left, right }
+        | ExprKind::OrBool { left, right } =>
+        {
+            expr_requires_slot(left) || expr_requires_slot(right)
+        }
+        ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } =>
+        {
+            expr_requires_slot(condition)
+                || expr_requires_slot(then_branch)
+                || else_branch
+                    .as_ref()
+                    .map_or(false, |expr| expr_requires_slot(expr))
+        }
+        ExprKind::While { condition, body } =>
+        {
+            expr_requires_slot(condition) || expr_requires_slot(body)
+        }
+        ExprKind::Block(items) => items.iter().any(expr_requires_slot),
+        ExprKind::Return(value) =>
+        {
+            value.as_ref().map_or(false, |expr| expr_requires_slot(expr))
+        }
+        _ => false,
+    }
+}
+
+fn emit_expr_f64(out: &mut String, expr: &Expr) -> Result<(), String>
+{
+    match &expr.kind
+    {
+        ExprKind::Integer { value, .. } => out.push_str(&format!("    f64.const {value}\n")),
+        ExprKind::Unsigned { value, .. } => out.push_str(&format!("    f64.const {value}\n")),
+        ExprKind::Float { value, .. } => out.push_str(&format!("    f64.const {value}\n")),
+        ExprKind::Boolean(value) =>
+        {
+            if *value
+            {
+                out.push_str("    f64.const 1\n");
+            }
+            else
+            {
+                out.push_str("    f64.const 0\n");
+            }
+        }
+        ExprKind::Nil => out.push_str("    f64.const 0\n"),
+        ExprKind::Identifier { slot: Some(slot), .. } =>
+        {
+            out.push_str(&format!("    local.get $r{slot}\n"));
+        }
+        ExprKind::Identifier { slot: None, .. } =>
+        {
+            return Err("WAT dump does not support globals yet".to_string());
+        }
+        ExprKind::Assignment {
+            slot: Some(slot),
+            value,
+            ..
+        } =>
+        {
+            emit_expr_f64(out, value)?;
+            out.push_str(&format!("    local.tee $r{slot}\n"));
+        }
+        ExprKind::Assignment { slot: None, .. } =>
+        {
+            return Err("WAT dump does not support global assignment yet".to_string());
+        }
+        ExprKind::BinaryOp { left, op, right } =>
+        {
+            emit_expr_f64(out, left)?;
+            emit_expr_f64(out, right)?;
+            match op
+            {
+                Op::Add => out.push_str("    f64.add\n"),
+                Op::Subtract => out.push_str("    f64.sub\n"),
+                Op::Multiply => out.push_str("    f64.mul\n"),
+                Op::Divide => out.push_str("    f64.div\n"),
+                Op::Power =>
+                {
+                    return Err("WAT dump does not support pow yet".to_string());
+                }
+                Op::Equal =>
+                {
+                    out.push_str("    f64.eq\n");
+                    out.push_str("    f64.convert_i32_s\n");
+                }
+                Op::GreaterThan =>
+                {
+                    out.push_str("    f64.gt\n");
+                    out.push_str("    f64.convert_i32_s\n");
+                }
+                Op::LessThan =>
+                {
+                    out.push_str("    f64.lt\n");
+                    out.push_str("    f64.convert_i32_s\n");
+                }
+                _ => return Err("WAT dump only supports basic comparisons".to_string()),
+            }
+        }
+        ExprKind::Not(expr) =>
+        {
+            emit_expr_f64(out, expr)?;
+            out.push_str("    f64.const 0\n");
+            out.push_str("    f64.eq\n");
+            out.push_str("    f64.convert_i32_s\n");
+        }
+        ExprKind::And { left, right } | ExprKind::AndBool { left, right } =>
+        {
+            emit_expr_f64(out, left)?;
+            out.push_str("    f64.const 0\n");
+            out.push_str("    f64.ne\n");
+            out.push_str("    if (result f64)\n");
+            emit_expr_f64(out, right)?;
+            out.push_str("      f64.const 0\n");
+            out.push_str("      f64.ne\n");
+            out.push_str("      f64.convert_i32_s\n");
+            out.push_str("    else\n");
+            out.push_str("      f64.const 0\n");
+            out.push_str("    end\n");
+        }
+        ExprKind::Or { left, right } | ExprKind::OrBool { left, right } =>
+        {
+            emit_expr_f64(out, left)?;
+            out.push_str("    f64.const 0\n");
+            out.push_str("    f64.ne\n");
+            out.push_str("    if (result f64)\n");
+            out.push_str("      f64.const 1\n");
+            out.push_str("    else\n");
+            emit_expr_f64(out, right)?;
+            out.push_str("      f64.const 0\n");
+            out.push_str("      f64.ne\n");
+            out.push_str("      f64.convert_i32_s\n");
+            out.push_str("    end\n");
+        }
+        ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } =>
+        {
+            emit_expr_f64(out, condition)?;
+            out.push_str("    f64.const 0\n");
+            out.push_str("    f64.ne\n");
+            out.push_str("    if (result f64)\n");
+            emit_expr_f64(out, then_branch)?;
+            out.push_str("    else\n");
+            if let Some(else_expr) = else_branch
+            {
+                emit_expr_f64(out, else_expr)?;
+            }
+            else
+            {
+                out.push_str("      f64.const 0\n");
+            }
+            out.push_str("    end\n");
+        }
+        ExprKind::While { condition, body } =>
+        {
+            out.push_str("    block $while_exit\n");
+            out.push_str("      loop $while_loop\n");
+            emit_expr_f64(out, condition)?;
+            out.push_str("        f64.const 0\n");
+            out.push_str("        f64.eq\n");
+            out.push_str("        br_if $while_exit\n");
+            emit_expr_f64(out, body)?;
+            out.push_str("        drop\n");
+            out.push_str("        br $while_loop\n");
+            out.push_str("      end\n");
+            out.push_str("    end\n");
+            out.push_str("    f64.const 0\n");
+        }
+        ExprKind::Block(items) =>
+        {
+            if items.is_empty()
+            {
+                out.push_str("    f64.const 0\n");
+            }
+            else
+            {
+                for expr in items.iter().take(items.len() - 1)
+                {
+                    emit_expr_f64(out, expr)?;
+                    out.push_str("    drop\n");
+                }
+                emit_expr_f64(out, items.last().unwrap())?;
+            }
+        }
+        ExprKind::Return(value) =>
+        {
+            if let Some(expr) = value
+            {
+                emit_expr_f64(out, expr)?;
+            }
+            else
+            {
+                out.push_str("    f64.const 0\n");
+            }
+            out.push_str("    return\n");
+        }
+        _ => return Err("WAT dump does not support this expression yet".to_string()),
+    }
+    Ok(())
+}
+
+fn local_count_for_expr(expr: &Expr) -> usize
+{
+    let mut max_slot = None;
+    fn visit(expr: &Expr, max_slot: &mut Option<usize>)
+    {
+        match &expr.kind
+        {
+            ExprKind::Identifier { slot: Some(slot), .. }
+            | ExprKind::Assignment { slot: Some(slot), .. } =>
+            {
+                *max_slot = Some(max_slot.map_or(*slot, |m| m.max(*slot)));
+            }
+            ExprKind::BinaryOp { left, right, .. } =>
+            {
+                visit(left, max_slot);
+                visit(right, max_slot);
+            }
+            ExprKind::Not(expr) | ExprKind::Clone(expr) | ExprKind::EnvFreeze(expr) =>
+            {
+                visit(expr, max_slot);
+            }
+            ExprKind::And { left, right }
+            | ExprKind::AndBool { left, right }
+            | ExprKind::Or { left, right }
+            | ExprKind::OrBool { left, right } =>
+            {
+                visit(left, max_slot);
+                visit(right, max_slot);
+            }
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } =>
+            {
+                visit(condition, max_slot);
+                visit(then_branch, max_slot);
+                if let Some(expr) = else_branch
+                {
+                    visit(expr, max_slot);
+                }
+            }
+            ExprKind::While { condition, body } =>
+            {
+                visit(condition, max_slot);
+                visit(body, max_slot);
+            }
+            ExprKind::Block(items) =>
+            {
+                for item in items
+                {
+                    visit(item, max_slot);
+                }
+            }
+            ExprKind::IndexAssignment { target, index, value } =>
+            {
+                visit(target, max_slot);
+                visit(index, max_slot);
+                visit(value, max_slot);
+            }
+            ExprKind::Return(value) =>
+            {
+                if let Some(expr) = value
+                {
+                    visit(expr, max_slot);
+                }
+            }
+            _ => {}
         }
     }
+    visit(expr, &mut max_slot);
     max_slot.map(|s| s + 1).unwrap_or(0)
 }
 
-fn emit_fast_reg_wat(
+fn emit_function_f64(
     out: &mut String,
     internal_name: &str,
     export_name: Option<&str>,
-    func: &FastRegFunction,
+    param_count: usize,
+    local_count: usize,
+    body: &Expr,
 ) -> Result<(), String>
 {
-    let param_count = fast_reg_param_count(func);
     out.push_str(&format!("  (func ${internal_name}"));
     for idx in 0..param_count
     {
-        out.push_str(&format!(" (param $p{idx} f64)"));
+        out.push_str(&format!(" (param $r{idx} f64)"));
     }
     out.push_str(" (result f64)\n");
-    for reg in 0..func.reg_count
+    for reg in param_count..local_count
     {
         out.push_str(&format!("    (local $r{reg} f64)\n"));
     }
-
-    for inst in &func.code
-    {
-        match inst
-        {
-            FastRegInstruction::LoadConst { dst, value } =>
-            {
-                out.push_str(&format!("    f64.const {value}\n"));
-                out.push_str(&format!("    local.set $r{dst}\n"));
-            }
-            FastRegInstruction::LoadSlot { dst, slot } =>
-            {
-                out.push_str(&format!("    local.get $p{slot}\n"));
-                out.push_str(&format!("    local.set $r{dst}\n"));
-            }
-            FastRegInstruction::BinOp {
-                dst,
-                op,
-                left,
-                right,
-            } =>
-            {
-                let opcode = match op
-                {
-                    RegBinOp::Add => "f64.add",
-                    RegBinOp::Sub => "f64.sub",
-                    RegBinOp::Mul => "f64.mul",
-                    RegBinOp::Div => "f64.div",
-                    RegBinOp::Pow =>
-                    {
-                        return Err(
-                            "WAT dump does not support pow yet (no core wasm f64.pow)".to_string(),
-                        )
-                    }
-                    _ => return Err("WAT dump only supports f64 arithmetic".to_string()),
-                };
-                out.push_str(&format!("    local.get $r{left}\n"));
-                out.push_str(&format!("    local.get $r{right}\n"));
-                out.push_str(&format!("    {opcode}\n"));
-                out.push_str(&format!("    local.set $r{dst}\n"));
-            }
-        }
-    }
-
-    out.push_str(&format!("    local.get $r{}\n", func.ret_reg));
+    emit_expr_f64(out, body)?;
     out.push_str("  )\n");
-
     if let Some(name) = export_name
     {
         out.push_str(&format!("  (export \"{name}\" (func ${internal_name}))\n"));
@@ -5869,14 +6114,26 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
     out.push_str(&format!("  ;; kansei-wat wasi={}\n", wasi.as_str()));
 
     let mut emitted = 0usize;
-    if let Some(func) = compile_fast_float_function(ast)
+    let mut has_main = false;
+    if expr_requires_slot(ast)
     {
-        emit_fast_reg_wat(&mut out, "main", Some("main"), &func)?;
-        emitted += 1;
+        out.push_str("  ;; top-level expression uses globals; unsupported in WAT dump\n");
     }
     else
     {
-        out.push_str("  ;; top-level expression not supported by WAT dump\n");
+        let local_count = local_count_for_expr(ast);
+        match emit_function_f64(&mut out, "main", Some("main"), 0, local_count, ast)
+        {
+            Ok(()) =>
+            {
+                emitted += 1;
+                has_main = true;
+            }
+            Err(err) =>
+            {
+                out.push_str(&format!("  ;; top-level unsupported: {err}\n"));
+            }
+        }
     }
 
     let mut functions = Vec::new();
@@ -5885,6 +6142,7 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
     let mut func_idx = 0usize;
     for (name, params, body, slots, line) in functions
     {
+        let slot_names_opt = slots.clone();
         let (resolved_body, _slot_names) = if let Some(slot_names) = slots
         {
             (body, slot_names)
@@ -5899,35 +6157,45 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
             (resolved, Rc::new(slot_names))
         };
 
-        let func = match compile_fast_float_function(&resolved_body)
-        {
-            Some(func) => func,
-            None =>
-            {
-                out.push_str(&format!(
-                    "  ;; skipped function at line {line} (not fast-f64)\n"
-                ));
-                continue;
-            }
-        };
-
         let export_name = name.map(|sym| symbol_name(sym).as_str().to_string());
         let internal = format!("f{func_idx}");
         func_idx += 1;
-        emit_fast_reg_wat(
+        let local_count = slot_names_opt
+            .as_ref()
+            .map(|s| s.len())
+            .unwrap_or(params.len());
+        match emit_function_f64(
             &mut out,
             &internal,
             export_name.as_deref(),
-            &func,
-        )?;
-        emitted += 1;
+            params.len(),
+            local_count,
+            &resolved_body,
+        )
+        {
+            Ok(()) => emitted += 1,
+            Err(err) =>
+            {
+                out.push_str(&format!(
+                    "  ;; skipped function at line {line} ({err})\n"
+                ));
+            }
+        }
+    }
+
+    if has_main
+    {
+        out.push_str("  (func $_start\n");
+        out.push_str("    call $main\n");
+        out.push_str("    drop\n");
+        out.push_str("  )\n");
+        out.push_str("  (export \"_start\" (func $_start))\n");
     }
 
     if emitted == 0
     {
-        return Err(
-            "WAT dump only supports fast-f64 arithmetic expressions and functions".to_string(),
-        );
+        return Err("WAT dump supports a limited f64 subset (no globals/strings/arrays/maps)."
+            .to_string());
     }
 
     out.push_str(")\n");

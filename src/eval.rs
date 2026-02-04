@@ -5842,6 +5842,7 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
     out.push_str("  (global $TYPE_STRING i32 (i32.const 2))\n");
     out.push_str("  (global $TYPE_MAP i32 (i32.const 3))\n");
     out.push_str("  (global $TYPE_ARRAY i32 (i32.const 4))\n");
+    out.push_str("  (global $globals_ptr (mut i32) (i32.const 0))\n");
 
     out.push_str(
         "  (func $alloc (param $size i32) (result i32)\n\
@@ -5853,6 +5854,65 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
             i32.add\n\
             global.set $heap_ptr\n\
             local.get $old\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $globals_init (param $count i32)\n\
+            (local $ptr i32)\n\
+            (local $i i32)\n\
+            local.get $count\n\
+            i32.const 8\n\
+            i32.mul\n\
+            call $alloc\n\
+            local.set $ptr\n\
+            local.get $ptr\n\
+            global.set $globals_ptr\n\
+            i32.const 0\n\
+            local.set $i\n\
+            block $exit\n\
+              loop $loop\n\
+                local.get $i\n\
+                local.get $count\n\
+                i32.ge_u\n\
+                br_if $exit\n\
+                local.get $ptr\n\
+                local.get $i\n\
+                i32.const 8\n\
+                i32.mul\n\
+                i32.add\n\
+                call $tag_nil\n\
+                i64.store\n\
+                local.get $i\n\
+                i32.const 1\n\
+                i32.add\n\
+                local.set $i\n\
+                br $loop\n\
+              end\n\
+            end\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $global_get (param $idx i32) (result i64)\n\
+            global.get $globals_ptr\n\
+            local.get $idx\n\
+            i32.const 8\n\
+            i32.mul\n\
+            i32.add\n\
+            i64.load\n\
+          )\n",
+    );
+    out.push_str(
+        "  (func $global_set (param $idx i32) (param $value i64) (result i64)\n\
+            global.get $globals_ptr\n\
+            local.get $idx\n\
+            i32.const 8\n\
+            i32.mul\n\
+            i32.add\n\
+            local.get $value\n\
+            i64.store\n\
+            local.get $value\n\
           )\n",
     );
 
@@ -6588,6 +6648,7 @@ struct WatContext
     data_segments: Vec<(i32, Vec<u8>)>,
     data_offset: i32,
     func_names: FxHashMap<SymbolId, String>,
+    global_names: FxHashMap<SymbolId, usize>,
 }
 
 impl WatContext
@@ -6599,6 +6660,7 @@ impl WatContext
             data_segments: Vec::new(),
             data_offset: 4096,
             func_names: FxHashMap::default(),
+            global_names: FxHashMap::default(),
         }
     }
 
@@ -6659,7 +6721,16 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
         }
         ExprKind::Identifier { slot: None, .. } =>
         {
-            return Err("WAT dump does not support globals yet".to_string());
+            let idx = ctx
+                .global_names
+                .get(&match &expr.kind
+                {
+                    ExprKind::Identifier { name, .. } => *name,
+                    _ => unreachable!(),
+                })
+                .ok_or_else(|| "Unknown global".to_string())?;
+            ctx.out.push_str(&format!("    i32.const {idx}\n"));
+            ctx.out.push_str("    call $global_get\n");
         }
         ExprKind::Assignment {
             slot: Some(slot),
@@ -6672,7 +6743,19 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
         }
         ExprKind::Assignment { slot: None, .. } =>
         {
-            return Err("WAT dump does not support global assignment yet".to_string());
+            let (name, value) = match &expr.kind
+            {
+                ExprKind::Assignment { name, value, .. } => (*name, value),
+                _ => unreachable!(),
+            };
+            let idx = ctx
+                .global_names
+                .get(&name)
+                .cloned()
+                .ok_or_else(|| "Unknown global".to_string())?;
+            emit_expr_value(ctx, value)?;
+            ctx.out.push_str(&format!("    i32.const {idx}\n"));
+            ctx.out.push_str("    call $global_set\n");
         }
         ExprKind::BinaryOp { left, op, right } =>
         {
@@ -6962,6 +7045,114 @@ fn local_count_for_expr(expr: &Expr) -> usize
     max_slot.map(|s| s + 1).unwrap_or(0)
 }
 
+fn collect_global_symbols(expr: &Expr, out: &mut Vec<SymbolId>)
+{
+    fn add(sym: SymbolId, out: &mut Vec<SymbolId>)
+    {
+        if !out.contains(&sym)
+        {
+            out.push(sym);
+        }
+    }
+    match &expr.kind
+    {
+        ExprKind::Identifier { name, slot: None } => add(*name, out),
+        ExprKind::Assignment { name, slot: None, value } =>
+        {
+            add(*name, out);
+            collect_global_symbols(value, out);
+        }
+        ExprKind::IndexAssignment { target, index, value } =>
+        {
+            collect_global_symbols(target, out);
+            collect_global_symbols(index, out);
+            collect_global_symbols(value, out);
+        }
+        ExprKind::BinaryOp { left, right, .. } =>
+        {
+            collect_global_symbols(left, out);
+            collect_global_symbols(right, out);
+        }
+        ExprKind::Not(expr) | ExprKind::Clone(expr) | ExprKind::EnvFreeze(expr) =>
+        {
+            collect_global_symbols(expr, out);
+        }
+        ExprKind::And { left, right }
+        | ExprKind::AndBool { left, right }
+        | ExprKind::Or { left, right }
+        | ExprKind::OrBool { left, right } =>
+        {
+            collect_global_symbols(left, out);
+            collect_global_symbols(right, out);
+        }
+        ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } =>
+        {
+            collect_global_symbols(condition, out);
+            collect_global_symbols(then_branch, out);
+            if let Some(expr) = else_branch
+            {
+                collect_global_symbols(expr, out);
+            }
+        }
+        ExprKind::While { condition, body } =>
+        {
+            collect_global_symbols(condition, out);
+            collect_global_symbols(body, out);
+        }
+        ExprKind::Block(items) =>
+        {
+            for item in items
+            {
+                collect_global_symbols(item, out);
+            }
+        }
+        ExprKind::Call { function, args, .. } =>
+        {
+            collect_global_symbols(function, out);
+            for arg in args
+            {
+                collect_global_symbols(arg, out);
+            }
+        }
+        ExprKind::Array(items) =>
+        {
+            for item in items
+            {
+                collect_global_symbols(item, out);
+            }
+        }
+        ExprKind::Map(entries) =>
+        {
+            for (k, v) in entries
+            {
+                collect_global_symbols(k, out);
+                collect_global_symbols(v, out);
+            }
+        }
+        ExprKind::Index { target, index } =>
+        {
+            collect_global_symbols(target, out);
+            collect_global_symbols(index, out);
+        }
+        ExprKind::Return(value) =>
+        {
+            if let Some(expr) = value
+            {
+                collect_global_symbols(expr, out);
+            }
+        }
+        ExprKind::FunctionDef { body, .. } | ExprKind::AnonymousFunction { body, .. } =>
+        {
+            collect_global_symbols(body, out);
+        }
+        _ => {}
+    }
+}
+
 fn emit_function_value(
     ctx: &mut WatContext,
     internal_name: &str,
@@ -7003,6 +7194,12 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
 
     let mut emitted = 0usize;
     let mut has_main = false;
+    let mut globals = Vec::new();
+    collect_global_symbols(ast, &mut globals);
+    for (idx, sym) in globals.iter().enumerate()
+    {
+        ctx.global_names.insert(*sym, idx);
+    }
     if expr_requires_slot(ast)
     {
         ctx.out
@@ -7080,6 +7277,9 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
     if has_main
     {
         ctx.out.push_str("  (func $_start\n");
+        ctx.out
+            .push_str(&format!("    i32.const {}\n", globals.len()));
+        ctx.out.push_str("    call $globals_init\n");
         ctx.out.push_str("    call $main\n");
         ctx.out.push_str("    drop\n");
         ctx.out.push_str("  )\n");

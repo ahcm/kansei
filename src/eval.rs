@@ -5841,6 +5841,7 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
     out.push_str("  (global $TYPE_F64 i32 (i32.const 1))\n");
     out.push_str("  (global $TYPE_STRING i32 (i32.const 2))\n");
     out.push_str("  (global $TYPE_MAP i32 (i32.const 3))\n");
+    out.push_str("  (global $TYPE_ARRAY i32 (i32.const 4))\n");
 
     out.push_str(
         "  (func $alloc (param $size i32) (result i32)\n\
@@ -6326,7 +6327,6 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
         "  (func $map_set (param $map i64) (param $key i64) (param $value i64) (result i64)\n\
             (local $ptr i32)\n\
             (local $node i32)\n\
-            (local $prev i32)\n\
             local.get $map\n\
             call $ptr_of\n\
             local.set $ptr\n\
@@ -6335,8 +6335,6 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
             i32.add\n\
             i32.load\n\
             local.set $node\n\
-            i32.const 0\n\
-            local.set $prev\n\
             block $exit\n\
               loop $loop\n\
                 local.get $node\n\
@@ -6352,11 +6350,9 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
                   i32.add\n\
                   local.get $value\n\
                   i64.store\n\
-                  local.get $map\n\
+                  local.get $value\n\
                   return\n\
                 end\n\
-                local.get $node\n\
-                local.set $prev\n\
                 local.get $node\n\
                 i32.const 16\n\
                 i32.add\n\
@@ -6399,7 +6395,189 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
             i32.const 1\n\
             i32.add\n\
             i32.store\n\
-            local.get $map\n\
+            local.get $value\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $array_new (param $len i32) (result i64)\n\
+            (local $ptr i32)\n\
+            (local $data i32)\n\
+            local.get $len\n\
+            i32.const 8\n\
+            i32.mul\n\
+            call $alloc\n\
+            local.set $data\n\
+            i32.const 16\n\
+            call $alloc\n\
+            local.set $ptr\n\
+            local.get $ptr\n\
+            global.get $TYPE_ARRAY\n\
+            i32.store\n\
+            local.get $ptr\n\
+            i32.const 4\n\
+            i32.add\n\
+            local.get $len\n\
+            i32.store\n\
+            local.get $ptr\n\
+            i32.const 8\n\
+            i32.add\n\
+            local.get $data\n\
+            i32.store\n\
+            local.get $ptr\n\
+            i64.extend_i32_u\n\
+            i64.const 3\n\
+            i64.shl\n\
+            global.get $TAG_PTR\n\
+            i64.or\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $array_get (param $arr i64) (param $idx i32) (result i64)\n\
+            (local $ptr i32)\n\
+            (local $len i32)\n\
+            (local $data i32)\n\
+            local.get $arr\n\
+            call $ptr_of\n\
+            local.set $ptr\n\
+            local.get $ptr\n\
+            i32.const 4\n\
+            i32.add\n\
+            i32.load\n\
+            local.set $len\n\
+            local.get $idx\n\
+            local.get $len\n\
+            i32.ge_u\n\
+            if\n\
+              unreachable\n\
+            end\n\
+            local.get $ptr\n\
+            i32.const 8\n\
+            i32.add\n\
+            i32.load\n\
+            local.set $data\n\
+            local.get $data\n\
+            local.get $idx\n\
+            i32.const 8\n\
+            i32.mul\n\
+            i32.add\n\
+            i64.load\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $array_set (param $arr i64) (param $idx i32) (param $value i64) (result i64)\n\
+            (local $ptr i32)\n\
+            (local $len i32)\n\
+            (local $data i32)\n\
+            local.get $arr\n\
+            call $ptr_of\n\
+            local.set $ptr\n\
+            local.get $ptr\n\
+            i32.const 4\n\
+            i32.add\n\
+            i32.load\n\
+            local.set $len\n\
+            local.get $idx\n\
+            local.get $len\n\
+            i32.ge_u\n\
+            if\n\
+              unreachable\n\
+            end\n\
+            local.get $ptr\n\
+            i32.const 8\n\
+            i32.add\n\
+            i32.load\n\
+            local.set $data\n\
+            local.get $data\n\
+            local.get $idx\n\
+            i32.const 8\n\
+            i32.mul\n\
+            i32.add\n\
+            local.get $value\n\
+            i64.store\n\
+            local.get $value\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $index_get (param $target i64) (param $index i64) (result i64)\n\
+            (local $ptr i32)\n\
+            local.get $target\n\
+            global.get $TAG_PTR\n\
+            call $is_tag\n\
+            i32.eqz\n\
+            if\n\
+              unreachable\n\
+            end\n\
+            local.get $target\n\
+            call $ptr_of\n\
+            local.set $ptr\n\
+            local.get $ptr\n\
+            i32.load\n\
+            global.get $TYPE_MAP\n\
+            i32.eq\n\
+            if (result i64)\n\
+              local.get $target\n\
+              local.get $index\n\
+              call $map_get\n\
+            else\n\
+              local.get $ptr\n\
+              i32.load\n\
+              global.get $TYPE_ARRAY\n\
+              i32.eq\n\
+              if (result i64)\n\
+                local.get $index\n\
+                call $untag_int\n\
+                i32.wrap_i64\n\
+                local.get $target\n\
+                call $array_get\n\
+              else\n\
+                unreachable\n\
+              end\n\
+            end\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $index_set (param $target i64) (param $index i64) (param $value i64) (result i64)\n\
+            (local $ptr i32)\n\
+            local.get $target\n\
+            global.get $TAG_PTR\n\
+            call $is_tag\n\
+            i32.eqz\n\
+            if\n\
+              unreachable\n\
+            end\n\
+            local.get $target\n\
+            call $ptr_of\n\
+            local.set $ptr\n\
+            local.get $ptr\n\
+            i32.load\n\
+            global.get $TYPE_MAP\n\
+            i32.eq\n\
+            if (result i64)\n\
+              local.get $target\n\
+              local.get $index\n\
+              local.get $value\n\
+              call $map_set\n\
+            else\n\
+              local.get $ptr\n\
+              i32.load\n\
+              global.get $TYPE_ARRAY\n\
+              i32.eq\n\
+              if (result i64)\n\
+                local.get $index\n\
+                call $untag_int\n\
+                i32.wrap_i64\n\
+                local.get $value\n\
+                local.get $target\n\
+                call $array_set\n\
+              else\n\
+                unreachable\n\
+              end\n\
+            end\n\
           )\n",
     );
 }
@@ -6602,18 +6780,41 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
         ExprKind::Map(entries) =>
         {
             ctx.out.push_str("    call $map_new\n");
+            ctx.out.push_str("    local.set $tmp\n");
             for (key, value) in entries
             {
+                ctx.out.push_str("    local.get $tmp\n");
                 emit_expr_value(ctx, key)?;
                 emit_expr_value(ctx, value)?;
                 ctx.out.push_str("    call $map_set\n");
+                ctx.out.push_str("    drop\n");
             }
+            ctx.out.push_str("    local.get $tmp\n");
+        }
+        ExprKind::Array(elements) =>
+        {
+            ctx.out.push_str(&format!(
+                "    i32.const {}\n",
+                elements.len()
+            ));
+            ctx.out.push_str("    call $array_new\n");
+            ctx.out.push_str("    local.set $tmp\n");
+            for (idx, value) in elements.iter().enumerate()
+            {
+                ctx.out.push_str("    local.get $tmp\n");
+                ctx.out.push_str(&format!("    i64.const {idx}\n"));
+                ctx.out.push_str("    call $tag_int\n");
+                emit_expr_value(ctx, value)?;
+                ctx.out.push_str("    call $index_set\n");
+                ctx.out.push_str("    drop\n");
+            }
+            ctx.out.push_str("    local.get $tmp\n");
         }
         ExprKind::Index { target, index } =>
         {
             emit_expr_value(ctx, target)?;
             emit_expr_value(ctx, index)?;
-            ctx.out.push_str("    call $map_get\n");
+            ctx.out.push_str("    call $index_get\n");
         }
         ExprKind::IndexAssignment {
             target,
@@ -6621,18 +6822,10 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
             value,
         } =>
         {
-            match &target.kind
-            {
-                ExprKind::Identifier { slot: Some(slot), .. } =>
-                {
-                    ctx.out.push_str(&format!("    local.get $r{slot}\n"));
-                    emit_expr_value(ctx, index)?;
-                    emit_expr_value(ctx, value)?;
-                    ctx.out.push_str("    call $map_set\n");
-                    ctx.out.push_str(&format!("    local.tee $r{slot}\n"));
-                }
-                _ => return Err("WAT dump only supports map assignment to locals".to_string()),
-            }
+            emit_expr_value(ctx, target)?;
+            emit_expr_value(ctx, index)?;
+            emit_expr_value(ctx, value)?;
+            ctx.out.push_str("    call $index_set\n");
         }
         ExprKind::Return(value) =>
         {
@@ -6745,6 +6938,7 @@ fn emit_function_value(
         ctx.out
             .push_str(&format!("    (local $r{reg} i64)\n"));
     }
+    ctx.out.push_str("    (local $tmp i64)\n");
     emit_expr_value(ctx, body)?;
     ctx.out.push_str("  )\n");
     if let Some(name) = export_name

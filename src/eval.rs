@@ -8535,7 +8535,13 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
             }
             ctx.out.push_str("    return\n");
         }
-        _ => return Err("WAT dump does not support this expression yet".to_string()),
+        _ =>
+        {
+            return Err(format!(
+                "WAT dump does not support this expression yet: {:?}",
+                expr.kind
+            ));
+        }
     }
     Ok(())
 }

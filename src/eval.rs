@@ -326,6 +326,25 @@ pub enum BytecodeMode
     Advanced,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WasiTarget
+{
+    Wasip1,
+    Wasip2,
+}
+
+impl WasiTarget
+{
+    fn as_str(self) -> &'static str
+    {
+        match self
+        {
+            WasiTarget::Wasip1 => "wasip1",
+            WasiTarget::Wasip2 => "wasip2",
+        }
+    }
+}
+
 fn native_int64_parse(args: &[Value]) -> Result<Value, String>
 {
     parse_signed_int(args, IntKind::I64, "Int64")
@@ -5756,6 +5775,163 @@ pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String
     }
 
     out
+}
+
+fn fast_reg_param_count(func: &FastRegFunction) -> usize
+{
+    let mut max_slot: Option<usize> = None;
+    for inst in &func.code
+    {
+        if let FastRegInstruction::LoadSlot { slot, .. } = inst
+        {
+            max_slot = Some(max_slot.map_or(*slot, |m| m.max(*slot)));
+        }
+    }
+    max_slot.map(|s| s + 1).unwrap_or(0)
+}
+
+fn emit_fast_reg_wat(
+    out: &mut String,
+    internal_name: &str,
+    export_name: Option<&str>,
+    func: &FastRegFunction,
+) -> Result<(), String>
+{
+    let param_count = fast_reg_param_count(func);
+    out.push_str(&format!("  (func ${internal_name}"));
+    for idx in 0..param_count
+    {
+        out.push_str(&format!(" (param $p{idx} f64)"));
+    }
+    out.push_str(" (result f64)\n");
+    for reg in 0..func.reg_count
+    {
+        out.push_str(&format!("    (local $r{reg} f64)\n"));
+    }
+
+    for inst in &func.code
+    {
+        match inst
+        {
+            FastRegInstruction::LoadConst { dst, value } =>
+            {
+                out.push_str(&format!("    f64.const {value}\n"));
+                out.push_str(&format!("    local.set $r{dst}\n"));
+            }
+            FastRegInstruction::LoadSlot { dst, slot } =>
+            {
+                out.push_str(&format!("    local.get $p{slot}\n"));
+                out.push_str(&format!("    local.set $r{dst}\n"));
+            }
+            FastRegInstruction::BinOp {
+                dst,
+                op,
+                left,
+                right,
+            } =>
+            {
+                let opcode = match op
+                {
+                    RegBinOp::Add => "f64.add",
+                    RegBinOp::Sub => "f64.sub",
+                    RegBinOp::Mul => "f64.mul",
+                    RegBinOp::Div => "f64.div",
+                    RegBinOp::Pow =>
+                    {
+                        return Err(
+                            "WAT dump does not support pow yet (no core wasm f64.pow)".to_string(),
+                        )
+                    }
+                    _ => return Err("WAT dump only supports f64 arithmetic".to_string()),
+                };
+                out.push_str(&format!("    local.get $r{left}\n"));
+                out.push_str(&format!("    local.get $r{right}\n"));
+                out.push_str(&format!("    {opcode}\n"));
+                out.push_str(&format!("    local.set $r{dst}\n"));
+            }
+        }
+    }
+
+    out.push_str(&format!("    local.get $r{}\n", func.ret_reg));
+    out.push_str("  )\n");
+
+    if let Some(name) = export_name
+    {
+        out.push_str(&format!("  (export \"{name}\" (func ${internal_name}))\n"));
+    }
+    Ok(())
+}
+
+pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
+{
+    let mut out = String::new();
+    out.push_str("(module\n");
+    out.push_str(&format!("  ;; kansei-wat wasi={}\n", wasi.as_str()));
+
+    let mut emitted = 0usize;
+    if let Some(func) = compile_fast_float_function(ast)
+    {
+        emit_fast_reg_wat(&mut out, "main", Some("main"), &func)?;
+        emitted += 1;
+    }
+    else
+    {
+        out.push_str("  ;; top-level expression not supported by WAT dump\n");
+    }
+
+    let mut functions = Vec::new();
+    collect_function_exprs(ast, &mut functions);
+
+    let mut func_idx = 0usize;
+    for (name, params, body, slots, line) in functions
+    {
+        let (resolved_body, _slot_names) = if let Some(slot_names) = slots
+        {
+            (body, slot_names)
+        }
+        else
+        {
+            let mut locals = HashSet::new();
+            collect_declarations(&body, &mut locals);
+            let (slot_map, slot_names) = build_slot_map(&params, locals);
+            let mut resolved = body;
+            resolve(&mut resolved, &slot_map);
+            (resolved, Rc::new(slot_names))
+        };
+
+        let func = match compile_fast_float_function(&resolved_body)
+        {
+            Some(func) => func,
+            None =>
+            {
+                out.push_str(&format!(
+                    "  ;; skipped function at line {line} (not fast-f64)\n"
+                ));
+                continue;
+            }
+        };
+
+        let export_name = name.map(|sym| symbol_name(sym).as_str().to_string());
+        let internal = format!("f{func_idx}");
+        func_idx += 1;
+        emit_fast_reg_wat(
+            &mut out,
+            &internal,
+            export_name.as_deref(),
+            &func,
+        )?;
+        emitted += 1;
+    }
+
+    if emitted == 0
+    {
+        return Err(
+            "WAT dump only supports fast-f64 arithmetic expressions and functions".to_string(),
+        );
+    }
+
+    out.push_str(")\n");
+    Ok(out)
 }
 
 fn substitute(expr: &Expr, args: &[Expr]) -> Expr

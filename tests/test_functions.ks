@@ -17,8 +17,8 @@ fn add(a, b)
   a + b
 end
 
-result = add(5, 7)
-puts "Result: " + result
+res = add(5, 7)
+puts "Result: " + res
 
 fn factorial(n)
   if n < 2

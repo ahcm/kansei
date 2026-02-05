@@ -6,13 +6,13 @@ mod intern;
 #[path = "std/mod.rs"]
 mod kansei_std;
 mod lexer;
+mod lsp;
 mod parser;
+mod pm;
 mod sexpr;
 mod source;
 mod value;
 mod wasm;
-mod pm;
-mod lsp;
 mod wasm_pm;
 
 use directories::ProjectDirs;
@@ -146,10 +146,7 @@ fn main() -> rustyline::Result<()>
                     "wasip2" => eval::WasiTarget::Wasip2,
                     _ =>
                     {
-                        eprintln!(
-                            "Unknown --wasi value '{}'. Use wasip1 or wasip2.",
-                            args[idx]
-                        );
+                        eprintln!("Unknown --wasi value '{}'. Use wasip1 or wasip2.", args[idx]);
                         return Ok(());
                     }
                 };
@@ -548,10 +545,7 @@ fn format_runtime_error(err: &eval::RuntimeError) -> String
     let mut out = String::new();
     if err.column > 0
     {
-        out.push_str(&format!(
-            "Error at line {}:{}: {}",
-            err.line, err.column, err.message
-        ));
+        out.push_str(&format!("Error at line {}:{}: {}", err.line, err.column, err.message));
     }
     else
     {
@@ -625,7 +619,7 @@ fn run_get_dirs() -> i32
 
 fn run_repl(mut interpreter: eval::Interpreter) -> rustyline::Result<()>
 {
-    println!("Kansei v0.0.1");
+    println!("Kansei v0.0.2");
     println!("Have fun!");
 
     let mut input_buffer = String::new();

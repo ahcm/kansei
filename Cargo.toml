@@ -1,6 +1,6 @@
 [package]
 name = "kansei"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 authors = ["Andreas Hauser <andreas@creative-memory.net>"]
 description = "Kansei programming language"

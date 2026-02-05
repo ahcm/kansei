@@ -11,6 +11,7 @@ kansei [options] [script] [args...]
 - `--dump-ast` — dump AST
 - `--dump-ast-sexpr` — dump AST as S-Expr
 - `--dump-bytecode` — dump bytecode
+- `--dump-wat` — dump WASM Text that you can run with e.g. wasmtime
 - `--bytecode <mode>` — bytecode mode: `off|simple|advanced`
 - `-l`, `--log <path>` — write log output to a file (default: stderr)
 

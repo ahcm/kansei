@@ -5828,10 +5828,14 @@ fn emit_wat_runtime(ctx: &mut WatContext, wasi: WasiTarget, _rt: &WatRuntimeStri
     out.push_str("  (global $TYPE_STRING i32 (i32.const 2))\n");
     out.push_str("  (global $TYPE_MAP i32 (i32.const 3))\n");
     out.push_str("  (global $TYPE_ARRAY i32 (i32.const 4))\n");
-    out.push_str("  (global $TYPE_FUNC i32 (i32.const 5))\n");
-    out.push_str("  (global $TYPE_ENV i32 (i32.const 6))\n");
-    out.push_str("  (global $TYPE_REF i32 (i32.const 7))\n");
+    out.push_str("  (global $TYPE_F64ARRAY i32 (i32.const 5))\n");
+    out.push_str("  (global $TYPE_FUNC i32 (i32.const 6))\n");
+    out.push_str("  (global $TYPE_ENV i32 (i32.const 7))\n");
+    out.push_str("  (global $TYPE_REF i32 (i32.const 8))\n");
     out.push_str("  (global $globals_ptr (mut i32) (i32.const 0))\n");
+    out.push_str("  (global $args_sp (mut i32) (i32.const 0))\n");
+    out.push_str("  (global $call_args_ptr (mut i32) (i32.const 0))\n");
+    out.push_str("  (global $call_args_cap (mut i32) (i32.const 0))\n");
     out.push_str("  (type $fn (func (param i64 i32 i32) (result i64)))\n");
 
     out.push_str(
@@ -5879,6 +5883,22 @@ fn emit_wat_runtime(ctx: &mut WatContext, wasi: WasiTarget, _rt: &WatRuntimeStri
     );
 
     out.push_str(
+        "  (func $call_args_alloc (param $size i32) (result i32)\n\
+            global.get $call_args_cap\n\
+            local.get $size\n\
+            i32.lt_u\n\
+            if\n\
+              local.get $size\n\
+              call $alloc\n\
+              global.set $call_args_ptr\n\
+              local.get $size\n\
+              global.set $call_args_cap\n\
+            end\n\
+            global.get $call_args_ptr\n\
+          )\n",
+    );
+
+    out.push_str(
         "  (func $globals_init (param $count i32)\n\
             (local $ptr i32)\n\
             (local $i i32)\n\
@@ -5911,6 +5931,29 @@ fn emit_wat_runtime(ctx: &mut WatContext, wasi: WasiTarget, _rt: &WatRuntimeStri
                 br $loop\n\
               end\n\
             end\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $args_push (param $v i32)\n\
+            global.get $args_sp\n\
+            local.get $v\n\
+            i32.store\n\
+            global.get $args_sp\n\
+            i32.const 4\n\
+            i32.add\n\
+            global.set $args_sp\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $args_pop (result i32)\n\
+            global.get $args_sp\n\
+            i32.const 4\n\
+            i32.sub\n\
+            global.set $args_sp\n\
+            global.get $args_sp\n\
+            i32.load\n\
           )\n",
     );
 
@@ -7793,6 +7836,40 @@ fn emit_wat_runtime(ctx: &mut WatContext, wasi: WasiTarget, _rt: &WatRuntimeStri
     );
 
     out.push_str(
+        "  (func $f64array_new (param $len i32) (result i64)\n\
+            (local $ptr i32)\n\
+            (local $data i32)\n\
+            local.get $len\n\
+            i32.const 8\n\
+            i32.mul\n\
+            call $alloc\n\
+            local.set $data\n\
+            i32.const 16\n\
+            call $alloc\n\
+            local.set $ptr\n\
+            local.get $ptr\n\
+            global.get $TYPE_F64ARRAY\n\
+            i32.store\n\
+            local.get $ptr\n\
+            i32.const 4\n\
+            i32.add\n\
+            local.get $len\n\
+            i32.store\n\
+            local.get $ptr\n\
+            i32.const 8\n\
+            i32.add\n\
+            local.get $data\n\
+            i32.store\n\
+            local.get $ptr\n\
+            i64.extend_i32_u\n\
+            i64.const 3\n\
+            i64.shl\n\
+            global.get $TAG_PTR\n\
+            i64.or\n\
+          )\n",
+    );
+
+    out.push_str(
         "  (func $array_len (param $arr i64) (result i32)\n\
             (local $ptr i32)\n\
             local.get $arr\n\
@@ -7839,6 +7916,39 @@ fn emit_wat_runtime(ctx: &mut WatContext, wasi: WasiTarget, _rt: &WatRuntimeStri
     );
 
     out.push_str(
+        "  (func $f64array_get (param $arr i64) (param $idx i32) (result f64)\n\
+            (local $ptr i32)\n\
+            (local $len i32)\n\
+            (local $data i32)\n\
+            local.get $arr\n\
+            call $ptr_of\n\
+            local.set $ptr\n\
+            local.get $ptr\n\
+            i32.const 4\n\
+            i32.add\n\
+            i32.load\n\
+            local.set $len\n\
+            local.get $idx\n\
+            local.get $len\n\
+            i32.ge_u\n\
+            if\n\
+              unreachable\n\
+            end\n\
+            local.get $ptr\n\
+            i32.const 8\n\
+            i32.add\n\
+            i32.load\n\
+            local.set $data\n\
+            local.get $data\n\
+            local.get $idx\n\
+            i32.const 8\n\
+            i32.mul\n\
+            i32.add\n\
+            f64.load\n\
+          )\n",
+    );
+
+    out.push_str(
         "  (func $array_set (param $arr i64) (param $idx i32) (param $value i64) (result i64)\n\
             (local $ptr i32)\n\
             (local $len i32)\n\
@@ -7869,6 +7979,41 @@ fn emit_wat_runtime(ctx: &mut WatContext, wasi: WasiTarget, _rt: &WatRuntimeStri
             i32.add\n\
             local.get $value\n\
             i64.store\n\
+            local.get $value\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $f64array_set (param $arr i64) (param $idx i32) (param $value f64) (result f64)\n\
+            (local $ptr i32)\n\
+            (local $len i32)\n\
+            (local $data i32)\n\
+            local.get $arr\n\
+            call $ptr_of\n\
+            local.set $ptr\n\
+            local.get $ptr\n\
+            i32.const 4\n\
+            i32.add\n\
+            i32.load\n\
+            local.set $len\n\
+            local.get $idx\n\
+            local.get $len\n\
+            i32.ge_u\n\
+            if\n\
+              unreachable\n\
+            end\n\
+            local.get $ptr\n\
+            i32.const 8\n\
+            i32.add\n\
+            i32.load\n\
+            local.set $data\n\
+            local.get $data\n\
+            local.get $idx\n\
+            i32.const 8\n\
+            i32.mul\n\
+            i32.add\n\
+            local.get $value\n\
+            f64.store\n\
             local.get $value\n\
           )\n",
     );
@@ -8004,6 +8149,13 @@ fn emit_wat_runtime(ctx: &mut WatContext, wasi: WasiTarget, _rt: &WatRuntimeStri
         "  (func $index_get (param $target i64) (param $index i64) (result i64)\n\
             (local $ptr i32)\n\
             local.get $target\n\
+            call $is_ref\n\
+            if\n\
+              local.get $target\n\
+              call $ref_get\n\
+              local.set $target\n\
+            end\n\
+            local.get $target\n\
             global.get $TAG_PTR\n\
             call $is_tag\n\
             i32.eqz\n\
@@ -8027,13 +8179,26 @@ fn emit_wat_runtime(ctx: &mut WatContext, wasi: WasiTarget, _rt: &WatRuntimeStri
               global.get $TYPE_ARRAY\n\
               i32.eq\n\
               if (result i64)\n\
-            local.get $target\n\
-            local.get $index\n\
-            call $untag_int\n\
-            i32.wrap_i64\n\
-            call $array_get\n\
+                local.get $target\n\
+                local.get $index\n\
+                call $untag_int\n\
+                i32.wrap_i64\n\
+                call $array_get\n\
               else\n\
-                unreachable\n\
+                local.get $ptr\n\
+                i32.load\n\
+                global.get $TYPE_F64ARRAY\n\
+                i32.eq\n\
+                if (result i64)\n\
+                  local.get $target\n\
+                  local.get $index\n\
+                  call $untag_int\n\
+                  i32.wrap_i64\n\
+                  call $f64array_get\n\
+                  call $box_f64\n\
+                else\n\
+                  unreachable\n\
+                end\n\
               end\n\
             end\n\
           )\n",
@@ -8042,6 +8207,13 @@ fn emit_wat_runtime(ctx: &mut WatContext, wasi: WasiTarget, _rt: &WatRuntimeStri
     out.push_str(
         "  (func $index_set (param $target i64) (param $index i64) (param $value i64) (result i64)\n\
             (local $ptr i32)\n\
+            local.get $target\n\
+            call $is_ref\n\
+            if\n\
+              local.get $target\n\
+              call $ref_get\n\
+              local.set $target\n\
+            end\n\
             local.get $target\n\
             global.get $TAG_PTR\n\
             call $is_tag\n\
@@ -8074,7 +8246,22 @@ fn emit_wat_runtime(ctx: &mut WatContext, wasi: WasiTarget, _rt: &WatRuntimeStri
                 local.get $value\n\
                 call $array_set\n\
               else\n\
-                unreachable\n\
+                local.get $ptr\n\
+                i32.load\n\
+                global.get $TYPE_F64ARRAY\n\
+                i32.eq\n\
+                if (result i64)\n\
+                  local.get $target\n\
+                  local.get $index\n\
+                  call $untag_int\n\
+                  i32.wrap_i64\n\
+                  local.get $value\n\
+                  call $to_f64\n\
+                  call $f64array_set\n\
+                  call $box_f64\n\
+                else\n\
+                  unreachable\n\
+                end\n\
               end\n\
             end\n\
           )\n",
@@ -8299,6 +8486,7 @@ struct WatContext
     func_def_captures: FxHashMap<usize, Vec<SymbolId>>,
     builtin_names: FxHashMap<SymbolId, String>,
     runtime_strings: Option<WatRuntimeStrings>,
+    f64_arrays: FxHashSet<SymbolId>,
 }
 
 impl WatContext
@@ -8321,6 +8509,7 @@ impl WatContext
             func_def_captures: FxHashMap::default(),
             builtin_names: FxHashMap::default(),
             runtime_strings: None,
+            f64_arrays: FxHashSet::default(),
         }
     }
 
@@ -8333,6 +8522,497 @@ impl WatContext
         self.data_offset += aligned;
         offset
     }
+}
+
+fn emit_wat_std_map(ctx: &mut WatContext) -> Result<(), String>
+{
+    let rt = ctx
+        .runtime_strings
+        .ok_or_else(|| "WAT dump missing runtime strings for std".to_string())?;
+    let sqrt_idx = ctx
+        .func_indices
+        .get("builtin_float64_sqrt")
+        .cloned()
+        .unwrap_or(0);
+    let parse_idx = ctx
+        .func_indices
+        .get("builtin_int64_parse")
+        .cloned()
+        .unwrap_or(0);
+    ctx.out.push_str("    call $map_new\n");
+    ctx.out.push_str("    local.set $tmp\n");
+    ctx.out.push_str("    call $map_new\n");
+    ctx.out.push_str("    local.set $tmp2\n");
+    ctx.out.push_str("    call $map_new\n");
+    ctx.out.push_str("    local.set $tmp3\n");
+    ctx.out.push_str(&format!("    i32.const {sqrt_idx}\n"));
+    ctx.out.push_str("    call $tag_nil\n");
+    ctx.out.push_str("    call $make_func\n");
+    ctx.out.push_str("    local.set $tmp4\n");
+    ctx.out.push_str("    local.get $tmp2\n");
+    ctx.out.push_str(&format!("    i32.const {}\n", rt.sqrt.0));
+    ctx.out.push_str(&format!("    i32.const {}\n", rt.sqrt.1));
+    ctx.out.push_str("    call $string_new_from_data\n");
+    ctx.out.push_str("    local.get $tmp4\n");
+    ctx.out.push_str("    call $map_set\n");
+    ctx.out.push_str("    drop\n");
+    ctx.out.push_str(&format!("    i32.const {parse_idx}\n"));
+    ctx.out.push_str("    call $tag_nil\n");
+    ctx.out.push_str("    call $make_func\n");
+    ctx.out.push_str("    local.set $tmp4\n");
+    ctx.out.push_str("    local.get $tmp3\n");
+    ctx.out.push_str(&format!("    i32.const {}\n", rt.parse.0));
+    ctx.out.push_str(&format!("    i32.const {}\n", rt.parse.1));
+    ctx.out.push_str("    call $string_new_from_data\n");
+    ctx.out.push_str("    local.get $tmp4\n");
+    ctx.out.push_str("    call $map_set\n");
+    ctx.out.push_str("    drop\n");
+    ctx.out.push_str("    local.get $tmp\n");
+    ctx.out
+        .push_str(&format!("    i32.const {}\n", rt.float64.0));
+    ctx.out
+        .push_str(&format!("    i32.const {}\n", rt.float64.1));
+    ctx.out.push_str("    call $string_new_from_data\n");
+    ctx.out.push_str("    local.get $tmp2\n");
+    ctx.out.push_str("    call $map_set\n");
+    ctx.out.push_str("    drop\n");
+    ctx.out.push_str("    local.get $tmp\n");
+    ctx.out.push_str(&format!("    i32.const {}\n", rt.int64.0));
+    ctx.out.push_str(&format!("    i32.const {}\n", rt.int64.1));
+    ctx.out.push_str("    call $string_new_from_data\n");
+    ctx.out.push_str("    local.get $tmp3\n");
+    ctx.out.push_str("    call $map_set\n");
+    ctx.out.push_str("    drop\n");
+    Ok(())
+}
+
+fn emit_wat_program_map(ctx: &mut WatContext) -> Result<(), String>
+{
+    let rt = ctx
+        .runtime_strings
+        .ok_or_else(|| "WAT dump missing runtime strings for program".to_string())?;
+    ctx.out.push_str("    call $map_new\n");
+    ctx.out.push_str("    local.set $tmp\n");
+    ctx.out.push_str("    call $args_to_array\n");
+    ctx.out.push_str("    local.set $tmp2\n");
+    ctx.out.push_str("    local.get $tmp\n");
+    ctx.out.push_str(&format!("    i32.const {}\n", rt.args.0));
+    ctx.out.push_str(&format!("    i32.const {}\n", rt.args.1));
+    ctx.out.push_str("    call $string_new_from_data\n");
+    ctx.out.push_str("    local.get $tmp2\n");
+    ctx.out.push_str("    call $map_set\n");
+    ctx.out.push_str("    drop\n");
+    Ok(())
+}
+
+fn emit_wat_float64_map(ctx: &mut WatContext) -> Result<(), String>
+{
+    let rt = ctx
+        .runtime_strings
+        .ok_or_else(|| "WAT dump missing runtime strings for Float64".to_string())?;
+    let sqrt_idx = ctx
+        .func_indices
+        .get("builtin_float64_sqrt")
+        .cloned()
+        .unwrap_or(0);
+    ctx.out.push_str("    call $map_new\n");
+    ctx.out.push_str("    local.set $tmp\n");
+    ctx.out.push_str(&format!("    i32.const {sqrt_idx}\n"));
+    ctx.out.push_str("    call $tag_nil\n");
+    ctx.out.push_str("    call $make_func\n");
+    ctx.out.push_str("    local.set $tmp2\n");
+    ctx.out.push_str("    local.get $tmp\n");
+    ctx.out.push_str(&format!("    i32.const {}\n", rt.sqrt.0));
+    ctx.out.push_str(&format!("    i32.const {}\n", rt.sqrt.1));
+    ctx.out.push_str("    call $string_new_from_data\n");
+    ctx.out.push_str("    local.get $tmp2\n");
+    ctx.out.push_str("    call $map_set\n");
+    ctx.out.push_str("    drop\n");
+    ctx.out.push_str("    local.get $tmp\n");
+    Ok(())
+}
+
+fn emit_wat_int64_map(ctx: &mut WatContext) -> Result<(), String>
+{
+    let rt = ctx
+        .runtime_strings
+        .ok_or_else(|| "WAT dump missing runtime strings for Int64".to_string())?;
+    let parse_idx = ctx
+        .func_indices
+        .get("builtin_int64_parse")
+        .cloned()
+        .unwrap_or(0);
+    ctx.out.push_str("    call $map_new\n");
+    ctx.out.push_str("    local.set $tmp\n");
+    ctx.out.push_str(&format!("    i32.const {parse_idx}\n"));
+    ctx.out.push_str("    call $tag_nil\n");
+    ctx.out.push_str("    call $make_func\n");
+    ctx.out.push_str("    local.set $tmp2\n");
+    ctx.out.push_str("    local.get $tmp\n");
+    ctx.out.push_str(&format!("    i32.const {}\n", rt.parse.0));
+    ctx.out.push_str(&format!("    i32.const {}\n", rt.parse.1));
+    ctx.out.push_str("    call $string_new_from_data\n");
+    ctx.out.push_str("    local.get $tmp2\n");
+    ctx.out.push_str("    call $map_set\n");
+    ctx.out.push_str("    drop\n");
+    ctx.out.push_str("    local.get $tmp\n");
+    Ok(())
+}
+
+fn expr_has_float(expr: &Expr, f64_arrays: &FxHashSet<SymbolId>) -> bool
+{
+    match &expr.kind
+    {
+        ExprKind::Float { .. } => true,
+        ExprKind::Integer { .. } | ExprKind::Unsigned { .. } => false,
+        ExprKind::BinaryOp { left, right, .. } =>
+        {
+            expr_has_float(left, f64_arrays) || expr_has_float(right, f64_arrays)
+        }
+        ExprKind::Index { target, .. } =>
+        {
+            if let ExprKind::Identifier { name, .. } = &target.kind
+            {
+                f64_arrays.contains(name)
+            }
+            else
+            {
+                false
+            }
+        }
+        ExprKind::Call { .. } => true,
+        _ => false,
+    }
+}
+
+fn collect_f64_arrays(expr: &Expr) -> FxHashSet<SymbolId>
+{
+    fn array_is_numeric(expr: &Expr, set: &FxHashSet<SymbolId>) -> bool
+    {
+        match &expr.kind
+        {
+            ExprKind::Float { .. } => true,
+            ExprKind::Integer { .. } | ExprKind::Unsigned { .. } => true,
+            ExprKind::BinaryOp { left, right, .. } =>
+            {
+                array_is_numeric(left, set) || array_is_numeric(right, set)
+            }
+            ExprKind::Index { target, .. } =>
+            {
+                if let ExprKind::Identifier { name, .. } = &target.kind
+                {
+                    set.contains(name)
+                }
+                else
+                {
+                    false
+                }
+            }
+            ExprKind::Call { .. } => true,
+            _ => false,
+        }
+    }
+
+    fn visit(expr: &Expr, set: &mut FxHashSet<SymbolId>, changed: &mut bool)
+    {
+        match &expr.kind
+        {
+            ExprKind::Assignment { name, value, .. } =>
+            {
+                match &value.kind
+                {
+                    ExprKind::ArrayGenerator { generator, .. } =>
+                    {
+                        if array_is_numeric(generator, set)
+                            && set.insert(*name)
+                        {
+                            *changed = true;
+                        }
+                    }
+                    ExprKind::Array(items) =>
+                    {
+                        if !items.is_empty()
+                            && items.iter().all(|e| array_is_numeric(e, set))
+                            && set.insert(*name)
+                        {
+                            *changed = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            ExprKind::IndexAssignment { target, value, .. } =>
+            {
+                if let ExprKind::Identifier { name, .. } = &target.kind
+                {
+                    if expr_has_float(value, set) && set.insert(*name)
+                    {
+                        *changed = true;
+                    }
+                }
+            }
+            ExprKind::BinaryOp { left, right, .. } =>
+            {
+                if let ExprKind::Index { target, .. } = &left.kind
+                {
+                    if let ExprKind::Identifier { name, .. } = &target.kind
+                    {
+                        if expr_has_float(right, set) && set.insert(*name)
+                        {
+                            *changed = true;
+                        }
+                    }
+                }
+                if let ExprKind::Index { target, .. } = &right.kind
+                {
+                    if let ExprKind::Identifier { name, .. } = &target.kind
+                    {
+                        if expr_has_float(left, set) && set.insert(*name)
+                        {
+                            *changed = true;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        match &expr.kind
+        {
+            ExprKind::BinaryOp { left, right, .. } =>
+            {
+                visit(left, set, changed);
+                visit(right, set, changed);
+            }
+            ExprKind::Not(expr)
+            | ExprKind::FilePublic(expr)
+            | ExprKind::FunctionPublic(expr) =>
+            {
+                visit(expr, set, changed);
+            }
+            ExprKind::And { left, right }
+            | ExprKind::AndBool { left, right }
+            | ExprKind::Or { left, right }
+            | ExprKind::OrBool { left, right } =>
+            {
+                visit(left, set, changed);
+                visit(right, set, changed);
+            }
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } =>
+            {
+                visit(condition, set, changed);
+                visit(then_branch, set, changed);
+                if let Some(expr) = else_branch
+                {
+                    visit(expr, set, changed);
+                }
+            }
+            ExprKind::While { condition, body } =>
+            {
+                visit(condition, set, changed);
+                visit(body, set, changed);
+            }
+            ExprKind::Loop { count, body, .. } =>
+            {
+                visit(count, set, changed);
+                visit(body, set, changed);
+            }
+            ExprKind::For { iterable, body, .. } =>
+            {
+                visit(iterable, set, changed);
+                visit(body, set, changed);
+            }
+            ExprKind::Collect { count, into, body, .. } =>
+            {
+                visit(count, set, changed);
+                if let Some(expr) = into
+                {
+                    visit(expr, set, changed);
+                }
+                visit(body, set, changed);
+            }
+            ExprKind::ArrayGenerator { generator, size } =>
+            {
+                visit(generator, set, changed);
+                visit(size, set, changed);
+            }
+            ExprKind::Array(items) =>
+            {
+                for item in items
+                {
+                    visit(item, set, changed);
+                }
+            }
+            ExprKind::Map(entries) =>
+            {
+                for (k, v) in entries
+                {
+                    visit(k, set, changed);
+                    visit(v, set, changed);
+                }
+            }
+            ExprKind::Block(items) =>
+            {
+                for item in items
+                {
+                    visit(item, set, changed);
+                }
+            }
+            ExprKind::Call {
+                function, args, ..
+            } =>
+            {
+                visit(function, set, changed);
+                for arg in args
+                {
+                    visit(arg, set, changed);
+                }
+            }
+            ExprKind::Index { target, index } =>
+            {
+                visit(target, set, changed);
+                visit(index, set, changed);
+            }
+            ExprKind::IndexAssignment { target, index, value } =>
+            {
+                visit(target, set, changed);
+                visit(index, set, changed);
+                visit(value, set, changed);
+            }
+            ExprKind::Assignment { value, .. } =>
+            {
+                visit(value, set, changed);
+            }
+            ExprKind::Slice { target, start, end } =>
+            {
+                visit(target, set, changed);
+                visit(start, set, changed);
+                visit(end, set, changed);
+            }
+            ExprKind::FormatString(parts) =>
+            {
+                for part in parts
+                {
+                    if let crate::ast::FormatPart::Expr { expr, .. } = part
+                    {
+                        visit(expr, set, changed);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut set = FxHashSet::default();
+    loop
+    {
+        let mut changed = false;
+        visit(expr, &mut set, &mut changed);
+        if !changed
+        {
+            break;
+        }
+    }
+    set
+}
+
+fn emit_expr_f64(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
+{
+    match &expr.kind
+    {
+        ExprKind::Float { value, .. } =>
+        {
+            ctx.out.push_str(&format!("    f64.const {value}\n"));
+        }
+        ExprKind::Integer { value, .. } =>
+        {
+            ctx.out.push_str(&format!("    i64.const {value}\n"));
+            ctx.out.push_str("    f64.convert_i64_s\n");
+        }
+        ExprKind::Unsigned { value, .. } =>
+        {
+            ctx.out.push_str(&format!("    i64.const {value}\n"));
+            ctx.out.push_str("    f64.convert_i64_s\n");
+        }
+        ExprKind::Identifier { slot: Some(slot), .. } =>
+        {
+            ctx.out.push_str(&format!("    local.get $r{slot}\n"));
+            ctx.out.push_str("    local.set $tmp\n");
+            ctx.out.push_str("    local.get $tmp\n");
+            ctx.out.push_str("    call $is_ref\n");
+            ctx.out.push_str("    if\n");
+            ctx.out.push_str("      local.get $tmp\n");
+            ctx.out.push_str("      call $ref_get\n");
+            ctx.out.push_str("      local.set $tmp\n");
+            ctx.out.push_str("    end\n");
+            ctx.out.push_str("    local.get $tmp\n");
+            ctx.out.push_str("    call $to_f64\n");
+        }
+        ExprKind::Identifier { slot: None, name } =>
+        {
+            let idx = ctx
+                .global_names
+                .get(name)
+                .cloned()
+                .ok_or_else(|| format!("Unknown global: {}", symbol_name(*name).as_str()))?;
+            ctx.out.push_str(&format!("    i32.const {idx}\n"));
+            ctx.out.push_str("    call $global_get\n");
+            ctx.out.push_str("    local.set $tmp\n");
+            ctx.out.push_str("    local.get $tmp\n");
+            ctx.out.push_str("    call $is_ref\n");
+            ctx.out.push_str("    if\n");
+            ctx.out.push_str("      local.get $tmp\n");
+            ctx.out.push_str("      call $ref_get\n");
+            ctx.out.push_str("      local.set $tmp\n");
+            ctx.out.push_str("    end\n");
+            ctx.out.push_str("    local.get $tmp\n");
+            ctx.out.push_str("    call $to_f64\n");
+        }
+        ExprKind::Index { target, index } =>
+        {
+            if let ExprKind::Identifier { name, .. } = &target.kind
+            {
+                if ctx.f64_arrays.contains(name)
+                {
+                    emit_expr_value(ctx, index)?;
+                    ctx.out.push_str("    call $untag_int\n");
+                    ctx.out.push_str("    i32.wrap_i64\n");
+                    ctx.out.push_str("    local.set $tmp_i32\n");
+                    emit_expr_value(ctx, target)?;
+                    ctx.out.push_str("    local.set $tmp\n");
+                    ctx.out.push_str("    local.get $tmp\n");
+                    ctx.out.push_str("    local.get $tmp_i32\n");
+                    ctx.out.push_str("    call $f64array_get\n");
+                    return Ok(());
+                }
+            }
+            emit_expr_value(ctx, expr)?;
+            ctx.out.push_str("    call $to_f64\n");
+        }
+        ExprKind::BinaryOp { left, op, right } =>
+        {
+            emit_expr_f64(ctx, left)?;
+            emit_expr_f64(ctx, right)?;
+            match op
+            {
+                Op::Add => ctx.out.push_str("    f64.add\n"),
+                Op::Subtract => ctx.out.push_str("    f64.sub\n"),
+                Op::Multiply => ctx.out.push_str("    f64.mul\n"),
+                Op::Divide => ctx.out.push_str("    f64.div\n"),
+                _ => return Err("WAT dump does not support this f64 op".to_string()),
+            }
+        }
+        _ =>
+        {
+            emit_expr_value(ctx, expr)?;
+            ctx.out.push_str("    call $to_f64\n");
+        }
+    }
+    Ok(())
 }
 
 fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
@@ -8395,95 +9075,6 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
                 ExprKind::Identifier { name, .. } => *name,
                 _ => unreachable!(),
             };
-            if name == intern::intern_symbol("std")
-            {
-                let rt = ctx.runtime_strings.ok_or_else(|| {
-                    "WAT dump missing runtime strings for std".to_string()
-                })?;
-                let sqrt_idx = ctx
-                    .func_indices
-                    .get("builtin_float64_sqrt")
-                    .cloned()
-                    .unwrap_or(0);
-                let parse_idx = ctx
-                    .func_indices
-                    .get("builtin_int64_parse")
-                    .cloned()
-                    .unwrap_or(0);
-                ctx.out.push_str("    i32.const 2\n");
-                ctx.out.push_str("    call $map_new\n");
-                ctx.out.push_str("    local.set $tmp\n");
-                ctx.out.push_str("    i32.const 1\n");
-                ctx.out.push_str("    call $map_new\n");
-                ctx.out.push_str("    local.set $tmp2\n");
-                ctx.out.push_str("    i32.const 1\n");
-                ctx.out.push_str("    call $map_new\n");
-                ctx.out.push_str("    local.set $tmp3\n");
-                ctx.out.push_str(&format!("    i32.const {sqrt_idx}\n"));
-                ctx.out.push_str("    call $tag_nil\n");
-                ctx.out.push_str("    call $make_func\n");
-                ctx.out.push_str("    local.set $tmp4\n");
-                ctx.out.push_str("    local.get $tmp2\n");
-                ctx.out.push_str(&format!("    i32.const {}\n", rt.sqrt.0));
-                ctx.out.push_str(&format!("    i32.const {}\n", rt.sqrt.1));
-                ctx.out.push_str("    call $string_new_from_data\n");
-                ctx.out.push_str("    local.get $tmp4\n");
-                ctx.out.push_str("    call $map_set\n");
-                ctx.out.push_str("    drop\n");
-                ctx.out.push_str(&format!("    i32.const {parse_idx}\n"));
-                ctx.out.push_str("    call $tag_nil\n");
-                ctx.out.push_str("    call $make_func\n");
-                ctx.out.push_str("    local.set $tmp4\n");
-                ctx.out.push_str("    local.get $tmp3\n");
-                ctx.out.push_str(&format!("    i32.const {}\n", rt.parse.0));
-                ctx.out.push_str(&format!("    i32.const {}\n", rt.parse.1));
-                ctx.out.push_str("    call $string_new_from_data\n");
-                ctx.out.push_str("    local.get $tmp4\n");
-                ctx.out.push_str("    call $map_set\n");
-                ctx.out.push_str("    drop\n");
-                ctx.out.push_str("    local.get $tmp\n");
-                ctx.out.push_str(&format!(
-                    "    i32.const {}\n",
-                    rt.float64.0
-                ));
-                ctx.out.push_str(&format!(
-                    "    i32.const {}\n",
-                    rt.float64.1
-                ));
-                ctx.out.push_str("    call $string_new_from_data\n");
-                ctx.out.push_str("    local.get $tmp2\n");
-                ctx.out.push_str("    call $map_set\n");
-                ctx.out.push_str("    drop\n");
-                ctx.out.push_str("    local.get $tmp\n");
-                ctx.out.push_str(&format!("    i32.const {}\n", rt.int64.0));
-                ctx.out.push_str(&format!("    i32.const {}\n", rt.int64.1));
-                ctx.out.push_str("    call $string_new_from_data\n");
-                ctx.out.push_str("    local.get $tmp3\n");
-                ctx.out.push_str("    call $map_set\n");
-                ctx.out.push_str("    drop\n");
-                ctx.out.push_str("    local.get $tmp\n");
-                return Ok(());
-            }
-            if name == intern::intern_symbol("program")
-            {
-                let rt = ctx.runtime_strings.ok_or_else(|| {
-                    "WAT dump missing runtime strings for program".to_string()
-                })?;
-                ctx.out.push_str("    i32.const 1\n");
-                ctx.out.push_str("    call $map_new\n");
-                ctx.out.push_str("    local.set $tmp\n");
-                ctx.out.push_str("    call $args_to_array\n");
-                ctx.out.push_str("    local.set $tmp2\n");
-                ctx.out.push_str("    local.get $tmp\n");
-                ctx.out.push_str(&format!("    i32.const {}\n", rt.args.0));
-                ctx.out.push_str(&format!("    i32.const {}\n", rt.args.1));
-                ctx.out.push_str("    call $string_new_from_data\n");
-                ctx.out.push_str("    local.get $tmp2\n");
-                ctx.out.push_str("    call $map_set\n");
-                ctx.out.push_str("    drop\n");
-                ctx.out.push_str("    local.get $tmp\n");
-                return Ok(());
-            }
             if let Some(idx) = ctx.current_captures.get(&name)
             {
                 ctx.out.push_str("    local.get $env\n");
@@ -8695,6 +9286,10 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
             ..
         } =>
         {
+            ctx.out.push_str("    local.get $loop_index\n");
+            ctx.out.push_str("    call $args_push\n");
+            ctx.out.push_str("    local.get $loop_limit\n");
+            ctx.out.push_str("    call $args_push\n");
             emit_expr_value(ctx, iterable)?;
             ctx.out.push_str("    local.set $tmp\n");
             ctx.out.push_str("    local.get $tmp\n");
@@ -8734,29 +9329,33 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
             ctx.out.push_str("    i32.const 4\n");
             ctx.out.push_str("    i32.add\n");
             ctx.out.push_str("    i32.load\n");
-            ctx.out.push_str("    local.set $tmp_i32\n");
+            ctx.out.push_str("    local.set $loop_limit\n");
             ctx.out.push_str("    i32.const 0\n");
-            ctx.out.push_str("    local.set $tmp_ptr\n");
+            ctx.out.push_str("    local.set $loop_index\n");
             ctx.out.push_str("    block $for_exit\n");
             ctx.out.push_str("      loop $for_loop\n");
-            ctx.out.push_str("        local.get $tmp_ptr\n");
-            ctx.out.push_str("        local.get $tmp_i32\n");
+            ctx.out.push_str("        local.get $loop_index\n");
+            ctx.out.push_str("        local.get $loop_limit\n");
             ctx.out.push_str("        i32.ge_u\n");
             ctx.out.push_str("        br_if $for_exit\n");
             ctx.out.push_str("        local.get $tmp\n");
-            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        local.get $loop_index\n");
             ctx.out.push_str("        call $array_get\n");
             ctx.out.push_str(&format!("        local.set $r{var_slot}\n"));
             emit_expr_value(ctx, body)?;
             ctx.out.push_str("        drop\n");
-            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        local.get $loop_index\n");
             ctx.out.push_str("        i32.const 1\n");
             ctx.out.push_str("        i32.add\n");
-            ctx.out.push_str("        local.set $tmp_ptr\n");
+            ctx.out.push_str("        local.set $loop_index\n");
             ctx.out.push_str("        br $for_loop\n");
             ctx.out.push_str("      end\n");
             ctx.out.push_str("    end\n");
             ctx.out.push_str("    call $tag_nil\n");
+            ctx.out.push_str("    call $args_pop\n");
+            ctx.out.push_str("    local.set $loop_limit\n");
+            ctx.out.push_str("    call $args_pop\n");
+            ctx.out.push_str("    local.set $loop_index\n");
         }
         ExprKind::For { .. } =>
         {
@@ -8769,32 +9368,40 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
             ..
         } =>
         {
+            ctx.out.push_str("    local.get $loop_index\n");
+            ctx.out.push_str("    call $args_push\n");
+            ctx.out.push_str("    local.get $loop_limit\n");
+            ctx.out.push_str("    call $args_push\n");
             emit_expr_value(ctx, count)?;
             ctx.out.push_str("    call $untag_int\n");
             ctx.out.push_str("    i32.wrap_i64\n");
-            ctx.out.push_str("    local.set $tmp_i32\n");
+            ctx.out.push_str("    local.set $loop_limit\n");
             ctx.out.push_str("    i32.const 0\n");
-            ctx.out.push_str("    local.set $tmp_ptr\n");
+            ctx.out.push_str("    local.set $loop_index\n");
             ctx.out.push_str("    block $loop_exit\n");
             ctx.out.push_str("      loop $loop_body\n");
-            ctx.out.push_str("        local.get $tmp_ptr\n");
-            ctx.out.push_str("        local.get $tmp_i32\n");
+            ctx.out.push_str("        local.get $loop_index\n");
+            ctx.out.push_str("        local.get $loop_limit\n");
             ctx.out.push_str("        i32.ge_u\n");
             ctx.out.push_str("        br_if $loop_exit\n");
-            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        local.get $loop_index\n");
             ctx.out.push_str("        i64.extend_i32_u\n");
             ctx.out.push_str("        call $tag_int\n");
             ctx.out.push_str(&format!("        local.set $r{var_slot}\n"));
             emit_expr_value(ctx, body)?;
             ctx.out.push_str("        drop\n");
-            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        local.get $loop_index\n");
             ctx.out.push_str("        i32.const 1\n");
             ctx.out.push_str("        i32.add\n");
-            ctx.out.push_str("        local.set $tmp_ptr\n");
+            ctx.out.push_str("        local.set $loop_index\n");
             ctx.out.push_str("        br $loop_body\n");
             ctx.out.push_str("      end\n");
             ctx.out.push_str("    end\n");
             ctx.out.push_str("    call $tag_nil\n");
+            ctx.out.push_str("    call $args_pop\n");
+            ctx.out.push_str("    local.set $loop_limit\n");
+            ctx.out.push_str("    call $args_pop\n");
+            ctx.out.push_str("    local.set $loop_index\n");
         }
         ExprKind::Loop { .. } =>
         {
@@ -8808,40 +9415,48 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
             ..
         } =>
         {
+            ctx.out.push_str("    local.get $loop_index\n");
+            ctx.out.push_str("    call $args_push\n");
+            ctx.out.push_str("    local.get $loop_limit\n");
+            ctx.out.push_str("    call $args_push\n");
             emit_expr_value(ctx, count)?;
             ctx.out.push_str("    call $untag_int\n");
             ctx.out.push_str("    i32.wrap_i64\n");
-            ctx.out.push_str("    local.set $tmp_i32\n");
-            ctx.out.push_str("    local.get $tmp_i32\n");
+            ctx.out.push_str("    local.set $loop_limit\n");
+            ctx.out.push_str("    local.get $loop_limit\n");
             ctx.out.push_str("    call $array_new\n");
             ctx.out.push_str("    local.set $tmp\n");
             ctx.out.push_str("    i32.const 0\n");
-            ctx.out.push_str("    local.set $tmp_ptr\n");
+            ctx.out.push_str("    local.set $loop_index\n");
             ctx.out.push_str("    block $collect_exit\n");
             ctx.out.push_str("      loop $collect_loop\n");
-            ctx.out.push_str("        local.get $tmp_ptr\n");
-            ctx.out.push_str("        local.get $tmp_i32\n");
+            ctx.out.push_str("        local.get $loop_index\n");
+            ctx.out.push_str("        local.get $loop_limit\n");
             ctx.out.push_str("        i32.ge_u\n");
             ctx.out.push_str("        br_if $collect_exit\n");
-            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        local.get $loop_index\n");
             ctx.out.push_str("        i64.extend_i32_u\n");
             ctx.out.push_str("        call $tag_int\n");
             ctx.out.push_str(&format!("        local.set $r{var_slot}\n"));
             emit_expr_value(ctx, body)?;
             ctx.out.push_str("        local.set $tmp2\n");
             ctx.out.push_str("        local.get $tmp\n");
-            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        local.get $loop_index\n");
             ctx.out.push_str("        local.get $tmp2\n");
             ctx.out.push_str("        call $array_set\n");
             ctx.out.push_str("        drop\n");
-            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        local.get $loop_index\n");
             ctx.out.push_str("        i32.const 1\n");
             ctx.out.push_str("        i32.add\n");
-            ctx.out.push_str("        local.set $tmp_ptr\n");
+            ctx.out.push_str("        local.set $loop_index\n");
             ctx.out.push_str("        br $collect_loop\n");
             ctx.out.push_str("      end\n");
             ctx.out.push_str("    end\n");
             ctx.out.push_str("    local.get $tmp\n");
+            ctx.out.push_str("    call $args_pop\n");
+            ctx.out.push_str("    local.set $loop_limit\n");
+            ctx.out.push_str("    call $args_pop\n");
+            ctx.out.push_str("    local.set $loop_index\n");
         }
         ExprKind::Collect {
             count,
@@ -8851,10 +9466,14 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
             ..
         } =>
         {
+            ctx.out.push_str("    local.get $loop_index\n");
+            ctx.out.push_str("    call $args_push\n");
+            ctx.out.push_str("    local.get $loop_limit\n");
+            ctx.out.push_str("    call $args_push\n");
             emit_expr_value(ctx, count)?;
             ctx.out.push_str("    call $untag_int\n");
             ctx.out.push_str("    i32.wrap_i64\n");
-            ctx.out.push_str("    local.set $tmp_i32\n");
+            ctx.out.push_str("    local.set $loop_limit\n");
             emit_expr_value(ctx, into)?;
             ctx.out.push_str("    local.set $tmp\n");
             ctx.out.push_str("    local.get $tmp\n");
@@ -8874,38 +9493,42 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
             ctx.out.push_str("    end\n");
             ctx.out.push_str("    local.get $tmp\n");
             ctx.out.push_str("    call $array_len\n");
-            ctx.out.push_str("    local.get $tmp_i32\n");
+            ctx.out.push_str("    local.get $loop_limit\n");
             ctx.out.push_str("    i32.ne\n");
             ctx.out.push_str("    if\n");
             ctx.out.push_str("      unreachable\n");
             ctx.out.push_str("    end\n");
             ctx.out.push_str("    i32.const 0\n");
-            ctx.out.push_str("    local.set $tmp_ptr\n");
+            ctx.out.push_str("    local.set $loop_index\n");
             ctx.out.push_str("    block $collect_into_exit\n");
             ctx.out.push_str("      loop $collect_into_loop\n");
-            ctx.out.push_str("        local.get $tmp_ptr\n");
-            ctx.out.push_str("        local.get $tmp_i32\n");
+            ctx.out.push_str("        local.get $loop_index\n");
+            ctx.out.push_str("        local.get $loop_limit\n");
             ctx.out.push_str("        i32.ge_u\n");
             ctx.out.push_str("        br_if $collect_into_exit\n");
-            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        local.get $loop_index\n");
             ctx.out.push_str("        i64.extend_i32_u\n");
             ctx.out.push_str("        call $tag_int\n");
             ctx.out.push_str(&format!("        local.set $r{var_slot}\n"));
             emit_expr_value(ctx, body)?;
             ctx.out.push_str("        local.set $tmp2\n");
             ctx.out.push_str("        local.get $tmp\n");
-            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        local.get $loop_index\n");
             ctx.out.push_str("        local.get $tmp2\n");
             ctx.out.push_str("        call $array_set\n");
             ctx.out.push_str("        drop\n");
-            ctx.out.push_str("        local.get $tmp_ptr\n");
+            ctx.out.push_str("        local.get $loop_index\n");
             ctx.out.push_str("        i32.const 1\n");
             ctx.out.push_str("        i32.add\n");
-            ctx.out.push_str("        local.set $tmp_ptr\n");
+            ctx.out.push_str("        local.set $loop_index\n");
             ctx.out.push_str("        br $collect_into_loop\n");
             ctx.out.push_str("      end\n");
             ctx.out.push_str("    end\n");
             ctx.out.push_str("    local.get $tmp\n");
+            ctx.out.push_str("    call $args_pop\n");
+            ctx.out.push_str("    local.set $loop_limit\n");
+            ctx.out.push_str("    call $args_pop\n");
+            ctx.out.push_str("    local.set $loop_index\n");
         }
         ExprKind::Collect { .. } =>
         {
@@ -8913,60 +9536,93 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
         }
         ExprKind::ArrayGenerator { generator, size } =>
         {
+            let gen_is_numeric = matches!(
+                generator.kind,
+                ExprKind::Float { .. } | ExprKind::Integer { .. } | ExprKind::Unsigned { .. }
+            ) || expr_has_float(generator, &ctx.f64_arrays);
+            ctx.out.push_str("    local.get $loop_index\n");
+            ctx.out.push_str("    call $args_push\n");
+            ctx.out.push_str("    local.get $loop_limit\n");
+            ctx.out.push_str("    call $args_push\n");
             emit_expr_value(ctx, size)?;
             ctx.out.push_str("    call $untag_int\n");
             ctx.out.push_str("    i32.wrap_i64\n");
-            ctx.out.push_str("    local.set $tmp_i32\n");
-            emit_expr_value(ctx, generator)?;
-            ctx.out.push_str("    local.set $tmp3\n");
-            ctx.out.push_str("    local.get $tmp_i32\n");
-            ctx.out.push_str("    call $array_new\n");
+            ctx.out.push_str("    local.set $loop_limit\n");
+            if !gen_is_numeric
+            {
+                emit_expr_value(ctx, generator)?;
+                ctx.out.push_str("    local.set $tmp3\n");
+            }
+            ctx.out.push_str("    local.get $loop_limit\n");
+            if gen_is_numeric
+            {
+                ctx.out.push_str("    call $f64array_new\n");
+            }
+            else
+            {
+                ctx.out.push_str("    call $array_new\n");
+            }
             ctx.out.push_str("    local.set $tmp\n");
             ctx.out.push_str("    i32.const 0\n");
-            ctx.out.push_str("    local.set $tmp_ptr\n");
+            ctx.out.push_str("    local.set $loop_index\n");
             ctx.out.push_str("    block $gen_exit\n");
             ctx.out.push_str("      loop $gen_loop\n");
-            ctx.out.push_str("        local.get $tmp_ptr\n");
-            ctx.out.push_str("        local.get $tmp_i32\n");
+            ctx.out.push_str("        local.get $loop_index\n");
+            ctx.out.push_str("        local.get $loop_limit\n");
             ctx.out.push_str("        i32.ge_u\n");
             ctx.out.push_str("        br_if $gen_exit\n");
-            ctx.out.push_str("        local.get $tmp3\n");
-            ctx.out.push_str("        call $is_func\n");
-            ctx.out.push_str("        if\n");
-            ctx.out.push_str("          i32.const 8\n");
-            ctx.out.push_str("          call $alloc\n");
-            ctx.out.push_str("          local.set $tmp_ptr2\n");
-            ctx.out.push_str("          local.get $tmp_ptr2\n");
-            ctx.out.push_str("          local.get $tmp_ptr\n");
-            ctx.out.push_str("          i64.extend_i32_u\n");
-            ctx.out.push_str("          call $tag_int\n");
-            ctx.out.push_str("          i64.store\n");
-            ctx.out.push_str("          local.get $tmp3\n");
-            ctx.out.push_str("          local.get $tmp_ptr2\n");
-            ctx.out.push_str("          i32.const 1\n");
-            ctx.out.push_str("          call $call_func\n");
-            ctx.out.push_str("          local.set $tmp2\n");
-            ctx.out.push_str("        end\n");
-            ctx.out.push_str("        local.get $tmp3\n");
-            ctx.out.push_str("        call $is_func\n");
-            ctx.out.push_str("        i32.eqz\n");
-            ctx.out.push_str("        if\n");
-            ctx.out.push_str("          local.get $tmp3\n");
-            ctx.out.push_str("          local.set $tmp2\n");
-            ctx.out.push_str("        end\n");
-            ctx.out.push_str("        local.get $tmp\n");
-            ctx.out.push_str("        local.get $tmp_ptr\n");
-            ctx.out.push_str("        local.get $tmp2\n");
-            ctx.out.push_str("        call $array_set\n");
-            ctx.out.push_str("        drop\n");
-            ctx.out.push_str("        local.get $tmp_ptr\n");
+            if gen_is_numeric
+            {
+                ctx.out.push_str("        local.get $tmp\n");
+                ctx.out.push_str("        local.get $loop_index\n");
+                emit_expr_f64(ctx, generator)?;
+                ctx.out.push_str("        call $f64array_set\n");
+                ctx.out.push_str("        drop\n");
+            }
+            else
+            {
+                ctx.out.push_str("        local.get $tmp3\n");
+                ctx.out.push_str("        call $is_func\n");
+                ctx.out.push_str("        if\n");
+                ctx.out.push_str("          i32.const 8\n");
+                ctx.out.push_str("          call $alloc\n");
+                ctx.out.push_str("          local.set $tmp_ptr2\n");
+                ctx.out.push_str("          local.get $tmp_ptr2\n");
+                ctx.out.push_str("          local.get $tmp_ptr\n");
+                ctx.out.push_str("          i64.extend_i32_u\n");
+                ctx.out.push_str("          call $tag_int\n");
+                ctx.out.push_str("          i64.store\n");
+                ctx.out.push_str("          local.get $tmp3\n");
+                ctx.out.push_str("          local.get $tmp_ptr2\n");
+                ctx.out.push_str("          i32.const 1\n");
+                ctx.out.push_str("          call $call_func\n");
+                ctx.out.push_str("          local.set $tmp2\n");
+                ctx.out.push_str("        end\n");
+                ctx.out.push_str("        local.get $tmp3\n");
+                ctx.out.push_str("        call $is_func\n");
+                ctx.out.push_str("        i32.eqz\n");
+                ctx.out.push_str("        if\n");
+                ctx.out.push_str("          local.get $tmp3\n");
+                ctx.out.push_str("          local.set $tmp2\n");
+                ctx.out.push_str("        end\n");
+                ctx.out.push_str("        local.get $tmp\n");
+                ctx.out.push_str("        local.get $loop_index\n");
+                ctx.out.push_str("        local.get $tmp2\n");
+                ctx.out.push_str("        call $array_set\n");
+                ctx.out.push_str("        drop\n");
+            }
+            ctx.out.push_str("        local.get $loop_index\n");
             ctx.out.push_str("        i32.const 1\n");
             ctx.out.push_str("        i32.add\n");
-            ctx.out.push_str("        local.set $tmp_ptr\n");
+            ctx.out.push_str("        local.set $loop_index\n");
             ctx.out.push_str("        br $gen_loop\n");
             ctx.out.push_str("      end\n");
             ctx.out.push_str("    end\n");
             ctx.out.push_str("    local.get $tmp\n");
+            ctx.out.push_str("    call $args_pop\n");
+            ctx.out.push_str("    local.set $loop_limit\n");
+            ctx.out.push_str("    call $args_pop\n");
+            ctx.out.push_str("    local.set $loop_index\n");
         }
         ExprKind::Block(items) =>
         {
@@ -9000,20 +9656,47 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
         }
         ExprKind::Array(elements) =>
         {
+            let is_numeric = !elements.is_empty()
+                && elements.iter().all(|e| {
+                    matches!(
+                        e.kind,
+                        ExprKind::Float { .. }
+                            | ExprKind::Integer { .. }
+                            | ExprKind::Unsigned { .. }
+                    ) || expr_has_float(e, &ctx.f64_arrays)
+                });
             ctx.out.push_str(&format!(
                 "    i32.const {}\n",
                 elements.len()
             ));
-            ctx.out.push_str("    call $array_new\n");
+            if is_numeric
+            {
+                ctx.out.push_str("    call $f64array_new\n");
+            }
+            else
+            {
+                ctx.out.push_str("    call $array_new\n");
+            }
             ctx.out.push_str("    local.set $tmp\n");
             for (idx, value) in elements.iter().enumerate()
             {
-                ctx.out.push_str("    local.get $tmp\n");
-                ctx.out.push_str(&format!("    i64.const {idx}\n"));
-                ctx.out.push_str("    call $tag_int\n");
-                emit_expr_value(ctx, value)?;
-                ctx.out.push_str("    call $index_set\n");
-                ctx.out.push_str("    drop\n");
+                if is_numeric
+                {
+                    ctx.out.push_str("    local.get $tmp\n");
+                    ctx.out.push_str(&format!("    i32.const {idx}\n"));
+                    emit_expr_f64(ctx, value)?;
+                    ctx.out.push_str("    call $f64array_set\n");
+                    ctx.out.push_str("    drop\n");
+                }
+                else
+                {
+                    ctx.out.push_str("    local.get $tmp\n");
+                    ctx.out.push_str(&format!("    i64.const {idx}\n"));
+                    ctx.out.push_str("    call $tag_int\n");
+                    emit_expr_value(ctx, value)?;
+                    ctx.out.push_str("    call $index_set\n");
+                    ctx.out.push_str("    drop\n");
+                }
             }
             ctx.out.push_str("    local.get $tmp\n");
         }
@@ -9106,8 +9789,45 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
         }
         ExprKind::Index { target, index } =>
         {
+            if let ExprKind::Identifier { slot: None, name } = &target.kind
+            {
+                if let ExprKind::String(text) = &index.kind
+                {
+                    if *name == intern::intern_symbol("program") && text.as_str() == "args"
+                    {
+                        ctx.out.push_str("    call $args_to_array\n");
+                        return Ok(());
+                    }
+                    if *name == intern::intern_symbol("std")
+                    {
+                        if text.as_str() == "Float64"
+                        {
+                            emit_wat_float64_map(ctx)?;
+                            return Ok(());
+                        }
+                        if text.as_str() == "Int64"
+                        {
+                            emit_wat_int64_map(ctx)?;
+                            return Ok(());
+                        }
+                    }
+                }
+            }
             emit_expr_value(ctx, target)?;
-            emit_expr_value(ctx, index)?;
+            if let ExprKind::Identifier { slot: None, name } = &index.kind
+            {
+                let text = symbol_name(*name);
+                let bytes = text.as_bytes();
+                let offset = ctx.push_data(bytes);
+                ctx.out.push_str(&format!("    i32.const {offset}\n"));
+                ctx.out
+                    .push_str(&format!("    i32.const {}\n", bytes.len()));
+                ctx.out.push_str("    call $string_new_from_data\n");
+            }
+            else
+            {
+                emit_expr_value(ctx, index)?;
+            }
             ctx.out.push_str("    call $index_get\n");
         }
         ExprKind::IndexAssignment {
@@ -9116,6 +9836,24 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
             value,
         } =>
         {
+            if let ExprKind::Identifier { name, .. } = &target.kind
+            {
+                if ctx.f64_arrays.contains(name)
+                {
+                    emit_expr_value(ctx, index)?;
+                    ctx.out.push_str("    call $untag_int\n");
+                    ctx.out.push_str("    i32.wrap_i64\n");
+                    ctx.out.push_str("    local.set $tmp_i32\n");
+                    emit_expr_value(ctx, target)?;
+                    ctx.out.push_str("    local.set $tmp\n");
+                    ctx.out.push_str("    local.get $tmp\n");
+                    ctx.out.push_str("    local.get $tmp_i32\n");
+                    emit_expr_f64(ctx, value)?;
+                    ctx.out.push_str("    call $f64array_set\n");
+                    ctx.out.push_str("    call $box_f64\n");
+                    return Ok(());
+                }
+            }
             emit_expr_value(ctx, target)?;
             emit_expr_value(ctx, index)?;
             emit_expr_value(ctx, value)?;
@@ -9132,30 +9870,102 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
             {
                 return Err("WAT dump does not support call blocks yet".to_string());
             }
+            if let ExprKind::Index { target, index } = &function.kind
+            {
+                let target_name = if let ExprKind::Identifier { name, .. } = &target.kind
+                {
+                    Some(*name)
+                }
+                else
+                {
+                    None
+                };
+                let index_name = match &index.kind
+                {
+                    ExprKind::Identifier { slot: None, name } =>
+                    {
+                        Some(symbol_name(*name).as_str().to_string())
+                    }
+                    ExprKind::String(text) => Some(text.as_str().to_string()),
+                    _ => None,
+                };
+                if let (Some(target_name), Some(index_name)) = (target_name, index_name)
+                {
+                    let direct_builtin = if target_name == intern::intern_symbol("Float64")
+                        && index_name.as_str() == "sqrt"
+                    {
+                        Some("builtin_float64_sqrt")
+                    }
+                    else if target_name == intern::intern_symbol("Int64")
+                        && index_name.as_str() == "parse"
+                    {
+                        Some("builtin_int64_parse")
+                    }
+                    else
+                    {
+                        None
+                    };
+                    if let Some(builtin) = direct_builtin
+                    {
+                        ctx.out.push_str("    local.get $args_base\n");
+                        ctx.out.push_str("    call $args_push\n");
+                        ctx.out
+                            .push_str(&format!("    i32.const {}\n", args.len() * 8));
+                        ctx.out.push_str("    call $call_args_alloc\n");
+                        ctx.out.push_str("    local.set $args_base\n");
+                        for (idx, arg) in args.iter().enumerate()
+                        {
+                            emit_expr_value(ctx, arg)?;
+                            ctx.out.push_str("    local.set $tmp2\n");
+                            ctx.out.push_str("    local.get $args_base\n");
+                            ctx.out
+                                .push_str(&format!("    i32.const {}\n", idx * 8));
+                            ctx.out.push_str("    i32.add\n");
+                            ctx.out.push_str("    local.get $tmp2\n");
+                            ctx.out.push_str("    i64.store\n");
+                        }
+                        ctx.out.push_str("    call $tag_nil\n");
+                        ctx.out.push_str("    local.get $args_base\n");
+                        ctx.out
+                            .push_str(&format!("    i32.const {}\n", args.len()));
+                        ctx.out
+                            .push_str(&format!("    call ${builtin}\n"));
+                        ctx.out.push_str("    local.set $tmp2\n");
+                        ctx.out.push_str("    call $args_pop\n");
+                        ctx.out.push_str("    local.set $args_base\n");
+                        ctx.out.push_str("    local.get $tmp2\n");
+                        return Ok(());
+                    }
+                }
+            }
+            ctx.out.push_str("    local.get $args_base\n");
+            ctx.out.push_str("    call $args_push\n");
             ctx.out
                 .push_str(&format!("    i32.const {}\n", args.len() * 8));
-            ctx.out.push_str("    call $alloc\n");
-            ctx.out.push_str("    local.set $tmp_ptr\n");
+            ctx.out.push_str("    call $call_args_alloc\n");
+            ctx.out.push_str("    local.set $args_base\n");
             for (idx, arg) in args.iter().enumerate()
             {
-                ctx.out.push_str("    local.get $tmp_ptr\n");
+                emit_expr_value(ctx, arg)?;
+                ctx.out.push_str("    local.set $tmp2\n");
+                ctx.out.push_str("    local.get $args_base\n");
                 ctx.out
                     .push_str(&format!("    i32.const {}\n", idx * 8));
                 ctx.out.push_str("    i32.add\n");
-                ctx.out.push_str("    local.set $tmp_ptr2\n");
-                emit_expr_value(ctx, arg)?;
-                ctx.out.push_str("    local.set $tmp2\n");
-                ctx.out.push_str("    local.get $tmp_ptr2\n");
                 ctx.out.push_str("    local.get $tmp2\n");
                 ctx.out.push_str("    i64.store\n");
             }
             emit_expr_value(ctx, function)?;
             ctx.out.push_str("    local.set $tmp\n");
             ctx.out.push_str("    local.get $tmp\n");
-            ctx.out.push_str("    local.get $tmp_ptr\n");
+            ctx.out.push_str("    local.get $args_base\n");
             ctx.out
                 .push_str(&format!("    i32.const {}\n", args.len()));
             ctx.out.push_str("    call $call_func\n");
+            ctx.out.push_str("    local.set $tmp2\n");
+            ctx.out.push_str("    call $args_pop\n");
+            ctx.out.push_str("    local.set $args_base\n");
+            ctx.out.push_str("    local.get $tmp2\n");
         }
         ExprKind::FunctionDef { name, .. } =>
         {
@@ -9896,6 +10706,7 @@ fn emit_function_value(
     captures: &[SymbolId],
     locals: &FxHashMap<SymbolId, usize>,
     body: &Expr,
+    emit_wasi_prelude: bool,
 ) -> Result<(), String>
 {
     let mut capture_map = FxHashMap::default();
@@ -9924,7 +10735,10 @@ fn emit_function_value(
     ctx.out.push_str("    (local $tmp4 i64)\n");
     ctx.out.push_str("    (local $tmp_ptr i32)\n");
     ctx.out.push_str("    (local $tmp_ptr2 i32)\n");
+    ctx.out.push_str("    (local $args_base i32)\n");
     ctx.out.push_str("    (local $tmp_i32 i32)\n");
+    ctx.out.push_str("    (local $loop_index i32)\n");
+    ctx.out.push_str("    (local $loop_limit i32)\n");
     if param_count > 0
     {
         for idx in 0..param_count
@@ -9936,7 +10750,36 @@ fn emit_function_value(
             ctx.out.push_str(&format!("    local.set $r{idx}\n"));
         }
     }
+    let old_f64_arrays = std::mem::replace(&mut ctx.f64_arrays, collect_f64_arrays(body));
+    if emit_wasi_prelude
+    {
+        let std_idx = ctx
+            .global_names
+            .get(&intern::intern_symbol("std"))
+            .cloned();
+        if let Some(idx) = std_idx
+        {
+            emit_wat_std_map(ctx)?;
+            ctx.out.push_str(&format!("    i32.const {idx}\n"));
+            ctx.out.push_str("    local.get $tmp\n");
+            ctx.out.push_str("    call $global_set\n");
+            ctx.out.push_str("    drop\n");
+        }
+        let program_idx = ctx
+            .global_names
+            .get(&intern::intern_symbol("program"))
+            .cloned();
+        if let Some(idx) = program_idx
+        {
+            emit_wat_program_map(ctx)?;
+            ctx.out.push_str(&format!("    i32.const {idx}\n"));
+            ctx.out.push_str("    local.get $tmp\n");
+            ctx.out.push_str("    call $global_set\n");
+            ctx.out.push_str("    drop\n");
+        }
+    }
     emit_expr_value(ctx, body)?;
+    ctx.f64_arrays = old_f64_arrays;
     ctx.out.push_str("    return\n");
     ctx.out.push_str("  )\n");
     if let Some(name) = export_name
@@ -10104,6 +10947,7 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
         &[],
         &empty_locals,
         ast,
+        wasi == WasiTarget::Wasip1,
     )
     {
         Ok(()) =>
@@ -10191,6 +11035,7 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
             &captures,
             &slot_map,
             &resolved_body,
+            false,
         )
         {
             Ok(()) => emitted += 1,
@@ -10260,6 +11105,7 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
             &captures,
             &slot_map,
             &resolved_body,
+            false,
         )
         {
             Ok(()) => emitted += 1,
@@ -10290,6 +11136,9 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
         ctx.out
             .push_str(&format!("    i32.const {}\n", globals.len()));
         ctx.out.push_str("    call $globals_init\n");
+        ctx.out.push_str("    i32.const 1024\n");
+        ctx.out.push_str("    call $alloc\n");
+        ctx.out.push_str("    global.set $args_sp\n");
         for (sym, internal) in ctx.builtin_names.iter()
         {
             if let Some(idx) = ctx.global_names.get(sym)

@@ -9621,6 +9621,7 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
 
     let local_count = local_count_for_expr(ast);
     let empty_locals = FxHashMap::default();
+    let out_len_before_main = ctx.out.len();
     match emit_function_value(
         &mut ctx,
         "main",
@@ -9640,6 +9641,7 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
         Err(err) =>
         {
             last_err = Some(err.clone());
+            ctx.out.truncate(out_len_before_main);
             ctx.out
                 .push_str(&format!("  ;; top-level unsupported: {err}\n"));
         }
@@ -9652,12 +9654,15 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
         {
             elems[*idx as usize] = name.clone();
         }
-        ctx.out.push_str("  (table $functable funcref (elem");
+        let table_len = elems.len();
+        ctx.out
+            .push_str(&format!("  (table $functable {table_len} funcref)\n"));
+        ctx.out.push_str("  (elem (i32.const 0)");
         for name in &elems
         {
             ctx.out.push_str(&format!(" ${name}"));
         }
-        ctx.out.push_str("))\n");
+        ctx.out.push_str(")\n");
     }
 
     for func in functions.iter().cloned()
@@ -9703,6 +9708,7 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
             None
         };
         let local_count = slot_names.len().max(func.params.len());
+        let out_len_before_func = ctx.out.len();
         match emit_function_value(
             &mut ctx,
             &internal,
@@ -9718,6 +9724,18 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
             Err(err) =>
             {
                 last_err = Some(err.clone());
+                ctx.out.truncate(out_len_before_func);
+                ctx.out.push_str(&format!(
+                    "  (func ${internal} (param $env i64) (param $args_ptr i32) (param $argc i32) (result i64)\n"
+                ));
+                ctx.out.push_str("    call $tag_nil\n");
+                ctx.out.push_str("  )\n");
+                if let Some(export_name) = export_name.as_deref()
+                {
+                    ctx.out.push_str(&format!(
+                        "  (export \"{export_name}\" (func ${internal}))\n"
+                    ));
+                }
                 ctx.out.push_str(&format!(
                     "  ;; skipped function at line {} ({err})\n",
                     func.line
@@ -9759,6 +9777,7 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
             .get(&anon.key)
             .cloned()
             .unwrap_or_default();
+        let out_len_before_anon = ctx.out.len();
         match emit_function_value(
             &mut ctx,
             &internal,
@@ -9774,6 +9793,12 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
             Err(err) =>
             {
                 last_err = Some(err.clone());
+                ctx.out.truncate(out_len_before_anon);
+                ctx.out.push_str(&format!(
+                    "  (func ${internal} (param $env i64) (param $args_ptr i32) (param $argc i32) (result i64)\n"
+                ));
+                ctx.out.push_str("    call $tag_nil\n");
+                ctx.out.push_str("  )\n");
                 ctx.out.push_str(&format!(
                     "  ;; skipped anon function at line {} ({err})\n",
                     anon.line

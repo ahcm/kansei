@@ -5805,10 +5805,17 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
     out.push_str(
         "  (func $alloc (param $size i32) (result i32)\n\
             (local $old i32)\n\
+            (local $aligned i32)\n\
+            local.get $size\n\
+            i32.const 7\n\
+            i32.add\n\
+            i32.const -8\n\
+            i32.and\n\
+            local.set $aligned\n\
             global.get $heap_ptr\n\
             local.set $old\n\
             global.get $heap_ptr\n\
-            local.get $size\n\
+            local.get $aligned\n\
             i32.add\n\
             global.set $heap_ptr\n\
             local.get $old\n\
@@ -6061,6 +6068,56 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
             i32.const 4\n\
             i32.add\n\
             i32.load\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $ref_get (param $v i64) (result i64)\n\
+            (local $env i64)\n\
+            (local $idx i32)\n\
+            local.get $v\n\
+            call $ref_env\n\
+            local.set $env\n\
+            local.get $v\n\
+            call $ref_index\n\
+            local.set $idx\n\
+            local.get $env\n\
+            global.get $TAG_NIL\n\
+            call $is_tag\n\
+            if (result i64)\n\
+              local.get $idx\n\
+              call $global_get\n\
+            else\n\
+              local.get $env\n\
+              local.get $idx\n\
+              call $env_get\n\
+            end\n\
+          )\n",
+    );
+
+    out.push_str(
+        "  (func $ref_set (param $v i64) (param $value i64) (result i64)\n\
+            (local $env i64)\n\
+            (local $idx i32)\n\
+            local.get $v\n\
+            call $ref_env\n\
+            local.set $env\n\
+            local.get $v\n\
+            call $ref_index\n\
+            local.set $idx\n\
+            local.get $env\n\
+            global.get $TAG_NIL\n\
+            call $is_tag\n\
+            if (result i64)\n\
+              local.get $idx\n\
+              local.get $value\n\
+              call $global_set\n\
+            else\n\
+              local.get $env\n\
+              local.get $idx\n\
+              local.get $value\n\
+              call $env_set\n\
+            end\n\
           )\n",
     );
 
@@ -6342,6 +6399,14 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
             (local $ptr i32)\n\
             (local $len i32)\n\
             (local $tmp i32)\n\
+            local.get $v\n\
+            call $is_ref\n\
+            if\n\
+              local.get $v\n\
+              call $ref_get\n\
+              call $value_to_string\n\
+              return\n\
+            end\n\
             local.get $v\n\
             global.get $TAG_INT\n\
             call $is_tag\n\
@@ -7116,16 +7181,9 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
                   local.get $v\n\
                   call $is_ref\n\
                   if (result i32)\n\
-                    local.get $v\n\
-                    call $ref_env\n\
-                    local.set $ptr\n\
-                    local.get $v\n\
-                    call $ref_index\n\
-                    local.set $tmp\n\
-                    local.get $ptr\n\
-                    local.get $tmp\n\
-                    call $env_get\n\
-                    call $is_truthy\n\
+                  local.get $v\n\
+                  call $ref_get\n\
+                  call $is_truthy\n\
                   else\n\
                     i32.const 1\n\
                   end\n\
@@ -7137,6 +7195,44 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
 
     out.push_str(
         "  (func $add (param $a i64) (param $b i64) (result i64)\n\
+            (local $sa i64)\n\
+            (local $sb i64)\n\
+            local.get $a\n\
+            global.get $TAG_PTR\n\
+            call $is_tag\n\
+            if (result i32)\n\
+              local.get $a\n\
+              call $ptr_of\n\
+              i32.load\n\
+              global.get $TYPE_STRING\n\
+              i32.eq\n\
+            else\n\
+              i32.const 0\n\
+            end\n\
+            local.get $b\n\
+            global.get $TAG_PTR\n\
+            call $is_tag\n\
+            if (result i32)\n\
+              local.get $b\n\
+              call $ptr_of\n\
+              i32.load\n\
+              global.get $TYPE_STRING\n\
+              i32.eq\n\
+            else\n\
+              i32.const 0\n\
+            end\n\
+            i32.or\n\
+            if (result i64)\n\
+              local.get $a\n\
+              call $coerce_to_string\n\
+              local.set $sa\n\
+              local.get $b\n\
+              call $coerce_to_string\n\
+              local.set $sb\n\
+              local.get $sa\n\
+              local.get $sb\n\
+              call $string_concat\n\
+            else\n\
             local.get $a\n\
             global.get $TAG_INT\n\
             call $is_tag\n\
@@ -7158,6 +7254,7 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
               call $to_f64\n\
               f64.add\n\
               call $box_f64\n\
+            end\n\
             end\n\
           )\n",
     );
@@ -7718,11 +7815,11 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
               global.get $TYPE_ARRAY\n\
               i32.eq\n\
               if (result i64)\n\
-                local.get $index\n\
-                call $untag_int\n\
-                i32.wrap_i64\n\
-                local.get $target\n\
-                call $array_get\n\
+            local.get $target\n\
+            local.get $index\n\
+            call $untag_int\n\
+            i32.wrap_i64\n\
+            call $array_get\n\
               else\n\
                 unreachable\n\
               end\n\
@@ -7758,11 +7855,11 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
               global.get $TYPE_ARRAY\n\
               i32.eq\n\
               if (result i64)\n\
+                local.get $target\n\
                 local.get $index\n\
                 call $untag_int\n\
                 i32.wrap_i64\n\
                 local.get $value\n\
-                local.get $target\n\
                 call $array_set\n\
               else\n\
                 unreachable\n\
@@ -7788,6 +7885,13 @@ fn emit_wat_builtins(ctx: &mut WatContext)
         ctx.out.push_str("    else\n");
         ctx.out.push_str("      local.get $args_ptr\n");
         ctx.out.push_str("      i64.load\n");
+        ctx.out.push_str("      local.set $val\n");
+        ctx.out.push_str("    end\n");
+        ctx.out.push_str("    local.get $val\n");
+        ctx.out.push_str("    call $is_ref\n");
+        ctx.out.push_str("    if\n");
+        ctx.out.push_str("      local.get $val\n");
+        ctx.out.push_str("      call $ref_get\n");
         ctx.out.push_str("      local.set $val\n");
         ctx.out.push_str("    end\n");
         ctx.out
@@ -7902,6 +8006,15 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
         ExprKind::Identifier { slot: Some(slot), .. } =>
         {
             ctx.out.push_str(&format!("    local.get $r{slot}\n"));
+            ctx.out.push_str("    local.set $tmp\n");
+            ctx.out.push_str("    local.get $tmp\n");
+            ctx.out.push_str("    call $is_ref\n");
+            ctx.out.push_str("    if (result i64)\n");
+            ctx.out.push_str("      local.get $tmp\n");
+            ctx.out.push_str("      call $ref_get\n");
+            ctx.out.push_str("    else\n");
+            ctx.out.push_str("      local.get $tmp\n");
+            ctx.out.push_str("    end\n");
         }
         ExprKind::Identifier { slot: None, .. } =>
         {
@@ -7915,11 +8028,29 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
                 ctx.out.push_str("    local.get $env\n");
                 ctx.out.push_str(&format!("    i32.const {idx}\n"));
                 ctx.out.push_str("    call $env_get\n");
+                ctx.out.push_str("    local.set $tmp\n");
+                ctx.out.push_str("    local.get $tmp\n");
+                ctx.out.push_str("    call $is_ref\n");
+                ctx.out.push_str("    if (result i64)\n");
+                ctx.out.push_str("      local.get $tmp\n");
+                ctx.out.push_str("      call $ref_get\n");
+                ctx.out.push_str("    else\n");
+                ctx.out.push_str("      local.get $tmp\n");
+                ctx.out.push_str("    end\n");
             }
             else if let Some(idx) = ctx.global_names.get(&name)
             {
                 ctx.out.push_str(&format!("    i32.const {idx}\n"));
                 ctx.out.push_str("    call $global_get\n");
+                ctx.out.push_str("    local.set $tmp\n");
+                ctx.out.push_str("    local.get $tmp\n");
+                ctx.out.push_str("    call $is_ref\n");
+                ctx.out.push_str("    if (result i64)\n");
+                ctx.out.push_str("      local.get $tmp\n");
+                ctx.out.push_str("      call $ref_get\n");
+                ctx.out.push_str("    else\n");
+                ctx.out.push_str("      local.get $tmp\n");
+                ctx.out.push_str("    end\n");
             }
             else
             {
@@ -7929,29 +8060,24 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
         }
         ExprKind::Reference(name) =>
         {
-            if let Some(slot) = ctx.current_locals.get(name)
+            if let Some(_slot) = ctx.current_locals.get(name)
             {
-                ctx.out.push_str(&format!("    local.get $r{slot}\n"));
+                return Err(format!(
+                    "WAT dump does not support references to locals yet: {}",
+                    symbol_name(*name).as_str()
+                ));
             }
             else if let Some(idx) = ctx.current_captures.get(name)
             {
                 ctx.out.push_str("    local.get $env\n");
                 ctx.out.push_str(&format!("    i32.const {idx}\n"));
-                ctx.out.push_str("    call $env_get\n");
+                ctx.out.push_str("    call $make_ref\n");
             }
             else if let Some(global_idx) = ctx.global_names.get(name)
             {
                 ctx.out.push_str("    call $tag_nil\n");
-                ctx.out.push_str("    local.set $tmp2\n");
                 ctx.out.push_str(&format!("    i32.const {global_idx}\n"));
-                ctx.out.push_str("    local.set $tmp_ptr\n");
-                ctx.out.push_str("    local.get $tmp2\n");
-                ctx.out.push_str("    local.get $tmp_ptr\n");
                 ctx.out.push_str("    call $make_ref\n");
-                ctx.out.push_str("    local.tee $tmp2\n");
-                ctx.out.push_str(&format!("    i32.const {global_idx}\n"));
-                ctx.out.push_str("    local.get $tmp2\n");
-                ctx.out.push_str("    call $global_set\n");
             }
             else
             {
@@ -7969,25 +8095,18 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
         {
             emit_expr_value(ctx, value)?;
             ctx.out.push_str("    local.set $tmp2\n");
-            ctx.out.push_str("    local.get $tmp2\n");
+            ctx.out.push_str(&format!("    local.get $r{slot}\n"));
             ctx.out.push_str("    call $is_ref\n");
-            ctx.out.push_str("    if\n");
+            ctx.out.push_str("    if (result i64)\n");
+            ctx.out.push_str(&format!("      local.get $r{slot}\n"));
             ctx.out.push_str("      local.get $tmp2\n");
-            ctx.out.push_str("      call $ref_env\n");
-            ctx.out.push_str("      local.set $tmp4\n");
-            ctx.out.push_str("      local.get $tmp2\n");
-            ctx.out.push_str("      call $ref_index\n");
-            ctx.out.push_str("      local.set $tmp_ptr\n");
-            ctx.out.push_str("      local.get $tmp4\n");
-            ctx.out.push_str("      local.get $tmp_ptr\n");
-            ctx.out.push_str("      local.get $tmp2\n");
-            ctx.out.push_str("      call $env_set\n");
+            ctx.out.push_str("      call $ref_set\n");
             ctx.out.push_str("      drop\n");
             ctx.out.push_str("      local.get $tmp2\n");
-            ctx.out.push_str("      return\n");
+            ctx.out.push_str("    else\n");
+            ctx.out.push_str("      local.get $tmp2\n");
+            ctx.out.push_str(&format!("      local.tee $r{slot}\n"));
             ctx.out.push_str("    end\n");
-            ctx.out.push_str("    local.get $tmp2\n");
-            ctx.out.push_str(&format!("    local.tee $r{slot}\n"));
         }
         ExprKind::Assignment { slot: None, .. } =>
         {
@@ -8003,26 +8122,21 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
                 .ok_or_else(|| format!("Unknown global: {}", symbol_name(name).as_str()))?;
             emit_expr_value(ctx, value)?;
             ctx.out.push_str("    local.set $tmp2\n");
-            ctx.out.push_str("    local.get $tmp2\n");
+            ctx.out.push_str(&format!("    i32.const {idx}\n"));
+            ctx.out.push_str("    call $global_get\n");
             ctx.out.push_str("    call $is_ref\n");
-            ctx.out.push_str("    if\n");
+            ctx.out.push_str("    if (result i64)\n");
+            ctx.out.push_str(&format!("      i32.const {idx}\n"));
+            ctx.out.push_str("      call $global_get\n");
             ctx.out.push_str("      local.get $tmp2\n");
-            ctx.out.push_str("      call $ref_env\n");
-            ctx.out.push_str("      local.set $tmp4\n");
-            ctx.out.push_str("      local.get $tmp2\n");
-            ctx.out.push_str("      call $ref_index\n");
-            ctx.out.push_str("      local.set $tmp_ptr\n");
-            ctx.out.push_str("      local.get $tmp4\n");
-            ctx.out.push_str("      local.get $tmp_ptr\n");
-            ctx.out.push_str("      local.get $tmp2\n");
-            ctx.out.push_str("      call $env_set\n");
+            ctx.out.push_str("      call $ref_set\n");
             ctx.out.push_str("      drop\n");
             ctx.out.push_str("      local.get $tmp2\n");
-            ctx.out.push_str("      return\n");
+            ctx.out.push_str("    else\n");
+            ctx.out.push_str(&format!("      i32.const {idx}\n"));
+            ctx.out.push_str("      local.get $tmp2\n");
+            ctx.out.push_str("      call $global_set\n");
             ctx.out.push_str("    end\n");
-            ctx.out.push_str("    local.get $tmp2\n");
-            ctx.out.push_str(&format!("    i32.const {idx}\n"));
-            ctx.out.push_str("    call $global_set\n");
         }
         ExprKind::BinaryOp { left, op, right } =>
         {
@@ -8563,7 +8677,11 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
                 ctx.out
                     .push_str(&format!("    i32.const {}\n", idx * 8));
                 ctx.out.push_str("    i32.add\n");
+                ctx.out.push_str("    local.set $tmp_ptr2\n");
                 emit_expr_value(ctx, arg)?;
+                ctx.out.push_str("    local.set $tmp2\n");
+                ctx.out.push_str("    local.get $tmp_ptr2\n");
+                ctx.out.push_str("    local.get $tmp2\n");
                 ctx.out.push_str("    i64.store\n");
             }
             emit_expr_value(ctx, function)?;
@@ -9354,6 +9472,7 @@ fn emit_function_value(
         }
     }
     emit_expr_value(ctx, body)?;
+    ctx.out.push_str("    return\n");
     ctx.out.push_str("  )\n");
     if let Some(name) = export_name
     {
@@ -9666,6 +9785,7 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
     if has_main
     {
         ctx.out.push_str("  (func $_start\n");
+        ctx.out.push_str("    (local $tmp i64)\n");
         ctx.out
             .push_str(&format!("    i32.const {}\n", globals.len()));
         ctx.out.push_str("    call $globals_init\n");
@@ -9681,7 +9801,9 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
                 ctx.out.push_str(&format!("    i32.const {func_idx}\n"));
                 ctx.out.push_str("    call $tag_nil\n");
                 ctx.out.push_str("    call $make_func\n");
+                ctx.out.push_str("    local.set $tmp\n");
                 ctx.out.push_str(&format!("    i32.const {idx}\n"));
+                ctx.out.push_str("    local.get $tmp\n");
                 ctx.out.push_str("    call $global_set\n");
                 ctx.out.push_str("    drop\n");
             }

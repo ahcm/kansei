@@ -5779,11 +5779,43 @@ pub fn dump_bytecode(ast: &Expr, mode: BytecodeMode) -> String
 
 
 
-fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
+#[derive(Clone, Copy)]
+struct WatRuntimeStrings
 {
+    args: (i32, i32),
+    float64: (i32, i32),
+    int64: (i32, i32),
+    sqrt: (i32, i32),
+    parse: (i32, i32),
+}
+
+impl WatRuntimeStrings
+{
+    fn new(ctx: &mut WatContext) -> Self
+    {
+        let args = ctx.push_data(b"args");
+        let float64 = ctx.push_data(b"Float64");
+        let int64 = ctx.push_data(b"Int64");
+        let sqrt = ctx.push_data(b"sqrt");
+        let parse = ctx.push_data(b"parse");
+        Self {
+            args: (args, 4),
+            float64: (float64, 7),
+            int64: (int64, 5),
+            sqrt: (sqrt, 4),
+            parse: (parse, 5),
+        }
+    }
+}
+
+fn emit_wat_runtime(ctx: &mut WatContext, wasi: WasiTarget, _rt: &WatRuntimeStrings)
+{
+    let out = &mut ctx.out;
     if wasi == WasiTarget::Wasip1
     {
         out.push_str("  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n");
+        out.push_str("  (import \"wasi_snapshot_preview1\" \"args_sizes_get\" (func $args_sizes_get (param i32 i32) (result i32)))\n");
+        out.push_str("  (import \"wasi_snapshot_preview1\" \"args_get\" (func $args_get (param i32 i32) (result i32)))\n");
     }
     out.push_str("  (memory (export \"memory\") 1)\n");
     out.push_str("  (global $heap_ptr (mut i32) (i32.const 1024))\n");
@@ -5806,6 +5838,8 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
         "  (func $alloc (param $size i32) (result i32)\n\
             (local $old i32)\n\
             (local $aligned i32)\n\
+            (local $needed i32)\n\
+            (local $have i32)\n\
             local.get $size\n\
             i32.const 7\n\
             i32.add\n\
@@ -5814,7 +5848,29 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
             local.set $aligned\n\
             global.get $heap_ptr\n\
             local.set $old\n\
-            global.get $heap_ptr\n\
+            local.get $old\n\
+            local.get $aligned\n\
+            i32.add\n\
+            local.set $needed\n\
+            memory.size\n\
+            i32.const 16\n\
+            i32.shl\n\
+            local.set $have\n\
+            local.get $needed\n\
+            local.get $have\n\
+            i32.gt_u\n\
+            if\n\
+              local.get $needed\n\
+              local.get $have\n\
+              i32.sub\n\
+              i32.const 65535\n\
+              i32.add\n\
+              i32.const 16\n\
+              i32.shr_u\n\
+              memory.grow\n\
+              drop\n\
+            end\n\
+            local.get $old\n\
             local.get $aligned\n\
             i32.add\n\
             global.set $heap_ptr\n\
@@ -6344,6 +6400,131 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
           )\n",
     );
 
+    if wasi == WasiTarget::Wasip1
+    {
+        out.push_str(
+            "  (func $cstr_len (param $ptr i32) (result i32)\n\
+            (local $len i32)\n\
+            (loop $loop\n\
+              local.get $ptr\n\
+              local.get $len\n\
+              i32.add\n\
+              i32.load8_u\n\
+              i32.eqz\n\
+              if\n\
+                local.get $len\n\
+                return\n\
+              end\n\
+              local.get $len\n\
+              i32.const 1\n\
+              i32.add\n\
+              local.set $len\n\
+              br $loop\n\
+            )\n\
+            i32.const 0\n\
+          )\n",
+        );
+
+        out.push_str(
+            "  (func $args_to_array (result i64)\n\
+            (local $tmp i32)\n\
+            (local $argc i32)\n\
+            (local $buf_size i32)\n\
+            (local $argv_ptr i32)\n\
+            (local $buf_ptr i32)\n\
+            (local $out_count i32)\n\
+            (local $arr i64)\n\
+            (local $i i32)\n\
+            (local $ptr i32)\n\
+            (local $len i32)\n\
+            (local $str i64)\n\
+            i32.const 8\n\
+            call $alloc\n\
+            local.set $tmp\n\
+            local.get $tmp\n\
+            local.get $tmp\n\
+            i32.const 4\n\
+            i32.add\n\
+            call $args_sizes_get\n\
+            drop\n\
+            local.get $tmp\n\
+            i32.load\n\
+            local.set $argc\n\
+            local.get $tmp\n\
+            i32.const 4\n\
+            i32.add\n\
+            i32.load\n\
+            local.set $buf_size\n\
+            local.get $argc\n\
+            i32.const 4\n\
+            i32.mul\n\
+            call $alloc\n\
+            local.set $argv_ptr\n\
+            local.get $buf_size\n\
+            call $alloc\n\
+            local.set $buf_ptr\n\
+            local.get $argv_ptr\n\
+            local.get $buf_ptr\n\
+            call $args_get\n\
+            drop\n\
+            local.get $argc\n\
+            i32.eqz\n\
+            if\n\
+              i32.const 0\n\
+              local.set $out_count\n\
+            else\n\
+              local.get $argc\n\
+              i32.const 1\n\
+              i32.sub\n\
+              local.set $out_count\n\
+            end\n\
+            local.get $out_count\n\
+            call $array_new\n\
+            local.set $arr\n\
+            i32.const 0\n\
+            local.set $i\n\
+            (block $done (result i64)\n\
+              (loop $loop\n\
+                local.get $i\n\
+                local.get $out_count\n\
+                i32.ge_u\n\
+                if\n\
+                  local.get $arr\n\
+                  br $done\n\
+                end\n\
+                local.get $argv_ptr\n\
+                local.get $i\n\
+                i32.const 1\n\
+                i32.add\n\
+                i32.const 4\n\
+                i32.mul\n\
+                i32.add\n\
+                i32.load\n\
+                local.set $ptr\n\
+                local.get $ptr\n\
+                call $cstr_len\n\
+                local.set $len\n\
+                local.get $ptr\n\
+                local.get $len\n\
+                call $string_new_from_data\n\
+                local.set $str\n\
+                local.get $arr\n\
+                local.get $i\n\
+                local.get $str\n\
+                call $array_set\n\
+                drop\n\
+                local.get $i\n\
+                i32.const 1\n\
+                i32.add\n\
+                local.set $i\n\
+                br $loop\n\
+              )\n\
+              local.get $arr\n\
+            )\n\
+          )\n",
+        );
+    }
+
     out.push_str(
         "  (func $string_concat (param $a i64) (param $b i64) (result i64)\n\
             (local $pa i32)\n\
@@ -6582,40 +6763,19 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
                           i32.const 3\n\
                           local.set $len\n\
                         else\n\
-                          local.get $tmp\n\
-                          i32.load\n\
-                          global.get $TYPE_F64\n\
-                          i32.eq\n\
-                          if\n\
-                            i32.const 5\n\
-                            call $alloc\n\
-                            local.set $ptr\n\
-                            local.get $ptr\n\
-                            i32.const 102\n\
-                            i32.store8\n\
-                            local.get $ptr\n\
-                            i32.const 1\n\
-                            i32.add\n\
-                            i32.const 108\n\
-                            i32.store8\n\
-                            local.get $ptr\n\
-                            i32.const 2\n\
-                            i32.add\n\
-                            i32.const 111\n\
-                            i32.store8\n\
-                            local.get $ptr\n\
-                            i32.const 3\n\
-                            i32.add\n\
-                            i32.const 97\n\
-                            i32.store8\n\
-                            local.get $ptr\n\
-                            i32.const 4\n\
-                            i32.add\n\
-                            i32.const 116\n\
-                            i32.store8\n\
-                            i32.const 5\n\
-                            local.set $len\n\
-                          else\n\
+                      local.get $tmp\n\
+                      i32.load\n\
+                      global.get $TYPE_F64\n\
+                      i32.eq\n\
+                      if\n\
+                        local.get $tmp\n\
+                        i32.const 8\n\
+                        i32.add\n\
+                        f64.load\n\
+                        call $f64_to_string\n\
+                        local.set $len\n\
+                        local.set $ptr\n\
+                      else\n\
                             i32.const 3\n\
                             call $alloc\n\
                             local.set $ptr\n\
@@ -6809,6 +6969,125 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
     );
 
     out.push_str(
+        "  (func $f64_to_string (param $v f64) (result i32 i32)\n\
+            (local $neg i32)\n\
+            (local $abs f64)\n\
+            (local $int i64)\n\
+            (local $frac f64)\n\
+            (local $frac_i i64)\n\
+            (local $int_ptr i32)\n\
+            (local $int_len i32)\n\
+            (local $out_ptr i32)\n\
+            (local $out_len i32)\n\
+            (local $i i32)\n\
+            (local $digit i32)\n\
+            local.get $v\n\
+            f64.const 0\n\
+            f64.lt\n\
+            if\n\
+              i32.const 1\n\
+              local.set $neg\n\
+              local.get $v\n\
+              f64.neg\n\
+              local.set $abs\n\
+            else\n\
+              i32.const 0\n\
+              local.set $neg\n\
+              local.get $v\n\
+              local.set $abs\n\
+            end\n\
+            local.get $abs\n\
+            i64.trunc_sat_f64_s\n\
+            local.set $int\n\
+            local.get $abs\n\
+            local.get $int\n\
+            f64.convert_i64_s\n\
+            f64.sub\n\
+            local.set $frac\n\
+            local.get $frac\n\
+            f64.const 1000000000\n\
+            f64.mul\n\
+            f64.const 0.5\n\
+            f64.add\n\
+            i64.trunc_sat_f64_s\n\
+            local.set $frac_i\n\
+            local.get $int\n\
+            call $int_to_string\n\
+            local.set $int_len\n\
+            local.set $int_ptr\n\
+            local.get $int_len\n\
+            i32.const 10\n\
+            i32.add\n\
+            local.get $neg\n\
+            i32.add\n\
+            local.set $out_len\n\
+            local.get $out_len\n\
+            call $alloc\n\
+            local.set $out_ptr\n\
+            local.get $neg\n\
+            if\n\
+              local.get $out_ptr\n\
+              i32.const 45\n\
+              i32.store8\n\
+            end\n\
+            local.get $out_ptr\n\
+            local.get $neg\n\
+            i32.add\n\
+            local.get $int_ptr\n\
+            local.get $int_len\n\
+            memory.copy\n\
+            local.get $out_ptr\n\
+            local.get $neg\n\
+            i32.add\n\
+            local.get $int_len\n\
+            i32.add\n\
+            i32.const 46\n\
+            i32.store8\n\
+            i32.const 0\n\
+            local.set $i\n\
+            (block $done\n\
+              (loop $loop\n\
+                local.get $i\n\
+                i32.const 9\n\
+                i32.ge_u\n\
+                br_if $done\n\
+                local.get $frac_i\n\
+                i64.const 10\n\
+                i64.rem_u\n\
+                i32.wrap_i64\n\
+                local.set $digit\n\
+                local.get $frac_i\n\
+                i64.const 10\n\
+                i64.div_u\n\
+                local.set $frac_i\n\
+                local.get $out_ptr\n\
+                local.get $neg\n\
+                i32.add\n\
+                local.get $int_len\n\
+                i32.add\n\
+                i32.const 1\n\
+                i32.add\n\
+                i32.const 8\n\
+                local.get $i\n\
+                i32.sub\n\
+                i32.add\n\
+                local.get $digit\n\
+                i32.const 48\n\
+                i32.add\n\
+                i32.store8\n\
+                local.get $i\n\
+                i32.const 1\n\
+                i32.add\n\
+                local.set $i\n\
+                br $loop\n\
+              )\n\
+            )\n\
+            local.get $out_ptr\n\
+            local.get $out_len\n\
+          )\n",
+    );
+
+    out.push_str(
         "  (func $write_value (param $fd i32) (param $v i64) (param $newline i32) (result i64)\n\
             (local $ptr i32)\n\
             (local $len i32)\n\
@@ -6885,103 +7164,36 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
                   local.set $len\n\
                 end\n\
               else\n\
+              local.get $v\n\
+              global.get $TAG_NIL\n\
+              call $is_tag\n\
+              if\n\
+                i32.const 3\n\
+                call $alloc\n\
+                local.set $ptr\n\
+                local.get $ptr\n\
+                i32.const 110\n\
+                i32.store8\n\
+                local.get $ptr\n\
+                i32.const 1\n\
+                i32.add\n\
+                i32.const 105\n\
+                i32.store8\n\
+                local.get $ptr\n\
+                i32.const 2\n\
+                i32.add\n\
+                i32.const 108\n\
+                i32.store8\n\
+                i32.const 3\n\
+                local.set $len\n\
+              else\n\
                 local.get $v\n\
-                global.get $TAG_NIL\n\
-                call $is_tag\n\
-                if\n\
-                  i32.const 3\n\
-                  call $alloc\n\
-                  local.set $ptr\n\
-                  local.get $ptr\n\
-                  i32.const 110\n\
-                  i32.store8\n\
-                  local.get $ptr\n\
-                  i32.const 1\n\
-                  i32.add\n\
-                  i32.const 105\n\
-                  i32.store8\n\
-                  local.get $ptr\n\
-                  i32.const 2\n\
-                  i32.add\n\
-                  i32.const 108\n\
-                  i32.store8\n\
-                  i32.const 3\n\
-                  local.set $len\n\
-                else\n\
-                  local.get $v\n\
-                  global.get $TAG_PTR\n\
-                  call $is_tag\n\
-                  if\n\
-                    local.get $v\n\
-                    call $ptr_of\n\
-                    local.set $tmp\n\
-                    local.get $tmp\n\
-                    i32.load\n\
-                    global.get $TYPE_STRING\n\
-                    i32.eq\n\
-                    if\n\
-                      local.get $tmp\n\
-                      i32.const 4\n\
-                      i32.add\n\
-                      i32.load\n\
-                      local.set $len\n\
-                      local.get $tmp\n\
-                      i32.const 8\n\
-                      i32.add\n\
-                      local.set $ptr\n\
-                    else\n\
-                      i32.const 5\n\
-                      call $alloc\n\
-                      local.set $ptr\n\
-                      local.get $ptr\n\
-                      i32.const 102\n\
-                      i32.store8\n\
-                      local.get $ptr\n\
-                      i32.const 1\n\
-                      i32.add\n\
-                      i32.const 108\n\
-                      i32.store8\n\
-                      local.get $ptr\n\
-                      i32.const 2\n\
-                      i32.add\n\
-                      i32.const 111\n\
-                      i32.store8\n\
-                      local.get $ptr\n\
-                      i32.const 3\n\
-                      i32.add\n\
-                      i32.const 97\n\
-                      i32.store8\n\
-                      local.get $ptr\n\
-                      i32.const 4\n\
-                      i32.add\n\
-                      i32.const 116\n\
-                      i32.store8\n\
-                      i32.const 5\n\
-                      local.set $len\n\
-                    end\n\
-                  else\n\
-                    i32.const 3\n\
-                    call $alloc\n\
-                    local.set $ptr\n\
-                    local.get $ptr\n\
-                    i32.const 110\n\
-                    i32.store8\n\
-                    local.get $ptr\n\
-                    i32.const 1\n\
-                    i32.add\n\
-                    i32.const 105\n\
-                    i32.store8\n\
-                    local.get $ptr\n\
-                    i32.const 2\n\
-                    i32.add\n\
-                    i32.const 108\n\
-                    i32.store8\n\
-                    i32.const 3\n\
-                    local.set $len\n\
-                  end\n\
-                end\n\
+                call $value_to_string\n\
+                local.set $len\n\
+                local.set $ptr\n\
               end\n\
             end\n\
+          end\n\
             local.get $fd\n\
             local.get $ptr\n\
             local.get $len\n\
@@ -7910,6 +8122,164 @@ fn emit_wat_builtins(ctx: &mut WatContext)
     emit_builtin(ctx, "builtin_eprint", 2, 0);
     emit_builtin(ctx, "builtin_eputs", 2, 1);
     emit_builtin(ctx, "builtin_log", 2, 1);
+
+    ctx.out.push_str(
+        "  (func $builtin_float64_sqrt (param $env i64) (param $args_ptr i32) (param $argc i32) (result i64)\n\
+            (local $arg i64)\n\
+            local.get $argc\n\
+            i32.eqz\n\
+            if\n\
+              call $tag_nil\n\
+              return\n\
+            end\n\
+            local.get $args_ptr\n\
+            i64.load\n\
+            local.set $arg\n\
+            local.get $arg\n\
+            call $is_ref\n\
+            if\n\
+              local.get $arg\n\
+              call $ref_get\n\
+              local.set $arg\n\
+            end\n\
+            local.get $arg\n\
+            call $to_f64\n\
+            f64.sqrt\n\
+            call $box_f64\n\
+          )\n",
+    );
+
+    ctx.out.push_str(
+        "  (func $builtin_int64_parse (param $env i64) (param $args_ptr i32) (param $argc i32) (result i64)\n\
+            (local $arg i64)\n\
+            (local $s i64)\n\
+            (local $ptr i32)\n\
+            (local $len i32)\n\
+            (local $i i32)\n\
+            (local $ch i32)\n\
+            (local $sign i64)\n\
+            (local $acc i64)\n\
+            local.get $argc\n\
+            i32.eqz\n\
+            if\n\
+              call $tag_nil\n\
+              return\n\
+            end\n\
+            local.get $args_ptr\n\
+            i64.load\n\
+            local.set $arg\n\
+            local.get $arg\n\
+            call $is_ref\n\
+            if\n\
+              local.get $arg\n\
+              call $ref_get\n\
+              local.set $arg\n\
+            end\n\
+            local.get $arg\n\
+            call $coerce_to_string\n\
+            local.set $s\n\
+            local.get $s\n\
+            call $ptr_of\n\
+            local.set $ptr\n\
+            local.get $ptr\n\
+            i32.const 4\n\
+            i32.add\n\
+            i32.load\n\
+            local.set $len\n\
+            local.get $ptr\n\
+            i32.const 8\n\
+            i32.add\n\
+            local.set $ptr\n\
+            i64.const 1\n\
+            local.set $sign\n\
+            i64.const 0\n\
+            local.set $acc\n\
+            i32.const 0\n\
+            local.set $i\n\
+            local.get $len\n\
+            i32.eqz\n\
+            if\n\
+              local.get $acc\n\
+              call $tag_int\n\
+              return\n\
+            end\n\
+            local.get $ptr\n\
+            i32.load8_u\n\
+            local.set $ch\n\
+            local.get $ch\n\
+            i32.const 45\n\
+            i32.eq\n\
+            if\n\
+              i64.const -1\n\
+              local.set $sign\n\
+              i32.const 1\n\
+              local.set $i\n\
+            else\n\
+              local.get $ch\n\
+              i32.const 43\n\
+              i32.eq\n\
+              if\n\
+                i32.const 1\n\
+                local.set $i\n\
+              end\n\
+            end\n\
+            (loop $loop\n\
+              local.get $i\n\
+              local.get $len\n\
+              i32.ge_u\n\
+              if\n\
+                local.get $sign\n\
+                i64.const -1\n\
+                i64.eq\n\
+                if\n\
+                  local.get $acc\n\
+                  i64.const 0\n\
+                  i64.sub\n\
+                  local.set $acc\n\
+                end\n\
+                local.get $acc\n\
+                call $tag_int\n\
+                return\n\
+              end\n\
+              local.get $ptr\n\
+              local.get $i\n\
+              i32.add\n\
+              i32.load8_u\n\
+              local.set $ch\n\
+              local.get $ch\n\
+              i32.const 48\n\
+              i32.lt_u\n\
+              if\n\
+                local.get $acc\n\
+                call $tag_int\n\
+                return\n\
+              end\n\
+              local.get $ch\n\
+              i32.const 57\n\
+              i32.gt_u\n\
+              if\n\
+                local.get $acc\n\
+                call $tag_int\n\
+                return\n\
+              end\n\
+              local.get $acc\n\
+              i64.const 10\n\
+              i64.mul\n\
+              local.get $ch\n\
+              i32.const 48\n\
+              i32.sub\n\
+              i64.extend_i32_u\n\
+              i64.add\n\
+              local.set $acc\n\
+              local.get $i\n\
+              i32.const 1\n\
+              i32.add\n\
+              local.set $i\n\
+              br $loop\n\
+            )\n\
+            call $tag_nil\n\
+          )\n",
+    );
 }
 
 struct WatContext
@@ -7928,6 +8298,7 @@ struct WatContext
     func_def_names: FxHashMap<usize, String>,
     func_def_captures: FxHashMap<usize, Vec<SymbolId>>,
     builtin_names: FxHashMap<SymbolId, String>,
+    runtime_strings: Option<WatRuntimeStrings>,
 }
 
 impl WatContext
@@ -7949,6 +8320,7 @@ impl WatContext
             func_def_names: FxHashMap::default(),
             func_def_captures: FxHashMap::default(),
             builtin_names: FxHashMap::default(),
+            runtime_strings: None,
         }
     }
 
@@ -8023,6 +8395,95 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
                 ExprKind::Identifier { name, .. } => *name,
                 _ => unreachable!(),
             };
+            if name == intern::intern_symbol("std")
+            {
+                let rt = ctx.runtime_strings.ok_or_else(|| {
+                    "WAT dump missing runtime strings for std".to_string()
+                })?;
+                let sqrt_idx = ctx
+                    .func_indices
+                    .get("builtin_float64_sqrt")
+                    .cloned()
+                    .unwrap_or(0);
+                let parse_idx = ctx
+                    .func_indices
+                    .get("builtin_int64_parse")
+                    .cloned()
+                    .unwrap_or(0);
+                ctx.out.push_str("    i32.const 2\n");
+                ctx.out.push_str("    call $map_new\n");
+                ctx.out.push_str("    local.set $tmp\n");
+                ctx.out.push_str("    i32.const 1\n");
+                ctx.out.push_str("    call $map_new\n");
+                ctx.out.push_str("    local.set $tmp2\n");
+                ctx.out.push_str("    i32.const 1\n");
+                ctx.out.push_str("    call $map_new\n");
+                ctx.out.push_str("    local.set $tmp3\n");
+                ctx.out.push_str(&format!("    i32.const {sqrt_idx}\n"));
+                ctx.out.push_str("    call $tag_nil\n");
+                ctx.out.push_str("    call $make_func\n");
+                ctx.out.push_str("    local.set $tmp4\n");
+                ctx.out.push_str("    local.get $tmp2\n");
+                ctx.out.push_str(&format!("    i32.const {}\n", rt.sqrt.0));
+                ctx.out.push_str(&format!("    i32.const {}\n", rt.sqrt.1));
+                ctx.out.push_str("    call $string_new_from_data\n");
+                ctx.out.push_str("    local.get $tmp4\n");
+                ctx.out.push_str("    call $map_set\n");
+                ctx.out.push_str("    drop\n");
+                ctx.out.push_str(&format!("    i32.const {parse_idx}\n"));
+                ctx.out.push_str("    call $tag_nil\n");
+                ctx.out.push_str("    call $make_func\n");
+                ctx.out.push_str("    local.set $tmp4\n");
+                ctx.out.push_str("    local.get $tmp3\n");
+                ctx.out.push_str(&format!("    i32.const {}\n", rt.parse.0));
+                ctx.out.push_str(&format!("    i32.const {}\n", rt.parse.1));
+                ctx.out.push_str("    call $string_new_from_data\n");
+                ctx.out.push_str("    local.get $tmp4\n");
+                ctx.out.push_str("    call $map_set\n");
+                ctx.out.push_str("    drop\n");
+                ctx.out.push_str("    local.get $tmp\n");
+                ctx.out.push_str(&format!(
+                    "    i32.const {}\n",
+                    rt.float64.0
+                ));
+                ctx.out.push_str(&format!(
+                    "    i32.const {}\n",
+                    rt.float64.1
+                ));
+                ctx.out.push_str("    call $string_new_from_data\n");
+                ctx.out.push_str("    local.get $tmp2\n");
+                ctx.out.push_str("    call $map_set\n");
+                ctx.out.push_str("    drop\n");
+                ctx.out.push_str("    local.get $tmp\n");
+                ctx.out.push_str(&format!("    i32.const {}\n", rt.int64.0));
+                ctx.out.push_str(&format!("    i32.const {}\n", rt.int64.1));
+                ctx.out.push_str("    call $string_new_from_data\n");
+                ctx.out.push_str("    local.get $tmp3\n");
+                ctx.out.push_str("    call $map_set\n");
+                ctx.out.push_str("    drop\n");
+                ctx.out.push_str("    local.get $tmp\n");
+                return Ok(());
+            }
+            if name == intern::intern_symbol("program")
+            {
+                let rt = ctx.runtime_strings.ok_or_else(|| {
+                    "WAT dump missing runtime strings for program".to_string()
+                })?;
+                ctx.out.push_str("    i32.const 1\n");
+                ctx.out.push_str("    call $map_new\n");
+                ctx.out.push_str("    local.set $tmp\n");
+                ctx.out.push_str("    call $args_to_array\n");
+                ctx.out.push_str("    local.set $tmp2\n");
+                ctx.out.push_str("    local.get $tmp\n");
+                ctx.out.push_str(&format!("    i32.const {}\n", rt.args.0));
+                ctx.out.push_str(&format!("    i32.const {}\n", rt.args.1));
+                ctx.out.push_str("    call $string_new_from_data\n");
+                ctx.out.push_str("    local.get $tmp2\n");
+                ctx.out.push_str("    call $map_set\n");
+                ctx.out.push_str("    drop\n");
+                ctx.out.push_str("    local.get $tmp\n");
+                return Ok(());
+            }
             if let Some(idx) = ctx.current_captures.get(&name)
             {
                 ctx.out.push_str("    local.get $env\n");
@@ -8555,6 +9016,10 @@ fn emit_expr_value(ctx: &mut WatContext, expr: &Expr) -> Result<(), String>
                 ctx.out.push_str("    drop\n");
             }
             ctx.out.push_str("    local.get $tmp\n");
+        }
+        ExprKind::Use(_) =>
+        {
+            ctx.out.push_str("    call $tag_nil\n");
         }
         ExprKind::FormatString(parts) =>
         {
@@ -9491,7 +9956,9 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
     ctx.out.push_str("(module\n");
     ctx.out
         .push_str(&format!("  ;; kansei-wat wasi={}\n", wasi.as_str()));
-    emit_wat_runtime(&mut ctx.out, wasi);
+    let rt_strings = WatRuntimeStrings::new(&mut ctx);
+    ctx.runtime_strings = Some(rt_strings);
+    emit_wat_runtime(&mut ctx, wasi, &rt_strings);
     if wasi == WasiTarget::Wasip1
     {
         emit_wat_builtins(&mut ctx);
@@ -9504,7 +9971,7 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
     collect_global_symbols(ast, &mut globals, false);
     if wasi == WasiTarget::Wasip1
     {
-        for name in ["print", "puts", "eprint", "eputs", "log"]
+        for name in ["print", "puts", "eprint", "eputs", "log", "std", "program"]
         {
             let sym = intern::intern_symbol(name);
             if !globals.contains(&sym)
@@ -9538,6 +10005,12 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
             let sym = intern::intern_symbol(name);
             ctx.builtin_names
                 .insert(sym, internal.to_string());
+            ctx.func_indices
+                .insert(internal.to_string(), func_idx as i32);
+            func_idx += 1;
+        }
+        for internal in ["builtin_float64_sqrt", "builtin_int64_parse"]
+        {
             ctx.func_indices
                 .insert(internal.to_string(), func_idx as i32);
             func_idx += 1;
@@ -9624,8 +10097,8 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
     let out_len_before_main = ctx.out.len();
     match emit_function_value(
         &mut ctx,
-        "main",
-        Some("main"),
+        "__main",
+        None,
         0,
         local_count,
         &[],
@@ -9811,6 +10284,9 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
     {
         ctx.out.push_str("  (func $_start\n");
         ctx.out.push_str("    (local $tmp i64)\n");
+        ctx.out.push_str("    (local $tmp2 i64)\n");
+        ctx.out.push_str("    (local $tmp3 i64)\n");
+        ctx.out.push_str("    (local $tmp4 i64)\n");
         ctx.out
             .push_str(&format!("    i32.const {}\n", globals.len()));
         ctx.out.push_str("    call $globals_init\n");
@@ -9836,7 +10312,7 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
         ctx.out.push_str("    call $tag_nil\n");
         ctx.out.push_str("    i32.const 0\n");
         ctx.out.push_str("    i32.const 0\n");
-        ctx.out.push_str("    call $main\n");
+        ctx.out.push_str("    call $__main\n");
         ctx.out.push_str("    drop\n");
         ctx.out.push_str("  )\n");
         ctx.out.push_str("  (export \"_start\" (func $_start))\n");

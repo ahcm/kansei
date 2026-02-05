@@ -7087,6 +7087,8 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
 
     out.push_str(
         "  (func $is_truthy (param $v i64) (result i32)\n\
+            (local $ptr i64)\n\
+            (local $tmp i32)\n\
             local.get $v\n\
             global.get $TAG_NIL\n\
             call $is_tag\n\
@@ -7574,11 +7576,21 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
             local.set $len\n\
             local.get $start\n\
             local.get $len\n\
-            i32.min_u\n\
+            i32.gt_u\n\
+            if (result i32)\n\
+              local.get $len\n\
+            else\n\
+              local.get $start\n\
+            end\n\
             local.set $s\n\
             local.get $end\n\
             local.get $len\n\
-            i32.min_u\n\
+            i32.gt_u\n\
+            if (result i32)\n\
+              local.get $len\n\
+            else\n\
+              local.get $end\n\
+            end\n\
             local.set $e\n\
             local.get $s\n\
             local.get $e\n\
@@ -7640,11 +7652,21 @@ fn emit_wat_runtime(out: &mut String, wasi: WasiTarget)
             local.set $len\n\
             local.get $start\n\
             local.get $len\n\
-            i32.min_u\n\
+            i32.gt_u\n\
+            if (result i32)\n\
+              local.get $len\n\
+            else\n\
+              local.get $start\n\
+            end\n\
             local.set $s\n\
             local.get $end\n\
             local.get $len\n\
-            i32.min_u\n\
+            i32.gt_u\n\
+            if (result i32)\n\
+              local.get $len\n\
+            else\n\
+              local.get $end\n\
+            end\n\
             local.set $e\n\
             local.get $s\n\
             local.get $e\n\

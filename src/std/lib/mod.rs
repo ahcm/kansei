@@ -30,6 +30,8 @@ pub mod path;
 pub mod polars;
 #[cfg(feature = "lib-regex")]
 pub mod regex;
+#[cfg(feature = "lib-russh")]
+pub mod russh;
 #[cfg(feature = "lib-serde")]
 pub mod serde;
 #[cfg(feature = "lib-sqlite")]
@@ -87,6 +89,8 @@ pub fn build_lib_module() -> Value
     polars::register(&mut lib_map);
     #[cfg(feature = "lib-regex")]
     regex::register(&mut lib_map);
+    #[cfg(feature = "lib-russh")]
+    russh::register(&mut lib_map);
     #[cfg(feature = "lib-serde")]
     serde::register(&mut lib_map);
     #[cfg(feature = "lib-sqlite")]

@@ -1042,3 +1042,55 @@ rows = Sqlite.query(db, "select id, name from items")
 rows_bytes = Sqlite.query_bytes(db, "select id, name from items")
 puts rows
 ```
+
+### std::lib::Russh
+`std::lib::Russh` (alias: `std::lib::russh`) exposes SSH client/server primitives.
+```ruby
+use std::lib::Russh
+Russh = std::lib::Russh
+
+server = Russh.server_start("127.0.0.1:42322", "tmp_russh_host_key", "demo", "demo-pass", false)
+
+client = Russh.client_connect("127.0.0.1", 42322, true)
+if client.auth_password("demo", "demo-pass") != true
+  error "auth failed"
+end
+ch = client.open_session()
+ch.exec("echo hi", true)
+
+events = 0
+i = 0
+while i < 30
+  e = server.poll_event(200)
+  if e != nil
+    # e is a map like {"type": "...", ...}
+    puts e
+    events = events + 1
+  end
+  i = i + 1
+end
+
+if events == 0
+  error "expected at least one server event"
+end
+ch.close()
+client.disconnect("done")
+server.stop()
+```
+
+API overview:
+- `Russh.client_connect(host, port, accept_any_host_key = true) -> RusshClient`
+- `Russh.server_start(addr, host_key_path, username = nil, password = nil, allow_none = false) -> RusshServer`
+- `RusshClient.auth_none(user) -> bool`
+- `RusshClient.auth_password(user, password) -> bool`
+- `RusshClient.open_session() -> RusshChannel`
+- `RusshClient.disconnect(message = "closed by client")`
+- `RusshClient.is_closed() -> bool`
+- `RusshChannel.exec(command, want_reply = true)`
+- `RusshChannel.write(bytes_or_string) -> int`
+- `RusshChannel.eof()`
+- `RusshChannel.close()`
+- `RusshChannel.wait() -> map | nil` (client channels)
+- `RusshChannel.handle_id() -> int`
+- `RusshServer.poll_event(timeout_ms = 0) -> map | nil`
+- `RusshServer.stop()`

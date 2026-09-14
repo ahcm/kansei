@@ -1748,11 +1748,7 @@ fn parse_format_parts(content: &str, line: usize) -> Result<Vec<FormatPart>, Run
             {
                 return Err(RuntimeError::simple("Empty format string expression".to_string(), line));
             }
-            let parse_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let lexer = crate::lexer::Lexer::new(&expr_str);
-                let mut parser = crate::parser::Parser::new(lexer);
-                parser.parse()
-            }));
+            let parse_result = crate::parser::parse_source(&expr_str);
             let expr = match parse_result
             {
                 Ok(expr) => expr,
@@ -18257,11 +18253,7 @@ impl Interpreter
     {
         let source = fs::read_to_string(file_path).map_err(|e| RuntimeError::simple(format!("Failed to read module file: {}", e), line))?;
 
-        let parse_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let lexer = crate::lexer::Lexer::new(&source);
-            let mut parser = crate::parser::Parser::new(lexer);
-            parser.parse()
-        }));
+        let parse_result = crate::parser::parse_source(&source);
 
         let mut ast = match parse_result
         {

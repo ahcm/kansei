@@ -355,11 +355,7 @@ fn run_file(
     };
 
     // 1. Parse
-    let parse_result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-        let lexer = lexer::Lexer::new(&source);
-        let mut parser = parser::Parser::new(lexer);
-        parser.parse()
-    }));
+    let parse_result = parser::parse_source(&source);
 
     match parse_result
     {
@@ -417,18 +413,7 @@ fn run_file(
         }
         Err(e) =>
         {
-            if let Some(s) = e.downcast_ref::<&str>()
-            {
-                eprintln!("Syntax Error: {}", s);
-            }
-            else if let Some(s) = e.downcast_ref::<String>()
-            {
-                eprintln!("Syntax Error: {}", s);
-            }
-            else
-            {
-                eprintln!("Syntax Error");
-            }
+            eprintln!("Syntax Error: {e}");
             std::process::exit(1);
         }
     }
@@ -446,11 +431,7 @@ fn run_source(
     bytecode_mode: eval::BytecodeMode,
 )
 {
-    let parse_result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-        let lexer = lexer::Lexer::new(&source);
-        let mut parser = parser::Parser::new(lexer);
-        parser.parse()
-    }));
+    let parse_result = parser::parse_source(&source);
 
     match parse_result
     {
@@ -507,18 +488,7 @@ fn run_source(
         }
         Err(e) =>
         {
-            if let Some(s) = e.downcast_ref::<&str>()
-            {
-                eprintln!("Syntax Error in {}: {}", label, s);
-            }
-            else if let Some(s) = e.downcast_ref::<String>()
-            {
-                eprintln!("Syntax Error in {}: {}", label, s);
-            }
-            else
-            {
-                eprintln!("Syntax Error in {}", label);
-            }
+            eprintln!("Syntax Error in {label}: {e}");
             std::process::exit(1);
         }
     }
@@ -684,11 +654,7 @@ fn run_repl(mut interpreter: eval::Interpreter) -> rustyline::Result<()>
                     let source = input_buffer.clone();
                     input_buffer.clear();
 
-                    let parse_result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-                        let lexer = lexer::Lexer::new(&source);
-                        let mut parser = parser::Parser::new(lexer);
-                        parser.parse()
-                    }));
+                    let parse_result = parser::parse_source(&source);
 
                     match parse_result
                     {
@@ -716,18 +682,7 @@ fn run_repl(mut interpreter: eval::Interpreter) -> rustyline::Result<()>
                         }
                         Err(e) =>
                         {
-                            if let Some(s) = e.downcast_ref::<&str>()
-                            {
-                                println!("Syntax Error: {}", s);
-                            }
-                            else if let Some(s) = e.downcast_ref::<String>()
-                            {
-                                println!("Syntax Error: {}", s);
-                            }
-                            else
-                            {
-                                println!("Syntax Error");
-                            }
+                            println!("Syntax Error: {e}");
                         }
                     }
                 }
@@ -755,42 +710,24 @@ fn run_repl(mut interpreter: eval::Interpreter) -> rustyline::Result<()>
 // Counts keywords to see if blocks are closed
 fn is_balanced(input: &str) -> bool
 {
-    // We assume Lexer won't panic on valid chars.
-    // If it panics on invalid chars (like '!'), catch_unwind prevents crash.
-    let check = panic::catch_unwind(|| {
-        let mut lexer = lexer::Lexer::new(input);
-        let mut depth = 0;
-        loop
-        {
-            let span = lexer.next_token();
-            match span.token
-            {
-                lexer::Token::If
-                | lexer::Token::While
-                | lexer::Token::For
-                | lexer::Token::Loop
-                | lexer::Token::Fn => depth += 1,
-                lexer::Token::End | lexer::Token::RightBrace => depth -= 1, // Handle { } blocks?
-                // Wait, lexer doesn't count braces in is_balanced?
-                // `is_balanced` uses Lexer. Lexer emits RightBrace.
-                // Block `{ ... }` uses braces.
-                // `fn` uses `End`.
-                // `call { }` uses braces.
-                // So `is_balanced` should count braces too!
-                // Also `Fn` token was added to lexer? Yes.
-                lexer::Token::LeftBrace => depth += 1,
-                lexer::Token::EOF => break,
-                _ =>
-                {}
-            }
-        }
-        depth
-    });
-
-    match check
+    let mut lexer = lexer::Lexer::new(input);
+    let mut depth = 0;
+    loop
     {
-        Ok(depth) => depth <= 0,
-        Err(_) => true, // If lexer crashed, let parser handle (and crash/report) it
+        let span = match lexer.next_token() {
+            Ok(span) => span,
+            Err(_) => return true, // Let the parser report the lexical error.
+        };
+        match span.token
+        {
+            lexer::Token::If | lexer::Token::While | lexer::Token::For
+            | lexer::Token::Loop | lexer::Token::Collect | lexer::Token::Fn
+            | lexer::Token::LeftBrace | lexer::Token::LeftParen | lexer::Token::LeftBracket => depth += 1,
+            lexer::Token::End | lexer::Token::RightBrace | lexer::Token::RightParen
+            | lexer::Token::RightBracket => depth -= 1,
+            lexer::Token::EOF => return depth <= 0,
+            _ => {},
+        }
     }
 }
 
@@ -873,30 +810,7 @@ fn collect_ks_files(path: &std::path::Path, out: &mut Vec<PathBuf>)
 
 fn parse_source_string(source: &str) -> Result<ast::Expr, String>
 {
-    let parse_result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-        let lexer = lexer::Lexer::new(source);
-        let mut parser = parser::Parser::new(lexer);
-        parser.parse()
-    }));
-    match parse_result
-    {
-        Ok(ast) => Ok(ast),
-        Err(e) =>
-        {
-            if let Some(s) = e.downcast_ref::<&str>()
-            {
-                Err(s.to_string())
-            }
-            else if let Some(s) = e.downcast_ref::<String>()
-            {
-                Err(s.clone())
-            }
-            else
-            {
-                Err("Syntax Error".to_string())
-            }
-        }
-    }
+    parser::parse_source(source).map_err(|err| err.to_string())
 }
 
 fn run_fmt(paths: &[String]) -> i32

@@ -256,7 +256,9 @@ fn native_bytes_slice_view(args: &[Value]) -> Result<Value, String>
     {
         return Err("Bytes.slice_view expects non-negative start and length".to_string());
     }
+    #[cfg(feature = "lib-mmap")]
     let start = start as usize;
+    #[cfg(feature = "lib-mmap")]
     let len = len as usize;
     match value
     {

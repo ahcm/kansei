@@ -4,12 +4,12 @@ use std::fs;
 use std::path::Path;
 use std::rc::Rc;
 #[cfg(feature = "wasmi")]
-use wasmi::core::ValueType as WasmiValueType;
+use wasmi::ValType as WasmiValueType;
 #[cfg(feature = "wasmi")]
 use wasmi::{
     Engine as WasmiEngine, ExternType as WasmiExternType, Func as WasmiFunc,
     FuncType as WasmiFuncType, Instance as WasmiInstance, Linker as WasmiLinker,
-    Memory as WasmiMemory, Module as WasmiModule, Store as WasmiStore, Value as WasmiValue,
+    Memory as WasmiMemory, Module as WasmiModule, Store as WasmiStore, Val as WasmiValue,
 };
 
 use wasmtime::{
@@ -451,10 +451,8 @@ impl WasmModule
         }
 
         let instance = linker
-            .instantiate(&mut store, &module)
-            .map_err(|e| format!("Failed to instantiate wasm module: {}", e))?
-            .start(&mut store)
-            .map_err(|e| format!("Failed to start wasm module: {}", e))?;
+            .instantiate_and_start(&mut store, &module)
+            .map_err(|e| format!("Failed to instantiate/start wasm module: {}", e))?;
 
         let memory = instance
             .get_export(&store, "memory")
@@ -609,5 +607,36 @@ impl WasmModule
             functions,
             func_types,
         })))
+    }
+}
+
+#[cfg(test)]
+mod tests
+{
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn loads_and_calls_scalar_wasm_on_enabled_backends()
+    {
+        // (module (func (export "add") (param i32 i32) (result i32)
+        //   local.get 0 local.get 1 i32.add))
+        let bytes = b"\0asm\x01\0\0\0\x01\x07\x01\x60\x02\x7f\x7f\x01\x7f\x03\x02\x01\0\x07\x07\x01\x03add\0\0\x0a\x09\x01\x07\0\x20\0\x20\x01\x6a\x0b";
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(bytes).unwrap();
+        let backends = [
+            WasmBackend::Wasmtime,
+            #[cfg(feature = "wasmi")]
+            WasmBackend::Wasmi,
+        ];
+        for backend in backends
+        {
+            let module = WasmModule::load(file.path(), backend).unwrap();
+            let mut module = module.borrow_mut();
+            let function = module.functions.get(&Rc::new("add".to_string())).unwrap().clone();
+            let mut results = [WasmValue::I32(0)];
+            module.call_func(&function, &[WasmValue::I32(20), WasmValue::I32(22)], &mut results).unwrap();
+            assert!(matches!(results[0], WasmValue::I32(42)));
+        }
     }
 }

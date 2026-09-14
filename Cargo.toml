@@ -22,6 +22,7 @@ panic = "unwind"   # Keep runtime panic recovery consistent with development bui
 opt-level = 3      # Maximize speed (default is 3, but good to be explicit)
 
 [dependencies]
+tempfile = "3.27"
 directories = "6.0.0"
 rustc-hash = "2.1.1"
 rustyline = "17.0.2"

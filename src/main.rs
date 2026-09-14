@@ -12,6 +12,8 @@ mod pm;
 mod sexpr;
 mod source;
 mod formatter;
+mod source_files;
+mod test_runner;
 mod value;
 mod wasm;
 mod wasm_pm;
@@ -770,7 +772,7 @@ fn handle_subcommand(args: &[String]) -> Option<i32>
                 eprintln!("test expects a file or directory path.");
                 return Some(2);
             }
-            Some(run_tests(&args[2..]))
+            Some(test_runner::run_tests(&args[2..]))
         }
         "install" =>
         {
@@ -791,24 +793,6 @@ fn handle_subcommand(args: &[String]) -> Option<i32>
     }
 }
 
-fn collect_ks_files(path: &std::path::Path, out: &mut Vec<PathBuf>)
-{
-    if path.is_dir()
-    {
-        if let Ok(entries) = fs::read_dir(path)
-        {
-            for entry in entries.flatten()
-            {
-                collect_ks_files(&entry.path(), out);
-            }
-        }
-    }
-    else if path.extension().and_then(|s| s.to_str()) == Some("ks")
-    {
-        out.push(path.to_path_buf());
-    }
-}
-
 fn parse_source_string(source: &str) -> Result<ast::Expr, String>
 {
     parser::parse_source(source).map_err(|err| err.to_string())
@@ -819,8 +803,13 @@ fn run_fmt(paths: &[String]) -> i32
     let mut files = Vec::new();
     for path in paths
     {
-        collect_ks_files(std::path::Path::new(path), &mut files);
+        if let Err(error) = source_files::collect(std::path::Path::new(path), &mut files) {
+            eprintln!("{error}");
+            return 1;
+        }
     }
+    files.sort();
+    files.dedup();
     if files.is_empty()
     {
         eprintln!("fmt found no .ks files.");
@@ -905,8 +894,13 @@ fn run_check(paths: &[String]) -> i32
     let mut files = Vec::new();
     for path in paths
     {
-        collect_ks_files(std::path::Path::new(path), &mut files);
+        if let Err(error) = source_files::collect(std::path::Path::new(path), &mut files) {
+            eprintln!("{error}");
+            return 1;
+        }
     }
+    files.sort();
+    files.dedup();
     if files.is_empty()
     {
         eprintln!("check found no .ks files.");
@@ -934,97 +928,3 @@ fn run_check(paths: &[String]) -> i32
     if failures > 0 { 1 } else { 0 }
 }
 
-fn run_tests(paths: &[String]) -> i32
-{
-    let mut files = Vec::new();
-    for path in paths
-    {
-        collect_ks_files(std::path::Path::new(path), &mut files);
-    }
-    if files.is_empty()
-    {
-        eprintln!("test found no .ks files.");
-        return 1;
-    }
-
-    let exe = match env::current_exe()
-    {
-        Ok(exe) => exe,
-        Err(e) =>
-        {
-            eprintln!("test failed to resolve current executable: {}", e);
-            return 1;
-        }
-    };
-
-    let mut failures = 0;
-    for file in files
-    {
-        let output = match process::Command::new(&exe).arg(&file).output()
-        {
-            Ok(output) => output,
-            Err(e) =>
-            {
-                eprintln!("test failed to run {}: {}", file.display(), e);
-                failures += 1;
-                continue;
-            }
-        };
-        if !output.status.success()
-        {
-            eprintln!("test failed (non-zero exit): {}", file.display());
-            failures += 1;
-            continue;
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let out_path = file.with_extension("out");
-        let err_path = file.with_extension("err");
-
-        if out_path.exists()
-        {
-            match fs::read_to_string(&out_path)
-            {
-                Ok(expected) =>
-                {
-                    if expected != stdout
-                    {
-                        eprintln!("test stdout mismatch: {}", file.display());
-                        failures += 1;
-                        continue;
-                    }
-                }
-                Err(e) =>
-                {
-                    eprintln!("test failed to read {}: {}", out_path.display(), e);
-                    failures += 1;
-                    continue;
-                }
-            }
-        }
-        if err_path.exists()
-        {
-            match fs::read_to_string(&err_path)
-            {
-                Ok(expected) =>
-                {
-                    if expected != stderr
-                    {
-                        eprintln!("test stderr mismatch: {}", file.display());
-                        failures += 1;
-                        continue;
-                    }
-                }
-                Err(e) =>
-                {
-                    eprintln!("test failed to read {}: {}", err_path.display(), e);
-                    failures += 1;
-                    continue;
-                }
-            }
-        }
-    }
-
-    if failures > 0 { 1 } else { 0 }
-}

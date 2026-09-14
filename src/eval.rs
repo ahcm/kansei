@@ -1273,6 +1273,7 @@ fn value_to_bytes(value: &Value, line: usize, label: &str) -> Result<Vec<u8>, Ru
         Value::String(s) => Ok(s.as_bytes().to_vec()),
         Value::Bytes(bytes) => Ok(bytes.as_ref().clone()),
         Value::ByteBuf(buf) => Ok(buf.borrow().clone()),
+        #[cfg(feature = "lib-mmap") ]
         Value::BytesView(view) =>
         {
             let end = view.offset.saturating_add(view.len);
@@ -1286,7 +1287,9 @@ fn value_to_bytes(value: &Value, line: usize, label: &str) -> Result<Vec<u8>, Ru
                 }
             }
         }
+        #[cfg(feature = "lib-mmap") ]
         Value::Mmap(mmap) => Ok(mmap.as_ref().to_vec()),
+        #[cfg(feature = "lib-mmap") ]
         Value::MmapMut(mmap) => Ok(mmap.borrow().as_ref().to_vec()),
         _ => Err(RuntimeError::simple(format!("{label} expects bytes"), line)),
     }
@@ -12480,6 +12483,7 @@ fn eval_index_cached_value(
                 return Err(err_index_requires_int());
             }
         }
+        #[cfg(feature = "lib-mmap") ]
         Value::BytesView(view) =>
         {
             if let Some(i) = int_value_as_usize(&index_val)
@@ -12520,6 +12524,7 @@ fn eval_index_cached_value(
                 return Err(err_index_requires_int());
             }
         }
+        #[cfg(feature = "lib-mmap") ]
         Value::Mmap(mmap) =>
         {
             if let Some(i) = int_value_as_usize(&index_val)
@@ -12550,6 +12555,7 @@ fn eval_index_cached_value(
                 return Err(err_index_requires_int());
             }
         }
+        #[cfg(feature = "lib-mmap") ]
         Value::MmapMut(mmap) =>
         {
             if let Some(i) = int_value_as_usize(&index_val)
@@ -12886,6 +12892,7 @@ fn eval_index_assign_value(
                 return Err(err_index_requires_int());
             }
         }
+        #[cfg(feature = "lib-mmap") ]
         Value::MmapMut(mmap) =>
         {
             if let Some(i) = int_value_as_usize(&index_val)
@@ -13783,10 +13790,13 @@ fn execute_reg_instructions(
                         Value::I64Array(arr) => default_int(arr.borrow().len() as i128),
                         Value::Bytes(bytes) => default_int(bytes.len() as i128),
                         Value::ByteBuf(buf) => default_int(buf.borrow().len() as i128),
+                        #[cfg(feature = "lib-mmap") ]
                         Value::BytesView(view) => default_int(view.len as i128),
                         Value::Map(map) => default_int(map.borrow().data.len() as i128),
                         Value::Env(env) => default_int(env.data.len() as i128),
+                        #[cfg(feature = "lib-mmap") ]
                         Value::Mmap(mmap) => default_int(mmap.len() as i128),
+                        #[cfg(feature = "lib-mmap") ]
                         Value::MmapMut(mmap) => default_int(mmap.borrow().len() as i128),
                         _ => default_int(0),
                     };
@@ -14960,10 +14970,13 @@ fn execute_instructions(
                         Value::I64Array(arr) => default_int(arr.borrow().len() as i128),
                         Value::Bytes(bytes) => default_int(bytes.len() as i128),
                         Value::ByteBuf(buf) => default_int(buf.borrow().len() as i128),
+                        #[cfg(feature = "lib-mmap") ]
                         Value::BytesView(view) => default_int(view.len as i128),
                         Value::Map(map) => default_int(map.borrow().data.len() as i128),
                         Value::Env(env) => default_int(env.data.len() as i128),
+                        #[cfg(feature = "lib-mmap") ]
                         Value::Mmap(mmap) => default_int(mmap.len() as i128),
+                        #[cfg(feature = "lib-mmap") ]
                         Value::MmapMut(mmap) => default_int(mmap.borrow().len() as i128),
                         _ => default_int(0),
                     };
@@ -15850,6 +15863,7 @@ fn execute_instructions(
                                 return Err(err_index_requires_int());
                             }
                         }
+                        #[cfg(feature = "lib-mmap") ]
                         Value::BytesView(view) =>
                         {
                             if let Some(i) = int_value_as_usize(&index_val)
@@ -15878,6 +15892,7 @@ fn execute_instructions(
                                 return Err(err_index_requires_int());
                             }
                         }
+                        #[cfg(feature = "lib-mmap") ]
                         Value::Mmap(mmap) =>
                         {
                             if let Some(i) = int_value_as_usize(&index_val)
@@ -15896,6 +15911,7 @@ fn execute_instructions(
                                 return Err(err_index_requires_int());
                             }
                         }
+                        #[cfg(feature = "lib-mmap") ]
                         Value::MmapMut(mmap) =>
                         {
                             if let Some(i) = int_value_as_usize(&index_val)
@@ -18555,10 +18571,13 @@ impl Interpreter
                     Value::I64Array(arr) => Ok(default_int(arr.borrow().len() as i128)),
                     Value::Bytes(bytes) => Ok(default_int(bytes.len() as i128)),
                     Value::ByteBuf(buf) => Ok(default_int(buf.borrow().len() as i128)),
+                    #[cfg(feature = "lib-mmap") ]
                     Value::BytesView(view) => Ok(default_int(view.len as i128)),
                     Value::Map(map) => Ok(default_int(map.borrow().data.len() as i128)),
                     Value::Env(env) => Ok(default_int(env.data.len() as i128)),
+                    #[cfg(feature = "lib-mmap") ]
                     Value::Mmap(mmap) => Ok(default_int(mmap.len() as i128)),
+                    #[cfg(feature = "lib-mmap") ]
                     Value::MmapMut(mmap) => Ok(default_int(mmap.borrow().len() as i128)),
                     _ => Ok(default_int(0)),
                 }
@@ -18624,6 +18643,7 @@ impl Interpreter
                     Value::I64Array(_) => "I64Array",
                     Value::Bytes(_) => "Bytes",
                     Value::ByteBuf(_) => "ByteBuf",
+                    #[cfg(feature = "lib-mmap") ]
                     Value::BytesView(_) => "BytesView",
                     Value::StructType(ty) =>
                     {
@@ -18637,9 +18657,13 @@ impl Interpreter
                     Value::Map(_) => "Map",
                     Value::Env(_) => "Env",
                     Value::Ast(_) => "Ast",
+                    #[cfg(feature = "lib-polars") ]
                     Value::DataFrame(_) => "DataFrame",
+                    #[cfg(feature = "lib-sqlite") ]
                     Value::Sqlite(_) => "Sqlite",
+                    #[cfg(feature = "lib-mmap") ]
                     Value::Mmap(_) => "Mmap",
+                    #[cfg(feature = "lib-mmap") ]
                     Value::MmapMut(_) => "MmapMut",
                     #[cfg(feature = "lib-net")]
                     Value::NetStream(_) => "NetStream",
@@ -21522,10 +21546,13 @@ impl Interpreter
                                 Value::F64Array(arr) => Ok(default_int(arr.borrow().len() as i128)),
                                 Value::Bytes(bytes) => Ok(default_int(bytes.len() as i128)),
                                 Value::ByteBuf(buf) => Ok(default_int(buf.borrow().len() as i128)),
+                                #[cfg(feature = "lib-mmap") ]
                                 Value::BytesView(view) => Ok(default_int(view.len as i128)),
                                 Value::Map(map) => Ok(default_int(map.borrow().data.len() as i128)),
                                 Value::Env(env) => Ok(default_int(env.data.len() as i128)),
+                                #[cfg(feature = "lib-mmap") ]
                                 Value::Mmap(mmap) => Ok(default_int(mmap.len() as i128)),
+                                #[cfg(feature = "lib-mmap") ]
                                 Value::MmapMut(mmap) =>
                                 {
                                     Ok(default_int(mmap.borrow().len() as i128))

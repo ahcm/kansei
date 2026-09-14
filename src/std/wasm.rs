@@ -158,6 +158,7 @@ fn value_type_name(value: &Value) -> &'static str
         Value::I64Array(_) => "I64Array",
         Value::Bytes(_) => "Bytes",
         Value::ByteBuf(_) => "ByteBuf",
+        #[cfg(feature = "lib-mmap") ]
         Value::BytesView(_) => "BytesView",
         Value::StructType(_) => "StructType",
         Value::StructInstance(_) => "Struct",
@@ -165,9 +166,13 @@ fn value_type_name(value: &Value) -> &'static str
         Value::Map(_) => "Map",
         Value::Env(_) => "Env",
         Value::Ast(_) => "Ast",
+        #[cfg(feature = "lib-polars") ]
         Value::DataFrame(_) => "DataFrame",
+        #[cfg(feature = "lib-sqlite") ]
         Value::Sqlite(_) => "Sqlite",
+        #[cfg(feature = "lib-mmap") ]
         Value::Mmap(_) => "Mmap",
+        #[cfg(feature = "lib-mmap") ]
         Value::MmapMut(_) => "MmapMut",
         #[cfg(feature = "lib-net")]
         Value::NetStream(_) => "NetStream",

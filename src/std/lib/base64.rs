@@ -41,6 +41,7 @@ fn bytes_from_array(value: &Value, name: &str) -> Result<Vec<u8>, String>
         }
         Value::Bytes(bytes) => Ok(bytes.as_ref().clone()),
         Value::ByteBuf(buf) => Ok(buf.borrow().clone()),
+        #[cfg(feature = "lib-mmap") ]
         Value::BytesView(view) =>
         {
             let end = view.offset.saturating_add(view.len);

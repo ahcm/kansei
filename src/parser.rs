@@ -146,7 +146,7 @@ impl Parser
 
     fn parse_expression(&mut self) -> Result<Expr, ParseError>
     {
-        Ok({ self.parse_or()? })
+        self.parse_or()
     }
 
     fn parse_or(&mut self) -> Result<Expr, ParseError>
@@ -2166,7 +2166,7 @@ impl Parser
             let mut in_string = false;
             let mut string_delim = '\0';
             let mut split_at: Option<usize> = None;
-            for (idx, ch) in input.chars().enumerate()
+            for (idx, ch) in input.char_indices()
             {
                 if in_string
                 {
@@ -2261,6 +2261,13 @@ mod tests
         {
             assert!(parse_source(source).is_err(), "accepted {source:?}");
         }
+    }
+
+    #[test]
+    fn unicode_format_expressions_use_byte_boundaries()
+    {
+        assert!(parse_source("café = 1.5\nf\"{café:.2}\"").is_ok());
+        assert!(parse_source("f\"{café:}\"").is_err());
     }
 
     #[test]

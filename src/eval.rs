@@ -1534,7 +1534,7 @@ fn split_format_expr(input: &str, line: usize)
     let mut in_string = false;
     let mut string_delim = '\0';
     let mut split_at: Option<usize> = None;
-    for (idx, ch) in input.chars().enumerate()
+    for (idx, ch) in input.char_indices()
     {
         if in_string
         {

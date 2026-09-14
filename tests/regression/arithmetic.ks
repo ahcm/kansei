@@ -9,3 +9,5 @@ assert_eq(nil or 7, true)
 assert_eq(true && false, false)
 assert_eq(false || true, true)
 assert_eq(f"answer: {3 + 4}", "answer: 7")
+café = 1.5
+assert_eq(f"{café:.2}", "1.50")

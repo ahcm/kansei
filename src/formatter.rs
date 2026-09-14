@@ -17,15 +17,41 @@ pub fn format_source(source: &str) -> Result<String, ParseError>
     loop
     {
         let span = lexer.next_token()?;
-        if span.token == Token::EOF { break; }
+        if span.token == Token::EOF
+        {
+            break;
+        }
         let member = matches!(previous, Token::Dot | Token::ColonColon);
-        let closes = matches!(span.token, Token::End | Token::RightBrace | Token::RightBracket | Token::RightParen) && !member;
+        let closes = matches!(
+            span.token,
+            Token::End | Token::RightBrace | Token::RightBracket | Token::RightParen
+        ) && !member;
         let branch = matches!(span.token, Token::Else | Token::Elif) && !member;
         let line = span.line - 1;
-        if closes { depth = depth.saturating_sub(1); }
-        if indent[line].is_none() { indent[line] = Some(depth.saturating_sub(usize::from(branch))); }
-        if !member && matches!(span.token, Token::Fn | Token::If | Token::While | Token::For | Token::Loop | Token::Collect
-            | Token::LeftBrace | Token::LeftBracket | Token::LeftParen) { depth += 1; }
+        if closes
+        {
+            depth = depth.saturating_sub(1);
+        }
+        if indent[line].is_none()
+        {
+            indent[line] = Some(depth.saturating_sub(usize::from(branch)));
+        }
+        if !member
+            && matches!(
+                span.token,
+                Token::Fn
+                    | Token::If
+                    | Token::While
+                    | Token::For
+                    | Token::Loop
+                    | Token::Collect
+                    | Token::LeftBrace
+                    | Token::LeftBracket
+                    | Token::LeftParen
+            )
+        {
+            depth += 1;
+        }
         after[line] = Some(depth);
         previous = span.token;
     }
@@ -42,7 +68,10 @@ pub fn format_source(source: &str) -> Result<String, ParseError>
             output.push_str(&"  ".repeat(indent[index].unwrap_or(depth)));
             output.push_str(line.trim_start_matches([' ', '\t']));
         }
-        if let Some(next) = after[index] { depth = next; }
+        if let Some(next) = after[index]
+        {
+            depth = next;
+        }
     }
     Ok(output)
 }
@@ -66,12 +95,24 @@ fn protected_lines(source: &str) -> Vec<bool>
             escaped = false;
             continue;
         }
-        if line_comment { continue; }
+        if line_comment
+        {
+            continue;
+        }
         if let Some(delimiter) = quote
         {
-            if escaped { escaped = false; }
-            else if ch == '\\' { escaped = true; }
-            else if ch == delimiter { quote = None; }
+            if escaped
+            {
+                escaped = false;
+            }
+            else if ch == '\\'
+            {
+                escaped = true;
+            }
+            else if ch == delimiter
+            {
+                quote = None;
+            }
             continue;
         }
         if ch == '(' && chars.peek() == Some(&'*')
@@ -81,10 +122,20 @@ fn protected_lines(source: &str) -> Vec<bool>
         }
         else if comment_depth > 0
         {
-            if ch == '*' && chars.peek() == Some(&')') { chars.next(); comment_depth -= 1; }
+            if ch == '*' && chars.peek() == Some(&')')
+            {
+                chars.next();
+                comment_depth -= 1;
+            }
         }
-        else if ch == '#' { line_comment = true; }
-        else if ch == '"' || ch == '`' { quote = Some(ch); }
+        else if ch == '#'
+        {
+            line_comment = true;
+        }
+        else if ch == '"' || ch == '`'
+        {
+            quote = Some(ch);
+        }
     }
     protected
 }
@@ -98,9 +149,13 @@ mod tests
     {
         let mut lexer = Lexer::new(source);
         let mut tokens = Vec::new();
-        loop {
+        loop
+        {
             let token = lexer.next_token().unwrap().token;
-            if token == Token::EOF { return tokens; }
+            if token == Token::EOF
+            {
+                return tokens;
+            }
             tokens.push(token);
         }
     }
@@ -121,7 +176,13 @@ mod tests
     #[test]
     fn preserves_line_endings_and_comment_only_source()
     {
-        for source in ["# only\r\n", "(* first\n  second *)", "", "puts `echo hi\n  echo there`\n"] {
+        for source in [
+            "# only\r\n",
+            "(* first\n  second *)",
+            "",
+            "puts `echo hi\n  echo there`\n",
+        ]
+        {
             assert_eq!(source, format_source(source).unwrap());
         }
         assert!(format_source("end ignored").is_err());

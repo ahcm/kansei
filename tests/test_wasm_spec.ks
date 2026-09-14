@@ -9,5 +9,5 @@ spec = {
 }
 
 assert(wasm.validate(spec, "sum", 1, 2))
-assert(!wasm.validate(spec, "sum", "x", 2))
+assert(not wasm.validate(spec, "sum", "x", 2))
 assert(wasm.validate(spec, "mean", [1.0, 2.0, 3.0]))

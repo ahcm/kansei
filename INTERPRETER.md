@@ -16,18 +16,32 @@ kansei [options] [script] [args...]
 - `-l`, `--log <path>` — write log output to a file (default: stderr)
 
 ### Commands
-- `kansei fmt <path>` — format `.ks` files in place
+- `kansei fmt <path>` — format indentation in `.ks` files in place, preserving comments and literal contents
 - `kansei check <path>` — parse `.ks` files and exit non-zero on errors
-- `kansei test <path>` — run `.ks` files and compare against `.out`/`.err` if present
+- `kansei test <path>` — run `.ks` files in all execution modes; compare `.out`/`.err` and expected `.status` if present
 - `kansei install [path]` — install modules from `kansei.toml` or local paths
-- `kansei lsp` — start Language Server over stdio (diagnostics only)
+- `kansei lsp` — start Language Server over stdio (syntax diagnostics, hover, and definitions)
+
+### Test runner options
+
+`kansei test [--bytecode off|simple|advanced|all] [--timeout seconds] <paths...>`
+runs sorted, deduplicated files. Defaults are all modes and 30 seconds per run.
+See [tests/README.md](tests/README.md) for snapshots and expected failures.
+
+### Local module installation
+
+Dependency names must contain only ASCII letters, digits, `_`, or `-`. Manifest
+paths are resolved relative to `kansei.toml`. Installation stages a complete
+replacement before moving the existing module aside, with rollback on replacement
+failure. Source trees must contain `.ks` files; symbolic links within the tree and
+overlapping source/destination trees are rejected.
 
 ## LSP (Language Server) Usage
 The language server is started with:
 ```
 kansei lsp
 ```
-It provides diagnostics and hover on symbols defined in the current document.
+It reports syntax diagnostics on open/change, clears them after correction, and provides symbol hover and definitions.
 
 ### LSP Debug Logging
 Set `KANSEI_LSP_LOG` to a file path to capture basic LSP diagnostics:

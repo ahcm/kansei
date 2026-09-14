@@ -11,6 +11,7 @@ mod parser;
 mod pm;
 mod sexpr;
 mod source;
+mod formatter;
 mod value;
 mod wasm;
 mod wasm_pm;
@@ -839,11 +840,10 @@ fn run_fmt(paths: &[String]) -> i32
                 continue;
             }
         };
-        match parse_source_string(&content)
+        match formatter::format_source(&content)
         {
-            Ok(ast) =>
+            Ok(formatted_source) =>
             {
-                let formatted_source = source::expr_to_source(&ast);
                 if formatted_source != content
                 {
                     if let Err(e) = fs::write(&file, formatted_source)
@@ -885,11 +885,10 @@ fn run_fmt_stdin() -> i32
         eprintln!("fmt --stdin failed to read input.");
         return 1;
     }
-    match parse_source_string(&input)
+    match formatter::format_source(&input)
     {
-        Ok(ast) =>
+        Ok(formatted) =>
         {
-            let formatted = source::expr_to_source(&ast);
             print!("{formatted}");
             0
         }

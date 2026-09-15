@@ -5419,3 +5419,18 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
     Ok(ctx.out)
 }
 
+
+#[cfg(test)]
+mod tests
+{
+    use super::*;
+
+    #[test]
+    fn generated_wasip1_wat_validates()
+    {
+        let mut ast = crate::parser::parse_source("puts 1 + 2").unwrap();
+        resolve_slots(&mut ast);
+        let text = dump_wat(&ast, WasiTarget::Wasip1).unwrap();
+        wasmtime::Module::new(&wasmtime::Engine::default(), text.as_bytes()).unwrap();
+    }
+}

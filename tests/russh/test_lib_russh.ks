@@ -22,7 +22,7 @@ else
   server = Russh.server_start(f"127.0.0.1:{chosen_port}", key_path, "demo", "demo-pass", true)
   OS.run("sleep", ["0.2"])
   client = Russh.client_connect("127.0.0.1", i64(chosen_port), true)
-  if client.auth_none("demo") == true
+  if client.auth_none("demo")
     ch = client.open_session()
     ch.exec("echo hi", true)
 

@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check individual optional modules
         run: |
-          for feature in lib-base64 lib-bytes lib-clap lib-crypto lib-csv lib-datetime lib-egui lib-flate2 lib-http lib-image lib-math lib-mmap lib-net lib-path lib-polars lib-regex lib-serde lib-sqlite lib-tests lib-toml lib-tui lib-uuid lib-yaml wasmi; do
+          for feature in lib-base64 lib-bytes lib-clap lib-crypto lib-csv lib-datetime lib-egui lib-flate2 lib-http lib-image lib-math lib-mmap lib-net lib-path lib-polars lib-regex lib-russh lib-serde lib-sqlite lib-tests lib-toml lib-tui lib-uuid lib-yaml wasmi; do
             cargo check --locked --no-default-features --features "$feature" -j 2
           done
           cargo test --locked --no-default-features --features wasmi -j 2

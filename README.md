@@ -71,8 +71,9 @@ rule is the same. Use `--dump-bytecode` to inspect what actually compiles.
 - `kansei lsp` starts the language server over stdio, with syntax diagnostics, hover, and definitions.
 
 WAT generation is available with `kansei --dump-wat --wasi wasip1 <script>`;
-`--wasi wasip2` selects the alternate target. The compiler supports a subset of
-the language; unsupported constructs produce an error.
+`--wasi wasip2` retains the upstream experimental emitter, whose output currently
+lacks required runtime imports. Use `wasip1` for executable output. The compiler
+supports a subset of the language; unsupported constructs produce an error.
 
 WASM installation uses `../kansei-wasm-modules` when present, otherwise
 `https://github.com/ahcm/kansei-wasm-modules`, and targets `wasm32-wasip1`.

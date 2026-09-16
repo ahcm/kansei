@@ -3856,6 +3856,13 @@ impl Interpreter
             if data.uses_env
             {
                 let new_env = self.get_env(Some(data.env.clone()), false);
+                // Rebind partially applied parameters in this call frame so writes
+                // through references update the shared cell instead of shadowing it.
+                for (slot, value) in data.bound_args.iter()
+                {
+                    let name = intern::intern_symbol(data.declarations[*slot].as_str());
+                    new_env.borrow_mut().define(name, value.clone());
+                }
                 for (param, val) in data.params.iter().zip(coerced_args.iter().cloned())
                 {
                     new_env.borrow_mut().define(param.name, val);
@@ -3890,16 +3897,23 @@ impl Interpreter
             if data.uses_env
             {
                 let new_env = self.get_env(Some(data.env.clone()), false);
+                // Rebind partially applied parameters in this call frame so writes
+                // through references update the shared cell instead of shadowing it.
+                for (slot, value) in data.bound_args.iter()
+                {
+                    let name = intern::intern_symbol(data.declarations[*slot].as_str());
+                    new_env.borrow_mut().define(name, value.clone());
+                }
                 for (param, val) in data.params.iter().zip(coerced_args.iter().cloned())
                 {
                     new_env.borrow_mut().define(param.name, val);
                 }
                 let original_env = self.env.clone();
                 self.env = new_env.clone();
-                let result = handle_eval_result(self.eval(&data.body, &mut new_slots))?;
+                let result = handle_eval_result(self.eval(&data.body, &mut new_slots));
                 self.env = original_env;
                 self.recycle_env(new_env);
-                return Ok(result);
+                return result;
             }
             return handle_eval_result(self.eval(&data.body, &mut new_slots));
         }
@@ -3918,6 +3932,8 @@ impl Interpreter
             Value::Uninitialized,
             data.declarations.len(),
         );
+        self.ensure_slot_capacity(&mut new_slots, data.param_offset, data.params.len(), &data.bound_args);
+        self.apply_bound_args(&data.bound_args, &mut new_slots);
         for (i, val) in coerced_args.into_iter().enumerate()
         {
             new_slots[i + data.param_offset] = val;
@@ -3926,6 +3942,13 @@ impl Interpreter
         let result = if data.uses_env
         {
             let new_env = self.get_env(Some(data.env.clone()), false);
+            // Rebind partially applied parameters in this call frame so writes
+            // through references update the shared cell instead of shadowing it.
+            for (slot, value) in data.bound_args.iter()
+            {
+                let name = intern::intern_symbol(data.declarations[*slot].as_str());
+                new_env.borrow_mut().define(name, value.clone());
+            }
             for (i, param) in data.params.iter().enumerate()
             {
                 let val = new_slots[i + data.param_offset].clone();
@@ -3933,17 +3956,17 @@ impl Interpreter
             }
             let original_env = self.env.clone();
             self.env = new_env.clone();
-            let result = handle_eval_result(self.eval(&data.body, &mut new_slots))?;
+            let result = handle_eval_result(self.eval(&data.body, &mut new_slots));
             self.env = original_env;
             self.recycle_env(new_env);
             result
         }
         else
         {
-            handle_eval_result(self.eval(&data.body, &mut new_slots))?
+            handle_eval_result(self.eval(&data.body, &mut new_slots))
         };
         self.block_stack.pop();
-        Ok(result)
+        result
     }
 
     pub fn call_value_from_host(

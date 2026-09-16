@@ -194,6 +194,10 @@ pub(super) fn build_slot_map(
             slot_names.push(symbol_name(l));
         }
     }
+    for param in params.iter().filter(|param| param.is_ref)
+    {
+        slot_map.remove(&param.name);
+    }
     (slot_map, slot_names)
 }
 
@@ -4123,41 +4127,62 @@ pub(super) fn should_compile(simple: bool, _uses_env: bool, mode: BytecodeMode) 
 
 pub(super) fn resolve(expr: &mut Expr, slot_map: &FxHashMap<SymbolId, usize>)
 {
+    // Only address-taken locals need environment storage. This analysis is
+    // transient: ordinary locals and execution caches keep their existing layout.
+    let mut referenced = FxHashSet::default();
+    walk_local_exprs(expr, &mut |expr| {
+        if let ExprKind::Reference(name) = &expr.kind
+        {
+            referenced.insert(*name);
+        }
+    });
+    let slot_for = |name: &SymbolId| {
+        if referenced.contains(name) { None } else { slot_map.get(name).copied() }
+    };
+    walk_local_exprs(expr, &mut |expr| {
+        match &mut expr.kind
+        {
+            ExprKind::Identifier { name, slot }
+            | ExprKind::Assignment { name, slot, .. } => *slot = slot_for(name),
+            ExprKind::For { var, var_slot, .. } => *var_slot = slot_for(var),
+            ExprKind::Loop { var, var_slot, .. }
+            | ExprKind::Collect { var, var_slot, .. } =>
+                *var_slot = var.as_ref().and_then(&slot_for),
+            ExprKind::Result { else_binding, else_slot, .. } =>
+                *else_slot = else_binding.as_ref().and_then(&slot_for),
+            _ => {}
+        }
+    });
+}
+
+// Visit one lexical scope; nested functions resolve their own parameters/locals.
+fn walk_local_exprs(expr: &mut Expr, visit: &mut impl FnMut(&mut Expr))
+{
+    visit(expr);
     match &mut expr.kind
     {
-        ExprKind::Identifier { name, slot } =>
+        ExprKind::Assignment { value, .. } =>
         {
-            if let Some(s) = slot_map.get(name)
-            {
-                *slot = Some(*s);
-            }
-        }
-        ExprKind::Assignment { name, value, slot } =>
-        {
-            if let Some(s) = slot_map.get(name)
-            {
-                *slot = Some(*s);
-            }
-            resolve(value, slot_map);
+            walk_local_exprs(value, visit);
         }
         ExprKind::FilePublic(expr) =>
         {
-            resolve(expr, slot_map);
+            walk_local_exprs(expr, visit);
         }
         ExprKind::FunctionPublic(expr) =>
         {
-            resolve(expr, slot_map);
+            walk_local_exprs(expr, visit);
         }
         ExprKind::BinaryOp { left, right, .. } =>
         {
-            resolve(left, slot_map);
-            resolve(right, slot_map);
+            walk_local_exprs(left, visit);
+            walk_local_exprs(right, visit);
         }
         ExprKind::Block(stmts) =>
         {
             for stmt in stmts
             {
-                resolve(stmt, slot_map);
+                walk_local_exprs(stmt, visit);
             }
         }
         ExprKind::If {
@@ -4166,89 +4191,58 @@ pub(super) fn resolve(expr: &mut Expr, slot_map: &FxHashMap<SymbolId, usize>)
             else_branch,
         } =>
         {
-            resolve(condition, slot_map);
-            resolve(then_branch, slot_map);
+            walk_local_exprs(condition, visit);
+            walk_local_exprs(then_branch, visit);
             if let Some(eb) = else_branch
             {
-                resolve(eb, slot_map);
+                walk_local_exprs(eb, visit);
             }
         }
         ExprKind::Result {
             body,
             else_expr,
-            else_binding,
-            else_slot,
+            ..
         } =>
         {
-            if let Some(name) = else_binding
-            {
-                if let Some(s) = slot_map.get(name)
-                {
-                    *else_slot = Some(*s);
-                }
-            }
-            resolve(body, slot_map);
-            resolve(else_expr, slot_map);
+            walk_local_exprs(body, visit);
+            walk_local_exprs(else_expr, visit);
         }
         ExprKind::While { condition, body } =>
         {
-            resolve(condition, slot_map);
-            resolve(body, slot_map);
+            walk_local_exprs(condition, visit);
+            walk_local_exprs(body, visit);
         }
         ExprKind::For {
-            var,
-            var_slot,
             iterable,
             body,
             ..
         } =>
         {
-            if let Some(s) = slot_map.get(var)
-            {
-                *var_slot = Some(*s);
-            }
-            resolve(iterable, slot_map);
-            resolve(body, slot_map);
+            walk_local_exprs(iterable, visit);
+            walk_local_exprs(body, visit);
         }
         ExprKind::Loop {
-            var,
-            var_slot,
             count,
             body,
+            ..
         } =>
         {
-            if let Some(name) = var
-            {
-                if let Some(s) = slot_map.get(name)
-                {
-                    *var_slot = Some(*s);
-                }
-            }
-            resolve(count, slot_map);
-            resolve(body, slot_map);
+            walk_local_exprs(count, visit);
+            walk_local_exprs(body, visit);
         }
         ExprKind::Collect {
-            var,
-            var_slot,
             count,
             into,
             body,
             ..
         } =>
         {
-            if let Some(name) = var
-            {
-                if let Some(s) = slot_map.get(name)
-                {
-                    *var_slot = Some(*s);
-                }
-            }
-            resolve(count, slot_map);
+            walk_local_exprs(count, visit);
             if let Some(into) = into
             {
-                resolve(into, slot_map);
+                walk_local_exprs(into, visit);
             }
-            resolve(body, slot_map);
+            walk_local_exprs(body, visit);
         }
         ExprKind::Call {
             function,
@@ -4257,79 +4251,79 @@ pub(super) fn resolve(expr: &mut Expr, slot_map: &FxHashMap<SymbolId, usize>)
             ..
         } =>
         {
-            resolve(function, slot_map);
+            walk_local_exprs(function, visit);
             for arg in args
             {
-                resolve(arg, slot_map);
+                walk_local_exprs(arg, visit);
             }
             if let Some(c) = block
             {
-                resolve(&mut c.body, slot_map);
+                walk_local_exprs(&mut c.body, visit);
             }
         }
         ExprKind::Array(elements) =>
         {
             for e in elements
             {
-                resolve(e, slot_map);
+                walk_local_exprs(e, visit);
             }
         }
         ExprKind::StructLiteral { fields, .. } =>
         {
             for (_, expr) in fields
             {
-                resolve(expr, slot_map);
+                walk_local_exprs(expr, visit);
             }
         }
         ExprKind::ArrayGenerator { generator, size } =>
         {
-            resolve(generator, slot_map);
-            resolve(size, slot_map);
+            walk_local_exprs(generator, visit);
+            walk_local_exprs(size, visit);
         }
         ExprKind::Map(entries) =>
         {
             for (k, v) in entries
             {
-                resolve(k, slot_map);
-                resolve(v, slot_map);
+                walk_local_exprs(k, visit);
+                walk_local_exprs(v, visit);
             }
         }
         ExprKind::Index { target, index } =>
         {
-            resolve(target, slot_map);
-            resolve(index, slot_map);
+            walk_local_exprs(target, visit);
+            walk_local_exprs(index, visit);
         }
         ExprKind::Slice { target, start, end } =>
         {
-            resolve(target, slot_map);
-            resolve(start, slot_map);
-            resolve(end, slot_map);
+            walk_local_exprs(target, visit);
+            walk_local_exprs(start, visit);
+            walk_local_exprs(end, visit);
         }
         ExprKind::Not(expr) =>
         {
-            resolve(expr, slot_map);
+            walk_local_exprs(expr, visit);
         }
         ExprKind::And { left, right } | ExprKind::AndBool { left, right } =>
         {
-            resolve(left, slot_map);
-            resolve(right, slot_map);
+            walk_local_exprs(left, visit);
+            walk_local_exprs(right, visit);
         }
         ExprKind::Or { left, right } | ExprKind::OrBool { left, right } =>
         {
-            resolve(left, slot_map);
-            resolve(right, slot_map);
+            walk_local_exprs(left, visit);
+            walk_local_exprs(right, visit);
         }
         ExprKind::Clone(expr) =>
         {
-            resolve(expr, slot_map);
+            walk_local_exprs(expr, visit);
         }
         ExprKind::ErrorRaise(expr) =>
         {
-            resolve(expr, slot_map);
+            walk_local_exprs(expr, visit);
         }
         ExprKind::EnvFreeze(expr) =>
         {
-            resolve(expr, slot_map);
+            walk_local_exprs(expr, visit);
         }
         ExprKind::IndexAssignment {
             target,
@@ -4337,9 +4331,9 @@ pub(super) fn resolve(expr: &mut Expr, slot_map: &FxHashMap<SymbolId, usize>)
             value,
         } =>
         {
-            resolve(target, slot_map);
-            resolve(index, slot_map);
-            resolve(value, slot_map);
+            walk_local_exprs(target, visit);
+            walk_local_exprs(index, visit);
+            walk_local_exprs(value, visit);
         }
         ExprKind::FormatString(parts) =>
         {
@@ -4347,7 +4341,7 @@ pub(super) fn resolve(expr: &mut Expr, slot_map: &FxHashMap<SymbolId, usize>)
             {
                 if let crate::ast::FormatPart::Expr { expr, .. } = part
                 {
-                    resolve(expr, slot_map);
+                    walk_local_exprs(expr, visit);
                 }
             }
         }
@@ -4360,7 +4354,7 @@ pub(super) fn resolve(expr: &mut Expr, slot_map: &FxHashMap<SymbolId, usize>)
         {
             for a in args
             {
-                resolve(a, slot_map);
+                walk_local_exprs(a, visit);
             }
         }
         _ =>

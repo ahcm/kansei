@@ -38,3 +38,15 @@ Use `cargo test` for parser, formatter, and installer invariants. Use
 all execution modes. The CLI harness verifies release-sensitive behavior such
 as syntax-error recovery in a persistent LSP process. Preserve this coverage
 when adding compiler optimizations or splitting the interpreter further.
+
+## References and performance checks
+
+Slot resolution temporarily collects address-taken locals. Those locals and
+reference parameters use environment storage, so a captured cell remains shared
+across calls; ordinary locals retain direct slots. Curried calls bind captured
+references into each invocation's environment. No reference-analysis metadata
+is retained in runtime values or caches.
+
+The opt-in [performance harness](benchmarks/README.md) measures parsing,
+resolution, formatting, execution modes, and cold/warm caches in release builds.
+It lives behind `cfg(test)` and has no production instrumentation.

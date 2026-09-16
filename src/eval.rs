@@ -5,6 +5,8 @@ mod vm;
 mod builtins;
 mod ast_eval;
 mod wat;
+#[cfg(test)]
+mod benchmarks;
 pub use wat::dump_wat;
 use numeric::*;
 use compiler::*;

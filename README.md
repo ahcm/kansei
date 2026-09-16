@@ -115,5 +115,7 @@ and release builds and checks individual optional modules.
 artifacts, arguments, or filesystem setup; they are not all standalone tests.
 See [tests/README.md](tests/README.md) for test conventions and
 [ARCHITECTURE.md](ARCHITECTURE.md) for the interpreter's module boundaries.
+Use the [performance baseline runner](benchmarks/README.md) to compare parsing,
+formatting, execution, and cache costs across changes on the same machine.
 
 -- Andreas Hauser, München

@@ -31,3 +31,12 @@ This is opt-in because shared CI workers have variable load. Comparisons reject
 different hardware, compiler, features, flags, or benchmark workloads. Review the
 lockfile hashes when dependencies change. Ordinary tests skip benchmarks, and
 production builds contain no benchmark instrumentation.
+
+The sample `baseline-linux-x86_64.json` was recorded at commit `8adde40` on an
+AMD Ryzen 9 7945HX3D. Repeating unchanged code produced parsing medians of roughly
+169–217 microseconds per 100 functions, while the execution/cache medians in the
+last two runs differed by less than 2%. A 15% threshold correctly flagged the
+parsing variation. These observations are measurement variability, not evidence
+of a code regression. On Linux, pinning the run to one allowed logical CPU with
+`taskset -c <cpu> python3 scripts/benchmark.py ...` can help control migration;
+use the same affinity and power settings for both runs.

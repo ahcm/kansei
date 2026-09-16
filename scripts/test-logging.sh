@@ -11,7 +11,11 @@ trap 'rm -rf "${tmp_dir}"' EXIT
 
 cd "${root_dir}"
 
-cargo run -- -l "${log_file}" tests/test_logging.ks >"${stdout_file}" 2>"${stderr_file}"
+# Keep compiler/Cargo diagnostics out of the program output assertions.
+cargo build --locked --bin kansei
+kansei_bin="${CARGO_TARGET_DIR:-${root_dir}/target}/debug/kansei"
+
+"${kansei_bin}" -l "${log_file}" tests/test_logging.ks >"${stdout_file}" 2>"${stderr_file}"
 
 expected_stdout="stdout:1"
 expected_stderr="stderr:2"
@@ -32,6 +36,6 @@ if [[ "$(cat "${log_file}")" != "${expected_log}" ]]; then
   exit 1
 fi
 
-cargo run -- tests/test_log_config.ks >/dev/null 2>&1
+"${kansei_bin}" tests/test_log_config.ks >/dev/null 2>&1
 
 echo "logging tests ok"

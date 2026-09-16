@@ -1,0 +1,33 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [debug, release]
+        features: [minimal, default]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev libxkbcommon-dev libwayland-dev
+      - name: Build and test with the pinned toolchain
+        shell: bash
+        run: |
+          options=(--locked -j 2)
+          if [[ '${{ matrix.profile }}' == release ]]; then options+=(--release); fi
+          if [[ '${{ matrix.features }}' == minimal ]]; then options+=(--no-default-features); fi
+          cargo test --workspace "${options[@]}"
+          cargo build "${options[@]}"
+          python3 scripts/test-regressions.py target/${{ matrix.profile }}/kansei
+  features:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check individual optional modules
+        run: |
+          for feature in lib-base64 lib-bytes lib-clap lib-crypto lib-csv lib-datetime lib-egui lib-flate2 lib-http lib-image lib-math lib-mmap lib-net lib-path lib-polars lib-regex lib-russh lib-serde lib-sqlite lib-tests lib-toml lib-tui lib-uuid lib-yaml wasmi; do
+            cargo check --locked --no-default-features --features "$feature" -j 2
+          done
+          cargo test --locked --no-default-features --features wasmi -j 2

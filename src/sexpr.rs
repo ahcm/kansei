@@ -1,9 +1,11 @@
+#[cfg(feature = "lib-mmap")]
+use crate::value::BytesViewSource;
 use crate::ast::{
     Closure, Expr, ExprKind, FloatKind, FormatPart, FormatSpec, IntKind, Op, Param, ParamType,
     TypeRef,
 };
 use crate::intern::{self, SymbolId};
-use crate::value::{BytesViewSource, EnvValue, Environment, FunctionData, MapValue, Value};
+use crate::value::{EnvValue, Environment, FunctionData, MapValue, Value};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -1877,6 +1879,7 @@ pub fn value_to_sexpr(value: &Value) -> Result<SExpr, String>
             }
             Ok(SExpr::List(items))
         }
+        #[cfg(feature = "lib-mmap") ]
         Value::BytesView(view) =>
         {
             let data = match &view.source

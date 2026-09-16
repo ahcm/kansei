@@ -1,6 +1,4 @@
 [alias]
 wasm-build = "run --release scripts/build-wasm.ks"
 
-[build]
-rustflags = ["-C", "target-cpu=native"]
-
+# For local benchmarks: RUSTFLAGS="-C target-cpu=native" cargo build --release

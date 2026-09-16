@@ -116,6 +116,7 @@ fn native_image_save_png_bytes(args: &[Value]) -> Result<Value, String>
     {
         Some(Value::Bytes(b)) => b.as_ref().clone(),
         Some(Value::ByteBuf(b)) => b.borrow().clone(),
+        #[cfg(feature = "lib-mmap")]
         Some(Value::BytesView(view)) =>
         {
             let end = view.offset.saturating_add(view.len);

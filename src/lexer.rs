@@ -1,4 +1,5 @@
 use crate::ast::{FloatKind, IntKind};
+use crate::parser::ParseError;
 use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -101,6 +102,15 @@ pub struct Lexer
 
 impl Lexer
 {
+    fn error(&self, message: String) -> ParseError
+    {
+        ParseError {
+            message,
+            line: self.line,
+            column: self.position.saturating_sub(self.line_start) + 1,
+        }
+    }
+
     pub fn new(input: &str) -> Self
     {
         Self {
@@ -115,7 +125,7 @@ impl Lexer
         }
     }
 
-    pub fn next_token(&mut self) -> Span
+    pub fn next_token(&mut self) -> Result<Span, ParseError>
     {
         loop
         {
@@ -131,12 +141,12 @@ impl Lexer
 
             if self.position >= self.input.len()
             {
-                return Span {
+                return Ok(Span {
                     token: Token::EOF,
                     line: start_line,
                     column: start_column,
                     source,
-                };
+                });
             }
 
             let ch = self.input[self.position];
@@ -148,14 +158,14 @@ impl Lexer
             }
             if ch == '(' && self.peek() == '*'
             {
-                self.skip_block_comment();
+                self.skip_block_comment()?;
                 continue;
             }
 
             let token = match ch
             {
-                '"' => self.read_string('"'), // standard strings
-                '`' => self.read_string('`'), // shell commands
+                '"' => self.read_string('"')?, // standard strings
+                '`' => self.read_string('`')?, // shell commands
                 '+' =>
                 {
                     self.position += 1;
@@ -212,7 +222,7 @@ impl Lexer
                     }
                     else
                     {
-                        panic!("Unexpected char: !")
+                        return Err(self.error(format!("Unexpected char: !")));
                     }
                 }
                 '<' =>
@@ -225,13 +235,13 @@ impl Lexer
                     self.position += 1;
                     Token::Greater
                 }
-                '0'..='9' => self.read_number(),
+                '0'..='9' => self.read_number()?,
                 'a'..='z' | 'A'..='Z' | '_' =>
                 {
                     if ch == 'f' && self.peek() == '"'
                     {
                         self.position += 1; // consume 'f'
-                        let token = self.read_string('"');
+                        let token = self.read_string('"')?;
                         match token
                         {
                             Token::StringLiteral(s) => Token::FormatString(s),
@@ -240,7 +250,7 @@ impl Lexer
                     }
                     else
                     {
-                        self.read_identifier()
+                        self.read_identifier()?
                     }
                 }
                 ',' =>
@@ -334,18 +344,16 @@ impl Lexer
                 }
                 _ =>
                 {
-                    // Ignore unknown chars for this MVP
-                    self.position += 1;
-                    continue;
+                    return Err(self.error(format!("Unexpected character: {ch}")));
                 }
             };
 
-            return Span {
+            return Ok(Span {
                 token,
                 line: start_line,
                 column: start_column,
                 source,
-            };
+            });
         }
     }
 
@@ -357,43 +365,45 @@ impl Lexer
         }
     }
 
-    fn skip_block_comment(&mut self)
+    fn skip_block_comment(&mut self) -> Result<(), ParseError>
     {
-        if self.position + 1 >= self.input.len()
-        {
-            return;
-        }
-        // Consume opening "(*"
-        self.position += 2;
-        let mut depth = 1usize;
-        while self.position < self.input.len() && depth > 0
-        {
-            let ch = self.input[self.position];
-            if ch == '\n'
+        Ok({
+            if self.position + 1 >= self.input.len()
             {
-                self.line += 1;
-                self.line_start = self.position + 1;
+                return Ok(());
+            }
+            // Consume opening "(*"
+            self.position += 2;
+            let mut depth = 1usize;
+            while self.position < self.input.len() && depth > 0
+            {
+                let ch = self.input[self.position];
+                if ch == '\n'
+                {
+                    self.line += 1;
+                    self.line_start = self.position + 1;
+                    self.position += 1;
+                    continue;
+                }
+                if ch == '(' && self.peek() == '*'
+                {
+                    depth += 1;
+                    self.position += 2;
+                    continue;
+                }
+                if ch == '*' && self.peek() == ')'
+                {
+                    depth = depth.saturating_sub(1);
+                    self.position += 2;
+                    continue;
+                }
                 self.position += 1;
-                continue;
             }
-            if ch == '(' && self.peek() == '*'
+            if depth > 0
             {
-                depth += 1;
-                self.position += 2;
-                continue;
+                return Err(self.error(format!("Unterminated block comment")));
             }
-            if ch == '*' && self.peek() == ')'
-            {
-                depth = depth.saturating_sub(1);
-                self.position += 2;
-                continue;
-            }
-            self.position += 1;
-        }
-        if depth > 0
-        {
-            panic!("Unterminated block comment");
-        }
+        })
     }
 
     fn skip_whitespace(&mut self)
@@ -409,370 +419,371 @@ impl Lexer
         }
     }
 
-    fn read_number(&mut self) -> Token
+    fn read_number(&mut self) -> Result<Token, ParseError>
     {
-        let mut int_val: u128 = 0;
-        let mut overflowed = false;
-        let mut saw_fraction = false;
-        while self.position < self.input.len() && self.input[self.position].is_digit(10)
-        {
-            let digit = (self.input[self.position] as u8 - b'0') as u128;
-            if let Some(next) = int_val.checked_mul(10).and_then(|v| v.checked_add(digit))
-            {
-                int_val = next;
-            }
-            else
-            {
-                overflowed = true;
-            }
-            self.position += 1;
-        }
-
-        let mut frac_val: u128 = 0;
-        let mut divisor: f64 = 1.0;
-        if self.position < self.input.len() && self.input[self.position] == '.'
-        {
-            if self.position + 1 < self.input.len() && self.input[self.position + 1].is_digit(10)
-            {
-                self.position += 1; // Consume dot
-                while self.position < self.input.len() && self.input[self.position].is_digit(10)
-                {
-                    let digit = (self.input[self.position] as u8 - b'0') as u128;
-                    if let Some(next) = frac_val.checked_mul(10).and_then(|v| v.checked_add(digit))
-                    {
-                        frac_val = next;
-                    }
-                    divisor *= 10.0;
-                    self.position += 1;
-                }
-                saw_fraction = true;
-            }
-        }
-
-        let mut exponent: i32 = 0;
-        let mut saw_exponent = false;
-        if self.position < self.input.len()
-            && matches!(self.input[self.position], 'e' | 'E')
-        {
-            let mut exp_pos = self.position + 1;
-            let mut exp_sign: i32 = 1;
-            if exp_pos < self.input.len()
-                && matches!(self.input[exp_pos], '+' | '-')
-            {
-                if self.input[exp_pos] == '-'
-                {
-                    exp_sign = -1;
-                }
-                exp_pos += 1;
-            }
-            if exp_pos < self.input.len() && self.input[exp_pos].is_digit(10)
-            {
-                self.position = exp_pos;
-                let mut exp_val: i32 = 0;
-                while self.position < self.input.len()
-                    && self.input[self.position].is_digit(10)
-                {
-                    let digit = (self.input[self.position] as u8 - b'0') as i32;
-                    exp_val = exp_val.saturating_mul(10).saturating_add(digit);
-                    self.position += 1;
-                }
-                exponent = exp_val.saturating_mul(exp_sign);
-                saw_exponent = true;
-            }
-        }
-
-        let mut kind = FloatKind::F64;
-        let mut has_suffix = false;
-        if self.position + 1 < self.input.len()
-            && self.input[self.position] == 'f'
-            && self.input[self.position + 1].is_digit(10)
-        {
-            has_suffix = true;
-            self.position += 1; // Consume 'f'
-            let suffix_start = self.position;
+        Ok({
+            let mut int_val: u128 = 0;
+            let mut overflowed = false;
+            let mut saw_fraction = false;
             while self.position < self.input.len() && self.input[self.position].is_digit(10)
             {
+                let digit = (self.input[self.position] as u8 - b'0') as u128;
+                if let Some(next) = int_val.checked_mul(10).and_then(|v| v.checked_add(digit))
+                {
+                    int_val = next;
+                }
+                else
+                {
+                    overflowed = true;
+                }
                 self.position += 1;
             }
-            let suffix: String = self.input[suffix_start..self.position].iter().collect();
-            kind = match suffix.as_str()
-            {
-                "32" => FloatKind::F32,
-                "64" => FloatKind::F64,
-                "128" => FloatKind::F128,
-                _ => panic!("Unknown float suffix: f{}", suffix),
-            };
-        }
 
-        if saw_fraction || saw_exponent || has_suffix
-        {
-            let int_part = if overflowed { 0 } else { int_val };
-            let value = if saw_fraction
+            let mut frac_val: u128 = 0;
+            let mut divisor: f64 = 1.0;
+            if self.position < self.input.len() && self.input[self.position] == '.'
             {
-                int_part as f64 + (frac_val as f64 / divisor)
-            }
-            else
-            {
-                int_part as f64
-            };
-            let value = if saw_exponent
-            {
-                value * 10f64.powi(exponent)
-            }
-            else
-            {
-                value
-            };
-            Token::Float { value, kind }
-        }
-        else
-        {
-            let (int_kind, is_signed) = self.read_int_suffix();
-            if overflowed
-            {
-                return if is_signed
+                if self.position + 1 < self.input.len()
+                    && self.input[self.position + 1].is_digit(10)
                 {
+                    self.position += 1; // Consume dot
+                    while self.position < self.input.len() && self.input[self.position].is_digit(10)
+                    {
+                        let digit = (self.input[self.position] as u8 - b'0') as u128;
+                        if let Some(next) =
+                            frac_val.checked_mul(10).and_then(|v| v.checked_add(digit))
+                        {
+                            frac_val = next;
+                        }
+                        divisor *= 10.0;
+                        self.position += 1;
+                    }
+                    saw_fraction = true;
+                }
+            }
+
+            let mut exponent: i32 = 0;
+            let mut saw_exponent = false;
+            if self.position < self.input.len() && matches!(self.input[self.position], 'e' | 'E')
+            {
+                let mut exp_pos = self.position + 1;
+                let mut exp_sign: i32 = 1;
+                if exp_pos < self.input.len() && matches!(self.input[exp_pos], '+' | '-')
+                {
+                    if self.input[exp_pos] == '-'
+                    {
+                        exp_sign = -1;
+                    }
+                    exp_pos += 1;
+                }
+                if exp_pos < self.input.len() && self.input[exp_pos].is_digit(10)
+                {
+                    self.position = exp_pos;
+                    let mut exp_val: i32 = 0;
+                    while self.position < self.input.len() && self.input[self.position].is_digit(10)
+                    {
+                        let digit = (self.input[self.position] as u8 - b'0') as i32;
+                        exp_val = exp_val.saturating_mul(10).saturating_add(digit);
+                        self.position += 1;
+                    }
+                    exponent = exp_val.saturating_mul(exp_sign);
+                    saw_exponent = true;
+                }
+            }
+
+            let mut kind = FloatKind::F64;
+            let mut has_suffix = false;
+            if self.position + 1 < self.input.len()
+                && self.input[self.position] == 'f'
+                && self.input[self.position + 1].is_digit(10)
+            {
+                has_suffix = true;
+                self.position += 1; // Consume 'f'
+                let suffix_start = self.position;
+                while self.position < self.input.len() && self.input[self.position].is_digit(10)
+                {
+                    self.position += 1;
+                }
+                let suffix: String = self.input[suffix_start..self.position].iter().collect();
+                kind = match suffix.as_str()
+                {
+                    "32" => FloatKind::F32,
+                    "64" => FloatKind::F64,
+                    "128" => FloatKind::F128,
+                    _ => return Err(self.error(format!("Unknown float suffix: f{}", suffix))),
+                };
+            }
+
+            if saw_fraction || saw_exponent || has_suffix
+            {
+                let int_part = if overflowed { 0 } else { int_val };
+                let value = if saw_fraction
+                {
+                    int_part as f64 + (frac_val as f64 / divisor)
+                }
+                else
+                {
+                    int_part as f64
+                };
+                let value = if saw_exponent
+                {
+                    value * 10f64.powi(exponent)
+                }
+                else
+                {
+                    value
+                };
+                Token::Float { value, kind }
+            }
+            else
+            {
+                let (int_kind, is_signed) = self.read_int_suffix()?;
+                if overflowed
+                {
+                    return Err(self.error("Integer literal out of range".to_string()));
+                }
+                if is_signed
+                {
+                    let max = signed_int_max(int_kind);
+                    if int_val > max as u128
+                    {
+                        return Err(
+                            self.error(format!("Integer literal out of range for {:?}", int_kind))
+                        );
+                    }
                     Token::Integer {
-                        value: 0,
+                        value: int_val as i128,
                         kind: int_kind,
                     }
                 }
                 else
                 {
+                    let max = unsigned_int_max(int_kind);
+                    if int_val > max
+                    {
+                        return Err(
+                            self.error(format!("Unsigned literal out of range for {:?}", int_kind))
+                        );
+                    }
                     Token::Unsigned {
-                        value: 0,
+                        value: int_val,
                         kind: int_kind,
                     }
-                };
-            }
-            if is_signed
-            {
-                let max = signed_int_max(int_kind);
-                if int_val > max as u128
-                {
-                    panic!("Integer literal out of range for {:?}", int_kind);
-                }
-                Token::Integer {
-                    value: int_val as i128,
-                    kind: int_kind,
                 }
             }
-            else
-            {
-                let max = unsigned_int_max(int_kind);
-                if int_val > max
-                {
-                    panic!("Unsigned literal out of range for {:?}", int_kind);
-                }
-                Token::Unsigned {
-                    value: int_val,
-                    kind: int_kind,
-                }
-            }
-        }
+        })
     }
 
-    fn read_identifier(&mut self) -> Token
+    fn read_identifier(&mut self) -> Result<Token, ParseError>
     {
-        let start = self.position;
-        while self.position < self.input.len()
-            && (self.input[self.position].is_alphanumeric() || self.input[self.position] == '_')
-        {
-            self.position += 1;
-        }
-        let ident: String = self.input[start..self.position].iter().collect();
-        match ident.as_str()
-        {
-            "if" => Token::If,
-            "else" => Token::Else,
-            "elif" => Token::Elif,
-            "end" => Token::End,
-            "while" => Token::While,
-            "for" => Token::For,
-            "loop" => Token::Loop,
-            "collect" => Token::Collect,
-            "into" => Token::Into,
-            "use" => Token::Use,
-            "import" => Token::Import,
-            "struct" => Token::Struct,
-            "export" => Token::Export,
-            "as" => Token::As,
-            "load" => Token::Load,
-            "in" => Token::In,
-            "yield" => Token::Yield,
-            "clone" => Token::Clone,
-            "not" => Token::Not,
-            "and" => Token::And,
-            "or" => Token::Or,
-            "true" => Token::True,
-            "false" => Token::False,
-            "nil" => Token::Nil,
-            "fn" => Token::Fn,
-            "return" => Token::Return,
-            "result" => Token::Result,
-            _ => Token::Identifier(ident),
-        }
+        Ok({
+            let start = self.position;
+            while self.position < self.input.len()
+                && (self.input[self.position].is_alphanumeric() || self.input[self.position] == '_')
+            {
+                self.position += 1;
+            }
+            let ident: String = self.input[start..self.position].iter().collect();
+            match ident.as_str()
+            {
+                "if" => Token::If,
+                "else" => Token::Else,
+                "elif" => Token::Elif,
+                "end" => Token::End,
+                "while" => Token::While,
+                "for" => Token::For,
+                "loop" => Token::Loop,
+                "collect" => Token::Collect,
+                "into" => Token::Into,
+                "use" => Token::Use,
+                "import" => Token::Import,
+                "struct" => Token::Struct,
+                "export" => Token::Export,
+                "as" => Token::As,
+                "load" => Token::Load,
+                "in" => Token::In,
+                "yield" => Token::Yield,
+                "clone" => Token::Clone,
+                "not" => Token::Not,
+                "and" => Token::And,
+                "or" => Token::Or,
+                "true" => Token::True,
+                "false" => Token::False,
+                "nil" => Token::Nil,
+                "fn" => Token::Fn,
+                "return" => Token::Return,
+                "result" => Token::Result,
+                _ => Token::Identifier(ident),
+            }
+        })
     }
 
     // read until the closing quote/backtick
-    fn read_string(&mut self, quote_char: char) -> Token
+    fn read_string(&mut self, quote_char: char) -> Result<Token, ParseError>
     {
-        self.position += 1; // Skip the opening quote
-        let mut content = String::new();
+        Ok({
+            self.position += 1; // Skip the opening quote
+            let mut content = String::new();
 
-        while self.position < self.input.len() && self.input[self.position] != quote_char
-        {
-            let ch = self.input[self.position];
-            if ch == '\n'
+            while self.position < self.input.len() && self.input[self.position] != quote_char
             {
-                self.line += 1;
-                self.line_start = self.position + 1;
-                content.push(ch);
-                self.position += 1;
-            }
-            else if ch == '\\' && self.position + 1 < self.input.len()
-            {
-                let next = self.input[self.position + 1];
-                match next
+                let ch = self.input[self.position];
+                if ch == '\n'
                 {
-                    '"' =>
+                    self.line += 1;
+                    self.line_start = self.position + 1;
+                    content.push(ch);
+                    self.position += 1;
+                }
+                else if ch == '\\' && self.position + 1 < self.input.len()
+                {
+                    let next = self.input[self.position + 1];
+                    match next
                     {
-                        content.push('"');
-                        self.position += 2;
-                    }
-                    '\\' =>
-                    {
-                        content.push('\\');
-                        self.position += 2;
-                    }
-                    'n' =>
-                    {
-                        content.push('\n');
-                        self.position += 2;
-                    }
-                    't' =>
-                    {
-                        content.push('\t');
-                        self.position += 2;
-                    }
-                    'r' =>
-                    {
-                        content.push('\r');
-                        self.position += 2;
-                    }
-                    _ =>
-                    {
-                        // Unknown escape, keep backslash and char
-                        content.push(ch);
-                        self.position += 1;
+                        '"' =>
+                        {
+                            content.push('"');
+                            self.position += 2;
+                        }
+                        '\\' =>
+                        {
+                            content.push('\\');
+                            self.position += 2;
+                        }
+                        'n' =>
+                        {
+                            content.push('\n');
+                            self.position += 2;
+                        }
+                        't' =>
+                        {
+                            content.push('\t');
+                            self.position += 2;
+                        }
+                        'r' =>
+                        {
+                            content.push('\r');
+                            self.position += 2;
+                        }
+                        _ =>
+                        {
+                            // Unknown escape, keep backslash and char
+                            content.push(ch);
+                            self.position += 1;
+                        }
                     }
                 }
+                else
+                {
+                    content.push(ch);
+                    self.position += 1;
+                }
+            }
+
+            if self.position == self.input.len()
+            {
+                return Err(self.error("Unterminated string literal".to_string()));
+            }
+            self.position += 1;
+
+            if quote_char == '`'
+            {
+                Token::CommandLiteral(content)
             }
             else
             {
-                content.push(ch);
-                self.position += 1;
+                Token::StringLiteral(content)
             }
-        }
-
-        // Consume the closing quote if we aren't at EOF
-        if self.position < self.input.len()
-        {
-            self.position += 1;
-        }
-
-        if quote_char == '`'
-        {
-            Token::CommandLiteral(content)
-        }
-        else
-        {
-            Token::StringLiteral(content)
-        }
+        })
     }
 
-    fn read_int_suffix(&mut self) -> (IntKind, bool)
+    fn read_int_suffix(&mut self) -> Result<(IntKind, bool), ParseError>
     {
-        if self.position + 1 < self.input.len()
-        {
-            let ch = self.input[self.position];
-            if ch == 'i' || ch == 'u'
+        Ok({
+            if self.position + 1 < self.input.len()
             {
-                let is_signed = ch == 'i';
-                self.position += 1; // consume i/u
-                let start = self.position;
-                while self.position < self.input.len() && self.input[self.position].is_digit(10)
+                let ch = self.input[self.position];
+                if ch == 'i' || ch == 'u'
                 {
-                    self.position += 1;
+                    let is_signed = ch == 'i';
+                    self.position += 1; // consume i/u
+                    let start = self.position;
+                    while self.position < self.input.len() && self.input[self.position].is_digit(10)
+                    {
+                        self.position += 1;
+                    }
+                    let suffix: String = self.input[start..self.position].iter().collect();
+                    let kind = match suffix.as_str()
+                    {
+                        "8" =>
+                        {
+                            if is_signed
+                            {
+                                IntKind::I8
+                            }
+                            else
+                            {
+                                IntKind::U8
+                            }
+                        }
+                        "16" =>
+                        {
+                            if is_signed
+                            {
+                                IntKind::I16
+                            }
+                            else
+                            {
+                                IntKind::U16
+                            }
+                        }
+                        "32" =>
+                        {
+                            if is_signed
+                            {
+                                IntKind::I32
+                            }
+                            else
+                            {
+                                IntKind::U32
+                            }
+                        }
+                        "64" =>
+                        {
+                            if is_signed
+                            {
+                                IntKind::I64
+                            }
+                            else
+                            {
+                                IntKind::U64
+                            }
+                        }
+                        "128" =>
+                        {
+                            if is_signed
+                            {
+                                IntKind::I128
+                            }
+                            else
+                            {
+                                IntKind::U128
+                            }
+                        }
+                        _ =>
+                        {
+                            return Err(self.error(format!(
+                                "Unknown integer suffix: {}{}",
+                                if is_signed { "i" } else { "u" },
+                                suffix
+                            )));
+                        }
+                    };
+                    return Ok((kind, is_signed));
                 }
-                let suffix: String = self.input[start..self.position].iter().collect();
-                let kind = match suffix.as_str()
-                {
-                    "8" =>
-                    {
-                        if is_signed
-                        {
-                            IntKind::I8
-                        }
-                        else
-                        {
-                            IntKind::U8
-                        }
-                    }
-                    "16" =>
-                    {
-                        if is_signed
-                        {
-                            IntKind::I16
-                        }
-                        else
-                        {
-                            IntKind::U16
-                        }
-                    }
-                    "32" =>
-                    {
-                        if is_signed
-                        {
-                            IntKind::I32
-                        }
-                        else
-                        {
-                            IntKind::U32
-                        }
-                    }
-                    "64" =>
-                    {
-                        if is_signed
-                        {
-                            IntKind::I64
-                        }
-                        else
-                        {
-                            IntKind::U64
-                        }
-                    }
-                    "128" =>
-                    {
-                        if is_signed
-                        {
-                            IntKind::I128
-                        }
-                        else
-                        {
-                            IntKind::U128
-                        }
-                    }
-                    _ => panic!(
-                        "Unknown integer suffix: {}{}",
-                        if is_signed { "i" } else { "u" },
-                        suffix
-                    ),
-                };
-                return (kind, is_signed);
             }
-        }
-        (IntKind::I64, true)
+            (IntKind::I64, true)
+        })
     }
 
     fn peek(&self) -> char

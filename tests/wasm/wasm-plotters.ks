@@ -11,7 +11,7 @@ data = [
   2.0, 0.5
 ]
 series = [3, 3]
-colors = [0x1E88E5, 0xD81B60]
+colors = [2001125, 14162784]
 
 svg = wasm.plotters.line_chart_svg_str_multi(
   data,

@@ -54,8 +54,11 @@ fn bytes_len(value: &Value) -> Option<usize>
         Value::String(s) => Some(s.as_bytes().len()),
         Value::Bytes(bytes) => Some(bytes.len()),
         Value::ByteBuf(buf) => Some(buf.borrow().len()),
+        #[cfg(feature = "lib-mmap") ]
         Value::BytesView(view) => Some(view.len),
+        #[cfg(feature = "lib-mmap") ]
         Value::Mmap(mmap) => Some(mmap.len()),
+        #[cfg(feature = "lib-mmap") ]
         Value::MmapMut(mmap) => Some(mmap.borrow().len()),
         _ => None,
     }
@@ -68,6 +71,7 @@ fn bytes_to_vec(value: &Value, name: &str) -> Result<Vec<u8>, String>
         Value::String(s) => Ok(s.as_bytes().to_vec()),
         Value::Bytes(bytes) => Ok(bytes.as_ref().clone()),
         Value::ByteBuf(buf) => Ok(buf.borrow().clone()),
+        #[cfg(feature = "lib-mmap") ]
         Value::BytesView(view) =>
         {
             let end = view.offset.saturating_add(view.len);
@@ -81,7 +85,9 @@ fn bytes_to_vec(value: &Value, name: &str) -> Result<Vec<u8>, String>
                 }
             }
         }
+        #[cfg(feature = "lib-mmap") ]
         Value::Mmap(mmap) => Ok(mmap.as_ref().to_vec()),
+        #[cfg(feature = "lib-mmap") ]
         Value::MmapMut(mmap) => Ok(mmap.borrow().as_ref().to_vec()),
         _ => Err(format!("{name} expects Bytes, ByteBuf, Mmap, or String")),
     }
@@ -109,6 +115,7 @@ fn bytes_slice(value: &Value, start: usize, len: usize) -> Result<Vec<u8>, Strin
             }
             Ok(data[start..end].to_vec())
         }
+        #[cfg(feature = "lib-mmap") ]
         Value::BytesView(view) =>
         {
             if start > view.len || end > view.len
@@ -136,6 +143,7 @@ fn bytes_slice(value: &Value, start: usize, len: usize) -> Result<Vec<u8>, Strin
             }
             Ok(bytes[start..end].to_vec())
         }
+        #[cfg(feature = "lib-mmap") ]
         Value::Mmap(mmap) =>
         {
             if end > mmap.len()
@@ -144,6 +152,7 @@ fn bytes_slice(value: &Value, start: usize, len: usize) -> Result<Vec<u8>, Strin
             }
             Ok(mmap[start..end].to_vec())
         }
+        #[cfg(feature = "lib-mmap") ]
         Value::MmapMut(mmap) =>
         {
             let data = mmap.borrow();
@@ -247,10 +256,13 @@ fn native_bytes_slice_view(args: &[Value]) -> Result<Value, String>
     {
         return Err("Bytes.slice_view expects non-negative start and length".to_string());
     }
+    #[cfg(feature = "lib-mmap")]
     let start = start as usize;
+    #[cfg(feature = "lib-mmap")]
     let len = len as usize;
     match value
     {
+        #[cfg(feature = "lib-mmap") ]
         Value::Mmap(mmap) =>
         {
             let end = start.saturating_add(len);
@@ -264,6 +276,7 @@ fn native_bytes_slice_view(args: &[Value]) -> Result<Value, String>
                 len,
             })))
         }
+        #[cfg(feature = "lib-mmap") ]
         Value::MmapMut(mmap) =>
         {
             let data = mmap.borrow();
@@ -339,6 +352,7 @@ fn native_bytes_get(args: &[Value]) -> Result<Value, String>
                 Ok(Value::Nil)
             }
         }
+        #[cfg(feature = "lib-mmap") ]
         Value::BytesView(view) =>
         {
             if idx < view.len
@@ -378,6 +392,7 @@ fn native_bytes_get(args: &[Value]) -> Result<Value, String>
                 Ok(Value::Nil)
             }
         }
+        #[cfg(feature = "lib-mmap") ]
         Value::Mmap(mmap) =>
         {
             if idx < mmap.len()
@@ -392,6 +407,7 @@ fn native_bytes_get(args: &[Value]) -> Result<Value, String>
                 Ok(Value::Nil)
             }
         }
+        #[cfg(feature = "lib-mmap") ]
         Value::MmapMut(mmap) =>
         {
             let data = mmap.borrow();
@@ -442,6 +458,7 @@ fn native_bytes_set(args: &[Value]) -> Result<Value, String>
                 Err("Bytes.set index out of bounds".to_string())
             }
         }
+        #[cfg(feature = "lib-mmap") ]
         Value::MmapMut(mmap) =>
         {
             let mut data = mmap.borrow_mut();
@@ -501,6 +518,7 @@ fn native_bytes_fill(args: &[Value]) -> Result<Value, String>
             }
             Ok(value.clone())
         }
+        #[cfg(feature = "lib-mmap") ]
         Value::MmapMut(mmap) =>
         {
             let mut data = mmap.borrow_mut();
@@ -552,6 +570,7 @@ fn native_bytes_copy(args: &[Value]) -> Result<Value, String>
             data[dst_start..dst_end].copy_from_slice(slice);
             Ok(Value::Boolean(true))
         }
+        #[cfg(feature = "lib-mmap") ]
         Value::MmapMut(mmap) =>
         {
             let mut data = mmap.borrow_mut();

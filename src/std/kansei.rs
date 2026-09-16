@@ -1,8 +1,6 @@
 use crate::ast::Expr;
 use crate::eval::Interpreter;
 use crate::intern;
-use crate::lexer::Lexer;
-use crate::parser::Parser;
 use crate::sexpr::{expr_to_sexpr, parse_sexpr, sexpr_to_expr, sexpr_to_value, value_to_sexpr};
 use crate::source::expr_to_source;
 use crate::value::{HostFunction, MapValue, Value, freeze_to_env};
@@ -12,9 +10,7 @@ use std::rc::Rc;
 
 fn parse_ast(source: &str) -> Result<Expr, String>
 {
-    let lexer = Lexer::new(source);
-    let mut parser = Parser::new(lexer);
-    Ok(parser.parse())
+    crate::parser::parse_source(source).map_err(|err| err.to_string())
 }
 
 fn native_ast_to_sexpr(args: &[Value]) -> Result<Value, String>

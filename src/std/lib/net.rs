@@ -61,6 +61,7 @@ fn bytes_arg(args: &[Value], idx: usize, name: &str) -> Result<Vec<u8>, String>
         Some(Value::String(s)) => Ok(s.as_bytes().to_vec()),
         Some(Value::Bytes(b)) => Ok(b.as_ref().clone()),
         Some(Value::ByteBuf(b)) => Ok(b.borrow().clone()),
+        #[cfg(feature = "lib-mmap")]
         Some(Value::BytesView(view)) =>
         {
             let end = view.offset.saturating_add(view.len);

@@ -56,6 +56,7 @@ pub type LibMap = FxHashMap<Rc<String>, Value>;
 
 pub fn build_lib_module() -> Value
 {
+    #[allow(unused_mut)] // No registration mutates the map in a minimal build.
     let mut lib_map: LibMap = FxHashMap::default();
     #[cfg(feature = "lib-base64")]
     base64::register(&mut lib_map);

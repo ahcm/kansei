@@ -1,0 +1,13 @@
+assert_eq(2 + 3 * 4, 14)
+assert_eq((2 + 3) * 4, 20)
+assert_eq(2 ** 8, 256)
+assert_eq(i64("42"), 42)
+assert_eq(f64("1.5") + 0.5, 2.0)
+assert_eq(not nil, true)
+assert_eq(false and 7, false)
+assert_eq(nil or 7, true)
+assert_eq(true && false, false)
+assert_eq(false || true, true)
+assert_eq(f"answer: {3 + 4}", "answer: 7")
+café = 1.5
+assert_eq(f"{café:.2}", "1.50")

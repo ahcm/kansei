@@ -14,33 +14,6 @@ extern "C" fn lsp_signal_handler(_sig: i32)
     LSP_SHUTDOWN.store(true, Ordering::SeqCst);
 }
 
-fn parse_error_location(message: &str) -> (usize, usize, String)
-{
-    let mut line = 0usize;
-    let col = 0usize;
-    if let Some(idx) = message.find("line ")
-    {
-        let rest = &message[idx + 5..];
-        let mut digits = String::new();
-        for ch in rest.chars()
-        {
-            if ch.is_ascii_digit()
-            {
-                digits.push(ch);
-            }
-            else
-            {
-                break;
-            }
-        }
-        if let Ok(parsed) = digits.parse::<usize>()
-        {
-            line = parsed.saturating_sub(1);
-        }
-    }
-    (line, col, message.to_string())
-}
-
 fn send_response(
     stdout: &mut dyn Write,
     id: &serde_json::Value,
@@ -77,34 +50,30 @@ fn send_notification(
     Ok(())
 }
 
-fn publish_diagnostics(stdout: &mut dyn Write, uri: &str, message: Option<String>) -> io::Result<()>
+fn publish_diagnostics(stdout: &mut dyn Write, uri: &str, source: &str) -> io::Result<()>
 {
-    let diagnostics = if let Some(message) = message
+    let diagnostics = match crate::parser::parse_source(source)
     {
-    let (line, col, msg) = parse_error_location(&message);
-        vec![json!({
-            "range": {
-                "start": { "line": line, "character": col },
-                "end": { "line": line, "character": col + 1 }
-            },
-            "severity": 1,
-            "source": "kansei",
-            "message": msg
-        })]
-    }
-    else
-    {
-        Vec::new()
+        Err(error) => {
+            let line = error.line.saturating_sub(1);
+            let text = source.lines().nth(line).unwrap_or("");
+            let character: usize = text.chars().take(error.column.saturating_sub(1)).map(char::len_utf16).sum();
+            vec![json!({
+                "range": {
+                    "start": { "line": line, "character": character },
+                    "end": { "line": line, "character": character }
+                },
+                "severity": 1,
+                "source": "kansei",
+                "message": error.message
+            })]
+        }
+        Ok(_) => Vec::new(),
     };
-
-    send_notification(
-        stdout,
-        "textDocument/publishDiagnostics",
-        json!({
-            "uri": uri,
-            "diagnostics": diagnostics
-        }),
-    )
+    send_notification(stdout, "textDocument/publishDiagnostics", json!({
+        "uri": uri,
+        "diagnostics": diagnostics
+    }))
 }
 
 fn read_message(reader: &mut dyn BufRead, log: &mut LspLog) -> Option<String>
@@ -566,7 +535,7 @@ fn handle_request(
                     let text = text.as_str().unwrap_or_default().to_string();
                     docs.insert(uri.clone(), text.clone());
                     doc_symbols.insert(uri.clone(), scan_symbols(&text));
-                    let _ = publish_diagnostics(stdout, &uri, None);
+                    let _ = publish_diagnostics(stdout, &uri, &text);
                 }
                 else
                 {
@@ -597,7 +566,7 @@ fn handle_request(
                         let text = text.to_string();
                         docs.insert(uri.clone(), text.clone());
                         doc_symbols.insert(uri.clone(), scan_symbols(&text));
-                        let _ = publish_diagnostics(stdout, &uri, None);
+                        let _ = publish_diagnostics(stdout, &uri, &text);
                     }
                 }
             }
@@ -738,4 +707,23 @@ fn handle_request(
         }
     }
     Ok(LoopControl::Continue)
+}
+
+#[cfg(test)]
+mod tests
+{
+    use super::*;
+
+    #[test]
+    fn diagnostics_report_errors_and_clear_after_correction()
+    {
+        let mut output = Vec::new();
+        publish_diagnostics(&mut output, "file:///test.ks", "puts 1\n$").unwrap();
+        let invalid = String::from_utf8(output).unwrap();
+        assert!(invalid.contains("Unexpected character"));
+        assert!(invalid.contains("\"line\":1"));
+        let mut output = Vec::new();
+        publish_diagnostics(&mut output, "file:///test.ks", "puts 1").unwrap();
+        assert!(String::from_utf8(output).unwrap().contains("\"diagnostics\":[]"));
+    }
 }

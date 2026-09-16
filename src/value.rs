@@ -1,7 +1,9 @@
 use crate::ast::{Closure, Expr, FloatKind, IntKind, Param, ParamType, TypeRef};
 use crate::intern::SymbolId;
 use crate::wasm::WasmFunction;
+#[cfg(feature = "lib-mmap")]
 use memmap2::{Mmap, MmapMut};
+#[cfg(feature = "lib-sqlite")]
 use rusqlite::Connection;
 use rustc_hash::{FxHashMap, FxHashSet};
 #[cfg(feature = "lib-net")]
@@ -59,10 +61,13 @@ fn param_label(param: &Param) -> String
     out
 }
 
+#[cfg(feature = "lib-mmap")]
 #[derive(Clone)]
 pub enum BytesViewSource
 {
+    #[cfg(feature = "lib-mmap") ]
     Mmap(Rc<Mmap>),
+    #[cfg(feature = "lib-mmap") ]
     MmapMut(Rc<RefCell<MmapMut>>),
 }
 
@@ -73,6 +78,7 @@ pub enum NetStream
     Tls(StreamOwned<ClientConnection, TcpStream>),
 }
 
+#[cfg(feature = "lib-mmap")]
 #[derive(Clone)]
 pub struct BytesView
 {
@@ -839,6 +845,7 @@ pub enum Value
     I64Array(Rc<RefCell<Vec<i64>>>),
     Bytes(Rc<Vec<u8>>),
     ByteBuf(Rc<RefCell<Vec<u8>>>),
+    #[cfg(feature = "lib-mmap") ]
     BytesView(Rc<BytesView>),
     StructType(Rc<StructType>),
     StructInstance(Rc<StructInstance>),
@@ -846,9 +853,13 @@ pub enum Value
     Map(Rc<RefCell<MapValue>>),
     Env(Rc<EnvValue>),
     Ast(Rc<Expr>),
+    #[cfg(feature = "lib-polars") ]
     DataFrame(Rc<RefCell<polars::prelude::DataFrame>>),
+    #[cfg(feature = "lib-sqlite") ]
     Sqlite(Rc<RefCell<Connection>>),
+    #[cfg(feature = "lib-mmap") ]
     Mmap(Rc<Mmap>),
+    #[cfg(feature = "lib-mmap") ]
     MmapMut(Rc<RefCell<MmapMut>>),
     #[cfg(feature = "lib-net")]
     NetStream(Rc<RefCell<NetStream>>),
@@ -926,6 +937,7 @@ pub fn deep_clone_value(value: &Value) -> Value
             let vals = buf.borrow().clone();
             Value::ByteBuf(Rc::new(RefCell::new(vals)))
         }
+        #[cfg(feature = "lib-mmap") ]
         Value::BytesView(view) => Value::BytesView(view.clone()),
         Value::StructType(ty) => Value::StructType(ty.clone()),
         Value::StructInstance(inst) =>
@@ -944,9 +956,13 @@ pub fn deep_clone_value(value: &Value) -> Value
         }
         Value::Env(env) => Value::Env(env.clone()),
         Value::Ast(ast) => Value::Ast(ast.clone()),
+        #[cfg(feature = "lib-polars") ]
         Value::DataFrame(df) => Value::DataFrame(df.clone()),
+        #[cfg(feature = "lib-sqlite") ]
         Value::Sqlite(conn) => Value::Sqlite(conn.clone()),
+        #[cfg(feature = "lib-mmap") ]
         Value::Mmap(mmap) => Value::Mmap(mmap.clone()),
+        #[cfg(feature = "lib-mmap") ]
         Value::MmapMut(mmap) => Value::MmapMut(mmap.clone()),
         Value::String(s) => Value::String(s.clone()),
         Value::Reference(r) => deep_clone_value(&r.borrow()),
@@ -1003,6 +1019,7 @@ pub fn freeze_value(value: &Value) -> Result<Value, String>
             let vals = buf.borrow().clone();
             Ok(Value::ByteBuf(Rc::new(RefCell::new(vals))))
         }
+        #[cfg(feature = "lib-mmap") ]
         Value::BytesView(view) =>
         {
             let data = bytes_view_to_vec(view);
@@ -1044,11 +1061,13 @@ pub fn freeze_value(value: &Value) -> Result<Value, String>
             }
         }
         Value::Reference(r) => freeze_value(&r.borrow()),
-        Value::DataFrame(_)
-        | Value::Sqlite(_)
-        | Value::Mmap(_)
-        | Value::MmapMut(_)
-        | Value::WasmFunction(_)
+        #[cfg(feature = "lib-polars")]
+        Value::DataFrame(_) => Err("env freeze does not support this value type".to_string()),
+        #[cfg(feature = "lib-sqlite")]
+        Value::Sqlite(_) => Err("env freeze does not support this value type".to_string()),
+        #[cfg(feature = "lib-mmap")]
+        Value::Mmap(_) | Value::MmapMut(_) => Err("env freeze does not support this value type".to_string()),
+        Value::WasmFunction(_)
         | Value::BoundMethod(_)
         | Value::Uninitialized => Err("env freeze does not support this value type".to_string()),
         #[cfg(feature = "lib-net")]
@@ -1106,6 +1125,7 @@ pub fn clone_frozen_value(value: &Value) -> Value
             let vals = buf.borrow().clone();
             Value::ByteBuf(Rc::new(RefCell::new(vals)))
         }
+        #[cfg(feature = "lib-mmap") ]
         Value::BytesView(view) =>
         {
             let data = bytes_view_to_vec(view);
@@ -1172,6 +1192,7 @@ pub fn freeze_to_env(value: &Value) -> Result<Rc<EnvValue>, String>
     }
 }
 
+#[cfg(feature = "lib-mmap")]
 fn bytes_view_to_vec(view: &BytesView) -> Vec<u8>
 {
     match &view.source
@@ -1235,16 +1256,19 @@ impl PartialEq for Value
             {
                 a.as_slice() == b.borrow().as_slice()
             }
+            #[cfg(feature = "lib-mmap") ]
             (Value::BytesView(a), Value::BytesView(b)) =>
             {
                 a.offset == b.offset
                     && a.len == b.len
                     && bytes_view_to_vec(a) == bytes_view_to_vec(b)
             }
+            #[cfg(feature = "lib-mmap") ]
             (Value::BytesView(a), Value::Bytes(b)) | (Value::Bytes(b), Value::BytesView(a)) =>
             {
                 bytes_view_to_vec(a) == b.as_ref().as_slice()
             }
+            #[cfg(feature = "lib-mmap") ]
             (Value::BytesView(a), Value::ByteBuf(b)) | (Value::ByteBuf(b), Value::BytesView(a)) =>
             {
                 bytes_view_to_vec(a) == b.borrow().as_slice()
@@ -1306,9 +1330,13 @@ impl PartialEq for Value
                 true
             }
             (Value::Ast(a), Value::Ast(b)) => a == b,
+            #[cfg(feature = "lib-polars") ]
             (Value::DataFrame(a), Value::DataFrame(b)) => Rc::ptr_eq(a, b),
+            #[cfg(feature = "lib-sqlite") ]
             (Value::Sqlite(a), Value::Sqlite(b)) => Rc::ptr_eq(a, b),
+            #[cfg(feature = "lib-mmap") ]
             (Value::Mmap(a), Value::Mmap(b)) => Rc::ptr_eq(a, b),
+            #[cfg(feature = "lib-mmap") ]
             (Value::MmapMut(a), Value::MmapMut(b)) => Rc::ptr_eq(a, b),
             #[cfg(feature = "lib-net")]
             (Value::NetStream(a), Value::NetStream(b)) => Rc::ptr_eq(a, b),
@@ -1341,6 +1369,7 @@ impl fmt::Debug for Value
             Value::I64Array(a) => write!(f, "I64Array({:?})", a.borrow()),
             Value::Bytes(b) => write!(f, "Bytes({} bytes)", b.len()),
             Value::ByteBuf(b) => write!(f, "ByteBuf({} bytes)", b.borrow().len()),
+            #[cfg(feature = "lib-mmap") ]
             Value::BytesView(b) => write!(f, "BytesView({} bytes)", b.len),
             Value::StructType(ty) => write!(f, "StructType({})", ty.name),
             Value::StructInstance(inst) => write!(f, "StructInstance({})", inst.ty.name),
@@ -1348,12 +1377,16 @@ impl fmt::Debug for Value
             Value::Map(m) => write!(f, "Map({:?})", m.borrow().data),
             Value::Env(env) => write!(f, "Env({:?})", env.data),
             Value::Ast(_) => write!(f, "Ast(...)"),
+            #[cfg(feature = "lib-polars") ]
             Value::DataFrame(df) =>
             {
                 write!(f, "DataFrame({}x{})", df.borrow().height(), df.borrow().width())
             }
+            #[cfg(feature = "lib-sqlite") ]
             Value::Sqlite(_) => write!(f, "Sqlite(<connection>)"),
+            #[cfg(feature = "lib-mmap") ]
             Value::Mmap(m) => write!(f, "Mmap({} bytes)", m.len()),
+            #[cfg(feature = "lib-mmap") ]
             Value::MmapMut(m) => write!(f, "MmapMut({} bytes)", m.borrow().len()),
             #[cfg(feature = "lib-net")]
             Value::NetStream(_) => write!(f, "NetStream(<connection>)"),
@@ -1406,6 +1439,7 @@ impl Value
             }
             Value::Bytes(b) => format!("<Bytes {}>", b.len()),
             Value::ByteBuf(b) => format!("<ByteBuf {}>", b.borrow().len()),
+            #[cfg(feature = "lib-mmap") ]
             Value::BytesView(b) => format!("<BytesView {}>", b.len),
             Value::StructType(ty) => format!("<Struct {}>", ty.name),
             Value::StructInstance(inst) => format!("<{}>", inst.ty.name),
@@ -1430,13 +1464,17 @@ impl Value
                 format!("%{{{}}}", entries.join(", "))
             }
             Value::Ast(_) => "<ast>".to_string(),
+            #[cfg(feature = "lib-polars") ]
             Value::DataFrame(df) =>
             {
                 let df_ref = df.borrow();
                 format!("<DataFrame {}x{}>", df_ref.height(), df_ref.width())
             }
+            #[cfg(feature = "lib-sqlite") ]
             Value::Sqlite(_) => "<Sqlite>".to_string(),
+            #[cfg(feature = "lib-mmap") ]
             Value::Mmap(m) => format!("<Mmap {}>", m.len()),
+            #[cfg(feature = "lib-mmap") ]
             Value::MmapMut(m) => format!("<MmapMut {}>", m.borrow().len()),
             #[cfg(feature = "lib-net")]
             Value::NetStream(_) => "<NetStream>".to_string(),
@@ -1493,6 +1531,7 @@ impl fmt::Display for Value
             }
             Value::Bytes(b) => write!(f, "<Bytes {}>", b.len()),
             Value::ByteBuf(b) => write!(f, "<ByteBuf {}>", b.borrow().len()),
+            #[cfg(feature = "lib-mmap") ]
             Value::BytesView(b) => write!(f, "<BytesView {}>", b.len),
             Value::StructType(ty) => write!(f, "<Struct {}>", ty.name),
             Value::StructInstance(inst) => write!(f, "<{}>", inst.ty.name),
@@ -1517,13 +1556,17 @@ impl fmt::Display for Value
                 write!(f, "%{{{}}}", entries.join(", "))
             }
             Value::Ast(_) => write!(f, "<ast>"),
+            #[cfg(feature = "lib-polars") ]
             Value::DataFrame(df) =>
             {
                 let df_ref = df.borrow();
                 write!(f, "<DataFrame {}x{}>", df_ref.height(), df_ref.width())
             }
+            #[cfg(feature = "lib-sqlite") ]
             Value::Sqlite(_) => write!(f, "<Sqlite>"),
+            #[cfg(feature = "lib-mmap") ]
             Value::Mmap(m) => write!(f, "<Mmap {}>", m.len()),
+            #[cfg(feature = "lib-mmap") ]
             Value::MmapMut(m) => write!(f, "<MmapMut {}>", m.borrow().len()),
             #[cfg(feature = "lib-net")]
             Value::NetStream(_) => write!(f, "<NetStream>"),

@@ -11,8 +11,8 @@ results = parallel.collect(4, parallel_env, {|i| i + val})
 puts results
 
 # parallel.loop returns nil
-result = parallel.loop(4, {|i| i * 2})
-puts result
+result_value = parallel.loop(4, {|i| i * 2})
+puts result_value
 
 # Test parallel.collect (n, function)
 results = parallel.collect(4, {|i| i * 3})

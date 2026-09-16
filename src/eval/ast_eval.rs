@@ -1281,41 +1281,15 @@ impl Interpreter
                 {
                     for i in 0..n
                     {
-                        let mut new_slots = smallvec::SmallVec::<[Value; 8]>::from_elem(
-                            Value::Uninitialized,
-                            data.declarations.len(),
-                        );
-                        self.ensure_slot_capacity(
-                            &mut new_slots,
-                            data.param_offset,
-                            data.params.len(),
-                            &data.bound_args,
-                        );
-                        self.apply_bound_args(&data.bound_args, &mut new_slots);
-                        if !data.params.is_empty()
+                        let args = if data.params.is_empty()
                         {
-                            new_slots[data.param_offset] = default_int(i as i128);
-                        }
-
-                        let result = if let Some(code) = &data.code
-                        {
-                            execute_instructions(self, code, &data.const_pool, &mut new_slots)?
-                        }
-                        else if data.uses_env
-                        {
-                            let new_env = self.get_env(Some(data.env.clone()), false);
-                            let original_env = self.env.clone();
-                            self.env = new_env.clone();
-                            let result = self.eval(&data.body, &mut new_slots)?;
-                            self.env = original_env;
-                            self.recycle_env(new_env);
-                            result
+                            smallvec::SmallVec::new()
                         }
                         else
                         {
-                            self.eval(&data.body, &mut new_slots)?
+                            smallvec::smallvec![default_int(i as i128)]
                         };
-                        vals.push(result);
+                        vals.push(self.invoke_function(data.clone(), args, line, None)?);
                     }
                 }
                 else

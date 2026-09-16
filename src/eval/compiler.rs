@@ -4135,6 +4135,10 @@ pub(super) fn resolve(expr: &mut Expr, slot_map: &FxHashMap<SymbolId, usize>)
         {
             referenced.insert(*name);
         }
+        if let ExprKind::Call { block: Some(block), .. } = &expr.kind
+        {
+            referenced.extend(block.params.iter().filter(|param| param.is_ref).map(|param| param.name));
+        }
     });
     let slot_for = |name: &SymbolId| {
         if referenced.contains(name) { None } else { slot_map.get(name).copied() }
@@ -4361,4 +4365,3 @@ fn walk_local_exprs(expr: &mut Expr, visit: &mut impl FnMut(&mut Expr))
         {}
     }
 }
-

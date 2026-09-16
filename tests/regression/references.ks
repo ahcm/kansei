@@ -39,3 +39,27 @@ assert_eq(right, 12)
 assert_eq(complete(3), 21)
 assert_eq(left, 6)
 assert_eq(right, 15)
+
+# Array generators must use the same reference bindings as ordinary calls.
+fn step(&count, index)
+  count = count + 1
+  count
+end
+count = 0
+next = step(&count)
+generated = [next; 3]
+assert_eq(generated[0], 1)
+assert_eq(generated[1], 2)
+assert_eq(generated[2], 3)
+assert_eq(count, 3)
+
+fn twice()
+  yield()
+  yield()
+end
+fn capture_in_block()
+  count = 0
+  twice() { |&count| count = count + 1 }
+  count
+end
+assert_eq(capture_in_block(), 2)

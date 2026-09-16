@@ -2374,8 +2374,8 @@ impl Interpreter
                     },
                     (v1, v2) => match op
                     {
-                        Op::Equal => Ok(Value::Boolean(false)),
-                        Op::NotEqual => Ok(Value::Boolean(true)),
+                        Op::Equal => Ok(Value::Boolean(v1 == v2)),
+                        Op::NotEqual => Ok(Value::Boolean(v1 != v2)),
                         _ => Err(RuntimeError::simple(format!(
                                 "Type mismatch: Cannot operate {:?} on {:?} and {:?}",
                                 op, v1, v2
@@ -2805,4 +2805,3 @@ impl Interpreter
         result
     }
 }
-

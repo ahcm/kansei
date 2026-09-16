@@ -214,6 +214,7 @@ pub(super) fn eval_binop(op: BinOpKind, l: Value, r: Value) -> EvalResult
         }
         (Value::String(s1), Value::String(s2)) => match op
         {
+            BinOpKind::Eq => Value::Boolean(s1 == s2),
             BinOpKind::Add =>
             {
                 let mut out = s1.clone();
@@ -227,6 +228,7 @@ pub(super) fn eval_binop(op: BinOpKind, l: Value, r: Value) -> EvalResult
         },
         (Value::String(s), v2) => match op
         {
+            BinOpKind::Eq => Value::Boolean(false),
             BinOpKind::Add =>
             {
                 let mut out = s.clone();
@@ -238,6 +240,7 @@ pub(super) fn eval_binop(op: BinOpKind, l: Value, r: Value) -> EvalResult
                 return Err(RuntimeError::simple("Invalid types for operation".to_string(), 0));
             }
         },
+        (left, right) if matches!(op, BinOpKind::Eq) => Value::Boolean(left == right),
         _ =>
         {
             return Err(RuntimeError::simple("Invalid types for operation".to_string(), 0));
@@ -657,4 +660,3 @@ pub(super) fn number_to_usize(value: &Value) -> Option<usize>
         _ => int_value_as_usize(value),
     }
 }
-

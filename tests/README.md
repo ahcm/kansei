@@ -37,8 +37,9 @@ preservation, and module installation. Repeat with a release binary to catch
 build-profile differences.
 
 The remaining `.ks` files are historical examples and integration programs.
-The CLI harness also verifies reviewed snapshots for `test_logic.ks` and
-`test_casts.ks`. Some historical examples exercise unfinished behavior, including
-reference capture in `test_currying.ks`, and are not regression pass criteria.
+The CLI harness also verifies reviewed snapshots for `test_logic.ks`,
+`test_casts.ks`, and reference capture in `test_currying.ks`.
+WAT unit tests execute both WASI targets with Wasmtime, checking stdout, stderr,
+Unicode arguments, empty argument lists, and memory growth with large literals.
 `shootout/` contains benchmarks; WASM, image, and SQLite examples may require
 additional setup. Run those individually with their required features and inputs.

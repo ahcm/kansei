@@ -70,10 +70,20 @@ rule is the same. Use `--dump-bytecode` to inspect what actually compiles.
 - `kansei wasm install <name>` builds and installs a WASM module.
 - `kansei lsp` starts the language server over stdio, with syntax diagnostics, hover, and definitions.
 
-WAT generation is available with `kansei --dump-wat --wasi wasip1 <script>`;
-`--wasi wasip2` retains the upstream experimental emitter, whose output currently
-lacks required runtime imports. Use `wasip1` for executable output. The compiler
-supports a subset of the language; unsupported constructs produce an error.
+WAT generation supports two executable targets: `wasip1` emits a core module
+with WASI Preview 1 imports; `wasip2` emits a component with WASI 0.2 interfaces
+and a `wasi:cli/run` entry point. Both share the same runtime for output and
+command-line arguments. For example, with Wasmtime installed:
+
+```sh
+kansei --dump-wat --wasi wasip2 example.ks > example.wat
+wasmtime run example.wat first-argument
+```
+
+WASIp2 uses the [Bytecode Alliance command adapter](https://docs.rs/wasi-preview1-component-adapter-provider/41.0.4/)
+bundled at build time; generation requires no external tools or downloads.
+The compiler still supports a subset of the language; unsupported constructs
+produce an error rather than a partially generated program.
 
 WASM installation uses `../kansei-wasm-modules` when present, otherwise
 `https://github.com/ahcm/kansei-wasm-modules`, and targets `wasm32-wasip1`.

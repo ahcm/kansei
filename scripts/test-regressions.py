@@ -40,7 +40,7 @@ class Regressions(unittest.TestCase):
         for target in ("wasip1", "wasip2"):
             result = run("--dump-wat", "--wasi", target, "-e", "puts 1 + 2")
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertTrue(result.stdout.startswith("(module"))
+            self.assertTrue(result.stdout.startswith("(module" if target == "wasip1" else "(component"))
             self.assertIn("wasi=" + target, result.stdout)
 
     def test_syntax_errors_do_not_abort(self):

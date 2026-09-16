@@ -39,8 +39,8 @@ fn emit_wat_runtime(ctx: &mut WatContext, wasi: WasiTarget, _rt: &WatRuntimeStri
         out.push_str("  (import \"wasi_snapshot_preview1\" \"args_sizes_get\" (func $args_sizes_get (param i32 i32) (result i32)))\n");
         out.push_str("  (import \"wasi_snapshot_preview1\" \"args_get\" (func $args_get (param i32 i32) (result i32)))\n");
     }
-    out.push_str("  (memory (export \"memory\") 1)\n");
-    out.push_str("  (global $heap_ptr (mut i32) (i32.const 1024))\n");
+    out.push_str("  (memory (export \"memory\") __KANSEI_MEMORY_PAGES__)\n");
+    out.push_str("  (global $heap_ptr (mut i32) (i32.const __KANSEI_HEAP_START__))\n");
     out.push_str("  (global $TAG_PTR i64 (i64.const 0))\n");
     out.push_str("  (global $TAG_INT i64 (i64.const 1))\n");
     out.push_str("  (global $TAG_BOOL i64 (i64.const 2))\n");
@@ -5017,6 +5017,25 @@ fn emit_function_value(
 
 pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
 {
+    if wasi == WasiTarget::Wasip2
+    {
+        // Emit the same runtime for both targets, then translate its preview1
+        // ABI to real component imports (streams, arguments, exit, etc.). The
+        // command adapter also exposes wasi:cli/run instead of a core _start.
+        let core = dump_wat(ast, WasiTarget::Wasip1)?;
+        let module = ::wat::parse_str(&core).map_err(|err| format!("WAT assembly failed: {err:#}"))?;
+        let component = wit_component::ComponentEncoder::default()
+            .module(&module)
+            .and_then(|encoder| encoder.adapter(
+                wasi_preview1_component_adapter_provider::WASI_SNAPSHOT_PREVIEW1_ADAPTER_NAME,
+                wasi_preview1_component_adapter_provider::WASI_SNAPSHOT_PREVIEW1_COMMAND_ADAPTER,
+            ))
+            .and_then(|encoder| encoder.validate(true).encode())
+            .map_err(|err| format!("WASIp2 component generation failed: {err:#}"))?;
+        let text = wasmprinter::print_bytes(component)
+            .map_err(|err| format!("WASIp2 text generation failed: {err:#}"))?;
+        return Ok(text.replacen("(component", "(component\n  ;; kansei-wat wasi=wasip2", 1));
+    }
     let mut ctx = WatContext::new();
     ctx.out.push_str("(module\n");
     ctx.out
@@ -5398,6 +5417,11 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
         return Err("WAT dump failed: no supported functions could be emitted.".to_string());
     }
 
+    if let Some(err) = last_err
+    {
+        return Err(format!("WAT dump failed: {err}"));
+    }
+
     for (offset, bytes) in ctx.data_segments.iter()
     {
         ctx.out
@@ -5415,6 +5439,50 @@ pub fn dump_wat(ast: &Expr, wasi: WasiTarget) -> Result<String, String>
         ctx.out.push_str("\")\n");
     }
 
+    // Literal data and the bump heap share memory. Reserve all static data
+    // before allocating runtime objects, including the component adapter stack.
+    let heap_start = (ctx.data_offset + 15) & !15;
+    let pages = ((heap_start as u64 + 65535) / 65536).max(1);
+    ctx.out = ctx.out.replace("__KANSEI_MEMORY_PAGES__", &pages.to_string())
+        .replace("__KANSEI_HEAP_START__", &heap_start.to_string());
+    ctx.out.push_str(r#"
+  (func (export "cabi_realloc") (param $old i32) (param $old_size i32)
+        (param $align i32) (param $size i32) (result i32)
+    (local $new i32)
+    local.get $size
+    i32.eqz
+    if
+      i32.const 0
+      return
+    end
+    local.get $size
+    local.get $align
+    i32.add
+    call $alloc
+    local.get $align
+    i32.const 1
+    i32.sub
+    i32.add
+    i32.const 0
+    local.get $align
+    i32.sub
+    i32.and
+    local.set $new
+    local.get $old
+    if
+      local.get $new
+      local.get $old
+      local.get $old_size
+      local.get $size
+      local.get $old_size
+      local.get $size
+      i32.lt_u
+      select
+      memory.copy
+    end
+    local.get $new
+  )
+"#);
     ctx.out.push_str(")\n");
     Ok(ctx.out)
 }
@@ -5432,5 +5500,121 @@ mod tests
         resolve_slots(&mut ast);
         let text = dump_wat(&ast, WasiTarget::Wasip1).unwrap();
         wasmtime::Module::new(&wasmtime::Engine::default(), text.as_bytes()).unwrap();
+    }
+
+    #[test]
+    fn unsupported_function_does_not_produce_a_partial_program()
+    {
+        let mut ast = crate::parser::parse_source(
+            "fn unsupported()\n  2 ** 3\nend\nputs unsupported()",
+        ).unwrap();
+        resolve_slots(&mut ast);
+        for target in [WasiTarget::Wasip1, WasiTarget::Wasip2]
+        {
+            assert!(dump_wat(&ast, target).unwrap_err().contains("pow"));
+        }
+    }
+}
+
+#[cfg(test)]
+mod wasi_execution_tests
+{
+    use super::*;
+    use wasmtime::{Engine, Store};
+    use wasmtime::component::{Component, ResourceTable};
+    use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
+    use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
+
+    struct State
+    {
+        ctx: WasiCtx,
+        table: ResourceTable,
+    }
+
+    impl WasiView for State
+    {
+        fn ctx(&mut self) -> WasiCtxView<'_>
+        {
+            WasiCtxView { ctx: &mut self.ctx, table: &mut self.table }
+        }
+    }
+
+    fn run(source: &str, target: WasiTarget, args: &[&str]) -> (String, String)
+    {
+        let mut ast = crate::parser::parse_source(source).unwrap();
+        resolve_slots(&mut ast);
+        let text = dump_wat(&ast, target).unwrap();
+        let mut config = wasmtime::Config::new();
+        config.consume_fuel(true);
+        let engine = Engine::new(&config).unwrap();
+        let stdout = MemoryOutputPipe::new(1024 * 1024);
+        let stderr = MemoryOutputPipe::new(1024 * 1024);
+        let mut builder = WasiCtx::builder();
+        builder.args(args).stdout(stdout.clone()).stderr(stderr.clone());
+        match target
+        {
+            WasiTarget::Wasip1 =>
+            {
+                let module = wasmtime::Module::new(&engine, text).unwrap();
+                let mut linker = wasmtime::Linker::new(&engine);
+                wasmtime_wasi::p1::add_to_linker_sync(&mut linker, |ctx| ctx).unwrap();
+                let mut store = Store::new(&engine, builder.build_p1());
+                store.set_fuel(100_000_000).unwrap();
+                let instance = linker.instantiate(&mut store, &module).unwrap();
+                instance.get_typed_func::<(), ()>(&mut store, "_start").unwrap()
+                    .call(&mut store, ()).unwrap();
+            }
+            WasiTarget::Wasip2 =>
+            {
+                let component = Component::new(&engine, text).unwrap();
+                let mut linker = wasmtime::component::Linker::new(&engine);
+                wasmtime_wasi::p2::add_to_linker_sync(&mut linker).unwrap();
+                let mut store = Store::new(&engine, State {
+                    ctx: builder.build(), table: ResourceTable::new(),
+                });
+                store.set_fuel(100_000_000).unwrap();
+                let command = wasmtime_wasi::p2::bindings::sync::Command::instantiate(
+                    &mut store, &component, &linker,
+                ).unwrap();
+                command.wasi_cli_run().call_run(&mut store).unwrap().unwrap();
+            }
+        }
+        (String::from_utf8(stdout.contents().to_vec()).unwrap(),
+         String::from_utf8(stderr.contents().to_vec()).unwrap())
+    }
+
+    #[test]
+    fn wasi_targets_execute_stdout_stderr_and_arguments()
+    {
+        let source = r#"
+print "hello "
+puts "世界"
+eprint "error "
+eputs "café"
+puts 1 + 2
+puts program.args[0]
+puts program.args[1]
+"#;
+        for target in [WasiTarget::Wasip1, WasiTarget::Wasip2]
+        {
+            assert_eq!(run(source, target, &["kansei", "argument with spaces", "Grüße"]),
+                ("hello 世界\n3\nargument with spaces\nGrüße\n".into(), "error café\n".into()));
+        }
+    }
+
+    #[test]
+    fn wasi_targets_handle_empty_arguments_and_memory_growth()
+    {
+        // Cross both the output stream's chunk size and a Wasm memory page.
+        let message = "x".repeat(80_000);
+        let source = format!("puts \"{message}\"\n");
+        for target in [WasiTarget::Wasip1, WasiTarget::Wasip2]
+        {
+            let (stdout, stderr) = run(&source, target, &[]);
+            assert_eq!(stdout.len(), message.len() + 1);
+            assert!(stdout.starts_with(&message));
+            assert!(stdout.ends_with("\n"));
+            assert!(stderr.is_empty());
+        }
     }
 }

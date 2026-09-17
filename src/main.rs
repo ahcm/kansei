@@ -1,22 +1,22 @@
 #![feature(portable_simd)]
 
-mod ast;
-mod eval;
-mod intern;
+pub(crate) mod ast;
+pub(crate) mod eval;
+pub(crate) mod intern;
 #[path = "std/mod.rs"]
-mod kansei_std;
-mod lexer;
-mod lsp;
-mod parser;
-mod pm;
-mod sexpr;
-mod source;
-mod formatter;
-mod source_files;
-mod test_runner;
-mod value;
-mod wasm;
-mod wasm_pm;
+pub(crate) mod kansei_std;
+pub(crate) mod lexer;
+pub(crate) mod lsp;
+pub(crate) mod parser;
+pub(crate) mod pm;
+pub(crate) mod sexpr;
+pub(crate) mod source;
+pub(crate) mod formatter;
+pub(crate) mod source_files;
+pub(crate) mod test_runner;
+pub(crate) mod value;
+pub(crate) mod wasm;
+pub(crate) mod wasm_pm;
 
 use directories::ProjectDirs;
 use rustc_hash::FxHashMap;
@@ -48,7 +48,7 @@ fn native_program_exit(args: &[value::Value]) -> Result<value::Value, String>
     process::exit(code);
 }
 
-fn main() -> rustyline::Result<()>
+pub(crate) fn main() -> rustyline::Result<()>
 {
     let args: Vec<String> = env::args().collect();
     if args.iter().any(|arg| arg == "--version" || arg == "-V")

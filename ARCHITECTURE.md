@@ -7,7 +7,11 @@ column positions. CLI and LSP clients decide how to present those errors.
 
 | Module | Responsibility |
 | --- | --- |
+| `src/lib.rs` | Library crate root and public embedding exports |
+| `src/main.rs`, `src/bin/ks.rs` | Thin binary entry points calling the library CLI |
+| `src/cli.rs` | Process arguments, script metadata, REPL, CLI commands, and process exit |
 | `src/eval.rs` | Interpreter state, environments, module loading, host calls, and shared runtime errors |
+| `src/eval/api.rs` | Source evaluation, host globals/calls, script metadata, structured errors, and output configuration |
 | `src/eval/numeric.rs` | Shared arithmetic and numeric conversions |
 | `src/eval/compiler.rs` | Slot resolution, compilation, optimization eligibility, and bytecode diagnostics |
 | `src/eval/wat.rs` | WAT generation and its emitted runtime |
@@ -17,7 +21,9 @@ column positions. CLI and LSP clients decide how to present those errors.
 | `src/value.rs` | Runtime values, instructions, and cache representations |
 | `src/std/` | Native standard library modules |
 
-These are internal module boundaries, not independent public libraries. The
+These modules belong to one library crate, shared by both binaries. The root
+exports provide the embedding API; public low-level modules expose runtime
+representations without making each backend an independent library. The
 backends share the same runtime values and builtin implementation. Helpers are
 visible within `eval`; keep changes to cache representations explicit in
 `value.rs` and verify behavior across all execution modes.
@@ -34,6 +40,7 @@ programmatically generated code, where original comments are unavailable.
 ## Regression strategy
 
 Use `cargo test` for parser, formatter, and installer invariants. Use
+`tests/embedding.rs` to verify the public API from a separate Rust crate. Use
 `tests/regression/` for shared language behavior, running the same fixtures in
 all execution modes. The CLI harness verifies release-sensitive behavior such
 as syntax-error recovery in a persistent LSP process. Preserve this coverage
@@ -50,3 +57,6 @@ is retained in runtime values or caches.
 The opt-in [performance harness](benchmarks/README.md) measures parsing,
 resolution, formatting, execution modes, and cold/warm caches in release builds.
 It lives behind `cfg(test)` and has no production instrumentation.
+The runner targets the library test harness (`cargo test --lib`). Output writers
+are per-interpreter state and are consulted only by output builtins; expression
+layouts, compilation eligibility, and runtime cache structures are unchanged.

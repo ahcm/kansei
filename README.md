@@ -21,6 +21,8 @@ cargo build --locked --release
 
 Run `./target/release/kansei` without a script to enter the REPL. A syntax error
 reports its location and leaves the REPL available for another input.
+`ks` is an equivalent binary with its own entry point; `cargo run` defaults to
+`kansei`.
 
 ```ruby
 fn add(x, y)
@@ -30,6 +32,71 @@ end
 add10 = add(10)
 puts add10(5) # 15
 ```
+
+## Embedding in Rust
+
+The package also exposes a `kansei` library. From another project, add a local
+checkout as a dependency (adjust the path):
+
+```toml
+[dependencies]
+kansei = { path = "../kansei", default-features = false }
+```
+
+Use the nightly compiler specified in this repository's `rust-toolchain.toml`;
+a dependency's toolchain file does not select the compiler for its consumer.
+Enable optional standard library features as needed.
+
+```rust
+use kansei::{Interpreter, Program};
+
+fn main() -> Result<(), kansei::Error> {
+    let mut interpreter = Interpreter::new();
+    interpreter.set_program(Program {
+        name: "my-app".into(),
+        args: vec!["hello".into()],
+        ..Program::default()
+    });
+    interpreter.register_native("identity", |args| {
+        args.first().cloned().ok_or_else(|| "expected an argument".into())
+    });
+    let result = interpreter.eval_source("identity(6 * 7)")?;
+    assert_eq!(result.to_string(), "42");
+    Ok(())
+}
+```
+
+`eval_source` parses and resolves source, returns its last value, and retains
+globals between evaluations. `Error::Parse` and `Error::Runtime` preserve error
+locations; runtime errors also carry trace frames. Evaluation is not
+transactional: changes made before a runtime error remain. Use `set_global`,
+`get_global`, and `call` to exchange values and call script functions from Rust.
+`Value::HostFunction` additionally lets a registered function access the interpreter.
+
+Call `set_program` to supply `program.name`, `program.args`, and `program.env`.
+The library does not read process arguments or populate that metadata implicitly.
+`Program::default()` has no arguments or environment entries. The CLI supplies
+its process environment and adds `program.exit`; the embedding API does not
+install that process-exit function. Set `set_main_path` when relative module
+imports should be resolved from a script's location.
+
+`set_stdout` and `set_stderr` accept owned `std::io::Write + 'static` writers for
+`puts`/`print` and `eputs`/`eprint`. Output failures become runtime errors. For
+in-memory capture, a writer wrapping `Rc<RefCell<Vec<u8>>>` lets the host retain
+access to the buffer; see [the embedding tests](tests/embedding.rs). Logging has
+its existing independent file/stderr configuration, and these writers do not
+redirect subprocess or native-extension output.
+
+Interpreters and values use `Rc`/`RefCell` and are neither `Send` nor `Sync`.
+Create an independent interpreter inside each host thread and keep its values
+and interned symbol IDs on that thread. AST/runtime representations in the
+public low-level modules may change; prefer the root exports for embedding.
+CLI dependencies and Wasmtime remain part of the core build for now.
+
+Run the [embedding example](examples/embed.rs) with
+`cargo run --locked --no-default-features --example embed`, or generate API
+documentation with `cargo doc --locked --no-deps --lib`. The `kansei` and `ks`
+binaries both call `kansei::cli::run()`; Rust hosts use `Interpreter` directly.
 
 ## Build features
 

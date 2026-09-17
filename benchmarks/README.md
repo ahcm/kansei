@@ -8,7 +8,8 @@ python3 scripts/benchmark.py --output /tmp/kansei-before.json
 python3 scripts/benchmark.py --baseline /tmp/kansei-before.json --output /tmp/kansei-after.json
 ```
 
-The runner builds the pinned release toolchain with no optional libraries, warms
+The runner uses the library test harness (`cargo test --lib`) with the pinned
+release toolchain and no optional libraries, warms
 up each case, calibrates batches to at least 20 ms, and records nine samples.
 It reports medians in nanoseconds per operation, raw samples, build flags, CPU,
 compiler, revision, dirty-worktree status, and lockfile/harness hashes. Compilation

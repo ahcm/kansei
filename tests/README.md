@@ -36,6 +36,11 @@ formatter, and runner itself. Rust unit tests cover parser errors, formatting
 preservation, and module installation. Repeat with a release binary to catch
 build-profile differences.
 
+The same harness runs against `ks` in CI, including script arguments and
+`program.exit`. `cargo test --test embedding` checks the library from an external
+crate: persistent globals, host functions, structured errors, program metadata,
+and output capture/failures. `cargo test --doc` checks the public API example.
+
 The remaining `.ks` files are historical examples and integration programs.
 The CLI harness also verifies reviewed snapshots for `test_logic.ks`,
 `test_casts.ks`, and reference capture in `test_currying.ks`.

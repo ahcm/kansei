@@ -71,7 +71,7 @@ def main():
     baseline = json.loads(args.baseline.read_text()) if args.baseline else None
     info = metadata()
     result = subprocess.run([
-        'cargo', 'test', '--release', '--locked', '--no-default-features', '--bin', 'kansei',
+        'cargo', 'test', '--release', '--locked', '--no-default-features', '--lib',
         '-j', str(args.jobs), 'performance_baselines', '--', '--ignored', '--nocapture', '--test-threads=1',
     ], cwd=ROOT, stdout=subprocess.PIPE, text=True)
     if result.returncode:

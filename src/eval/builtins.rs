@@ -317,46 +317,26 @@ impl Interpreter
     {
         match builtin
         {
-            Builtin::Puts =>
+            Builtin::Puts | Builtin::Print | Builtin::Eputs | Builtin::Eprint =>
             {
+                let writer = match builtin
+                {
+                    Builtin::Puts | Builtin::Print => &mut self.stdout,
+                    _ => &mut self.stderr,
+                };
+                let newline = matches!(builtin, Builtin::Puts | Builtin::Eputs);
                 let mut last = Value::Nil;
                 for arg in args
                 {
-                    println!("{}", arg);
-                    last = arg.clone();
-                }
-                Ok(last)
-            }
-            Builtin::Print =>
-            {
-                let mut last = Value::Nil;
-                for arg in args
-                {
-                    print!("{}", arg);
-                    io::stdout().flush().unwrap();
-                    last = arg.clone();
-                }
-                Ok(last)
-            }
-            Builtin::Eputs =>
-            {
-                let mut last = Value::Nil;
-                let mut stderr = io::stderr();
-                for arg in args
-                {
-                    writeln!(stderr, "{}", arg).unwrap();
-                    last = arg.clone();
-                }
-                Ok(last)
-            }
-            Builtin::Eprint =>
-            {
-                let mut last = Value::Nil;
-                let mut stderr = io::stderr();
-                for arg in args
-                {
-                    write!(stderr, "{}", arg).unwrap();
-                    stderr.flush().unwrap();
+                    let result = if newline
+                    {
+                        writeln!(writer, "{}", arg)
+                    }
+                    else
+                    {
+                        write!(writer, "{}", arg).and_then(|_| writer.flush())
+                    };
+                    result.map_err(|err| RuntimeError::simple(format!("output write failed: {err}"), 0))?;
                     last = arg.clone();
                 }
                 Ok(last)

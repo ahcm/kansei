@@ -21,6 +21,7 @@ jobs:
           cargo test --workspace "${options[@]}"
           cargo build "${options[@]}"
           python3 scripts/test-regressions.py target/${{ matrix.profile }}/kansei
+          python3 scripts/test-regressions.py target/${{ matrix.profile }}/ks
   features:
     runs-on: ubuntu-latest
     steps:

@@ -1,12 +1,22 @@
 //! Tree evaluation and host AST entry points.
 use super::*;
 
+struct SpanGuard(Option<(usize, usize, Rc<String>)>);
+
+impl Drop for SpanGuard
+{
+    fn drop(&mut self)
+    {
+        CURRENT_SPAN.with(|span| *span.borrow_mut() = self.0.take());
+    }
+}
+
 impl Interpreter
 {
     pub fn eval(&mut self, expr: &Expr, slots: &mut [Value]) -> EvalResult
     {
         let line = expr.line;
-        let prev_span = CURRENT_SPAN.with(|span| span.borrow().clone());
+        let _span_guard = SpanGuard(CURRENT_SPAN.with(|span| span.borrow().clone()));
         CURRENT_SPAN.with(|span| {
             *span.borrow_mut() = Some((expr.line, expr.column, expr.source.clone()));
         });
@@ -2722,9 +2732,6 @@ impl Interpreter
                 Ok(last)
             }
         };
-        CURRENT_SPAN.with(|span| {
-            *span.borrow_mut() = prev_span;
-        });
         result
     }
 }

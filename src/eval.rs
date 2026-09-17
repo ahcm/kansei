@@ -5,6 +5,8 @@ mod vm;
 mod builtins;
 mod ast_eval;
 mod wat;
+mod api;
+pub use api::{Error, Program};
 #[cfg(test)]
 mod benchmarks;
 pub use wat::dump_wat;
@@ -84,7 +86,7 @@ impl RuntimeError
         }
     }
 
-    pub fn simple(message: String, line: usize) -> Self
+    pub fn simple(message: String, mut line: usize) -> Self
     {
         let mut column = 0;
         let mut source = Rc::new(String::new());
@@ -93,6 +95,10 @@ impl RuntimeError
             {
                 if line == 0 || *span_line == line
                 {
+                    if line == 0
+                    {
+                        line = *span_line;
+                    }
                     column = *span_col;
                     source = span_src.clone();
                 }
@@ -1820,7 +1826,7 @@ pub enum LogFileMode
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum LogLevel
+pub enum LogLevel
 {
     Error = 0,
     Warn = 1,
@@ -1937,6 +1943,8 @@ fn current_log_timestamp() -> String
 
 pub struct Interpreter
 {
+    stdout: Box<dyn Write>,
+    stderr: Box<dyn Write>,
     // Current environment (scope)
     env: Rc<RefCell<Environment>>,
     // Stack of blocks passed to currently executing functions.
@@ -1972,6 +1980,8 @@ impl Interpreter
         let mut root_env = Environment::new(None);
         root_env.is_partial = true;
         Self {
+            stdout: Box::new(io::stdout()),
+            stderr: Box::new(io::stderr()),
             env: Rc::new(RefCell::new(root_env)),
             block_stack: Vec::new(),
             env_pool: Vec::with_capacity(32),

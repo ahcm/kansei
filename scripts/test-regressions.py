@@ -31,6 +31,10 @@ def messages(data):
 
 
 class Regressions(unittest.TestCase):
+    def test_program_metadata_and_exit(self):
+        result = run("-e", 'assert_eq(program.args, ["argument"])\nprogram.exit(7)', "argument")
+        self.assertEqual(result.returncode, 7, result.stdout + result.stderr)
+
     def test_execution_modes(self):
         result = run("test", "--bytecode", "all", "tests/regression", "tests/test_currying.ks", "tests/test_logic.ks", "tests/test_casts.ks", "tests/test_wasm_spec.ks")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

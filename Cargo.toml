@@ -2,6 +2,7 @@
 name = "kansei"
 version = "0.0.2"
 edition = "2024"
+default-run = "kansei"
 authors = ["Andreas Hauser <andreas@creative-memory.net>"]
 description = "Kansei programming language"
 license = "EUPL-1.2"

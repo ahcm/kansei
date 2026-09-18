@@ -132,7 +132,7 @@ impl ClientHandlerTrait for ClientHandler
 
     fn check_server_key(
         &mut self,
-        _server_public_key: &russh::keys::PublicKey,
+        _server_public_key: &russh::keys::PublicKeyOrCertificate,
     ) -> impl std::future::Future<Output = Result<bool, Self::Error>> + Send
     {
         let accept = self.accept_any_host_key;
@@ -388,15 +388,16 @@ impl ServerHandlerTrait for ServerHandler
     fn channel_open_session(
         &mut self,
         channel: Channel<russh::server::Msg>,
+        _handle: russh::ChannelOpenHandleInner<russh::server::Msg>,
         _session: &mut russh::server::Session,
-    ) -> impl std::future::Future<Output = Result<bool, Self::Error>> + Send
+    ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send
     {
         let handle = self.shared.register_channel(self.conn_id, channel);
         self.shared.push_event(ServerEvent::ChannelOpenSession {
             conn_id: self.conn_id,
             channel_handle: handle,
         });
-        async { Ok(true) }
+        async { Ok(()) }
     }
 
     fn shell_request(

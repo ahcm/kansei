@@ -269,9 +269,9 @@ struct KanseiEguiApp
 #[cfg(feature = "lib-egui")]
 impl eframe::App for KanseiEguiApp
 {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame)
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame)
     {
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             EGUI_UI.with(|cell| {
                 *cell.borrow_mut() = Some(ui as *mut egui::Ui);
             });

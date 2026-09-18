@@ -1,8 +1,8 @@
 use super::LibMap;
 use crate::intern;
 use crate::value::{MapValue, Value};
-use hmac::{Hmac, Mac};
-use rand::RngCore;
+use hmac::{Hmac, KeyInit, Mac};
+use rand::Rng;
 use rustc_hash::FxHashMap;
 use sha2::{Digest, Sha256};
 use std::cell::RefCell;

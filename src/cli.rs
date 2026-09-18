@@ -547,7 +547,9 @@ fn run_get_dirs() -> i32
 
 fn run_repl(mut interpreter: eval::Interpreter) -> rustyline::Result<()>
 {
-    println!("Kansei v0.0.2");
+    let name = env!("CARGO_PKG_NAME");
+    let version = env!("CARGO_PKG_VERSION");
+    println!("{name} v{version}");
     println!("Have fun!");
 
     let mut input_buffer = String::new();

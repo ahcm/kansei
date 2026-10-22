@@ -6463,10 +6463,7 @@ fn eval_call_value_cached_generic(
             let arg_len = arg_vals.len();
             if arg_len < func_data.params.len()
             {
-                return Err(RuntimeError {
-                    message: "Too few arguments".to_string(),
-                    line: 0,
-                });
+                return interpreter.invoke_function(func_data.clone(), arg_vals, 0, block_owned);
             }
             if arg_len > func_data.params.len()
             {
@@ -6491,6 +6488,13 @@ fn eval_call_value_cached_generic(
                     Value::Uninitialized,
                     func_data.declarations.len(),
                 );
+                interpreter.ensure_slot_capacity(
+                    &mut new_slots,
+                    func_data.param_offset,
+                    func_data.params.len(),
+                    &func_data.bound_args,
+                );
+                interpreter.apply_bound_args(&func_data.bound_args, &mut new_slots);
                 for (i, val) in coerced_args.iter().cloned().enumerate()
                 {
                     new_slots[i + func_data.param_offset] = val;
@@ -6506,6 +6510,13 @@ fn eval_call_value_cached_generic(
                     Value::Uninitialized,
                     func_data.declarations.len(),
                 );
+                interpreter.ensure_slot_capacity(
+                    &mut new_slots,
+                    func_data.param_offset,
+                    func_data.params.len(),
+                    &func_data.bound_args,
+                );
+                interpreter.apply_bound_args(&func_data.bound_args, &mut new_slots);
                 for (i, val) in coerced_args.iter().cloned().enumerate()
                 {
                     new_slots[i + func_data.param_offset] = val;
@@ -6518,6 +6529,13 @@ fn eval_call_value_cached_generic(
                     Value::Uninitialized,
                     func_data.declarations.len(),
                 );
+                interpreter.ensure_slot_capacity(
+                    &mut new_slots,
+                    func_data.param_offset,
+                    func_data.params.len(),
+                    &func_data.bound_args,
+                );
+                interpreter.apply_bound_args(&func_data.bound_args, &mut new_slots);
                 for (i, val) in coerced_args.iter().cloned().enumerate()
                 {
                     new_slots[i + func_data.param_offset] = val;
@@ -9870,6 +9888,13 @@ fn execute_instructions(
                                 Value::Uninitialized,
                                 data.declarations.len(),
                             );
+                            interpreter.ensure_slot_capacity(
+                                &mut new_slots,
+                                data.param_offset,
+                                data.params.len(),
+                                &data.bound_args,
+                            );
+                            interpreter.apply_bound_args(&data.bound_args, &mut new_slots);
                             if !data.params.is_empty()
                             {
                                 new_slots[data.param_offset] = default_int(i as i128);
@@ -10834,6 +10859,36 @@ impl Interpreter
         else
         {
             Rc::new(RefCell::new(Environment::new(parent)))
+        }
+    }
+
+    fn apply_bound_args(&self, bound_args: &[(usize, Value)], slots: &mut [Value])
+    {
+        for (slot, val) in bound_args
+        {
+            if let Some(dst) = slots.get_mut(*slot)
+            {
+                *dst = val.clone();
+            }
+        }
+    }
+
+    fn ensure_slot_capacity(
+        &self,
+        slots: &mut smallvec::SmallVec<[Value; 8]>,
+        param_offset: usize,
+        param_len: usize,
+        bound_args: &[(usize, Value)],
+    )
+    {
+        let mut required = param_offset.saturating_add(param_len);
+        if let Some(max_slot) = bound_args.iter().map(|(slot, _)| *slot).max()
+        {
+            required = required.max(max_slot + 1);
+        }
+        if slots.len() < required
+        {
+            slots.resize(required, Value::Uninitialized);
         }
     }
 
@@ -12645,10 +12700,13 @@ impl Interpreter
         if arg_len < data.params.len()
         {
             let new_env = self.get_env(Some(data.env.clone()), true);
-            for (param, val) in data.params.iter().zip(arg_vals.iter())
+            let mut bound_args: Vec<(usize, Value)> =
+                data.bound_args.iter().map(|(slot, val)| (*slot, val.clone())).collect();
+            for (idx, (param, val)) in data.params.iter().zip(arg_vals.iter()).enumerate()
             {
                 let coerced = coerce_param_value(&data.env, param, val.clone(), line)?;
-                new_env.borrow_mut().define(param.name, coerced);
+                new_env.borrow_mut().define(param.name, coerced.clone());
+                bound_args.push((data.param_offset + idx, coerced));
             }
             let num_bound = arg_vals.len();
             let remaining_params = data.params[num_bound..].to_vec();
@@ -12658,11 +12716,12 @@ impl Interpreter
                 declarations: data.declarations.clone(),
                 param_offset: data.param_offset + num_bound,
                 is_simple: data.is_simple,
-                uses_env: data.uses_env,
-                code: data.code.clone(),
-                reg_code: data.reg_code.clone(),
-                fast_reg_code: data.fast_reg_code.clone(),
+                uses_env: true,
+                code: None,
+                reg_code: None,
+                fast_reg_code: None,
                 const_pool: data.const_pool.clone(),
+                bound_args: Rc::new(bound_args),
                 env: new_env,
             })));
         }
@@ -12688,6 +12747,13 @@ impl Interpreter
                 Value::Uninitialized,
                 data.declarations.len(),
             );
+            self.ensure_slot_capacity(
+                &mut new_slots,
+                data.param_offset,
+                data.params.len(),
+                &data.bound_args,
+            );
+            self.apply_bound_args(&data.bound_args, &mut new_slots);
             for (i, val) in coerced_args.iter().cloned().enumerate()
             {
                 new_slots[i + data.param_offset] = val;
@@ -12703,6 +12769,13 @@ impl Interpreter
                 Value::Uninitialized,
                 data.declarations.len(),
             );
+            self.ensure_slot_capacity(
+                &mut new_slots,
+                data.param_offset,
+                data.params.len(),
+                &data.bound_args,
+            );
+            self.apply_bound_args(&data.bound_args, &mut new_slots);
             for (i, val) in coerced_args.iter().cloned().enumerate()
             {
                 new_slots[i + data.param_offset] = val;
@@ -12715,6 +12788,13 @@ impl Interpreter
                 Value::Uninitialized,
                 data.declarations.len(),
             );
+            self.ensure_slot_capacity(
+                &mut new_slots,
+                data.param_offset,
+                data.params.len(),
+                &data.bound_args,
+            );
+            self.apply_bound_args(&data.bound_args, &mut new_slots);
             for (i, val) in coerced_args.iter().cloned().enumerate()
             {
                 new_slots[i + data.param_offset] = val;
@@ -12722,6 +12802,13 @@ impl Interpreter
             if data.uses_env
             {
                 let new_env = self.get_env(Some(data.env.clone()), false);
+                if !data.bound_args.is_empty()
+                {
+                    for (param, val) in data.params.iter().zip(coerced_args.iter().cloned())
+                    {
+                        new_env.borrow_mut().define(param.name, val);
+                    }
+                }
                 let original_env = self.env.clone();
                 self.env = new_env.clone();
                 let result = execute_instructions(self, code, &data.const_pool, &mut new_slots);
@@ -12738,6 +12825,13 @@ impl Interpreter
                 Value::Uninitialized,
                 data.declarations.len(),
             );
+            self.ensure_slot_capacity(
+                &mut new_slots,
+                data.param_offset,
+                data.params.len(),
+                &data.bound_args,
+            );
+            self.apply_bound_args(&data.bound_args, &mut new_slots);
             for (i, val) in coerced_args.iter().cloned().enumerate()
             {
                 new_slots[i + data.param_offset] = val;
@@ -12745,6 +12839,13 @@ impl Interpreter
             if data.uses_env
             {
                 let new_env = self.get_env(Some(data.env.clone()), false);
+                if !data.bound_args.is_empty()
+                {
+                    for (param, val) in data.params.iter().zip(coerced_args.iter().cloned())
+                    {
+                        new_env.borrow_mut().define(param.name, val);
+                    }
+                }
                 let original_env = self.env.clone();
                 self.env = new_env.clone();
                 let result = handle_eval_result(self.eval(&data.body, &mut new_slots))?;
@@ -12932,6 +13033,7 @@ impl Interpreter
                             reg_code,
                             fast_reg_code,
                             const_pool: Rc::new(const_pool),
+                            bound_args: Rc::new(Vec::new()),
                             env: func_env,
                         }));
                         self.env.borrow_mut().define(*name, func.clone());
@@ -13061,6 +13163,7 @@ impl Interpreter
                             reg_code,
                             fast_reg_code,
                             const_pool: Rc::new(const_pool),
+                            bound_args: Rc::new(Vec::new()),
                             env: func_env,
                         }));
                         self.env.borrow_mut().define(*name, func.clone());
@@ -13611,6 +13714,7 @@ impl Interpreter
                     reg_code,
                     fast_reg_code,
                     const_pool: Rc::new(const_pool),
+                    bound_args: Rc::new(Vec::new()),
                     env: func_env,
                 }));
                 self.env.borrow_mut().define(*name, func.clone());
@@ -13682,6 +13786,7 @@ impl Interpreter
                     reg_code,
                     fast_reg_code,
                     const_pool: Rc::new(const_pool),
+                    bound_args: Rc::new(Vec::new()),
                     env: func_env,
                 })))
             }
@@ -13802,6 +13907,7 @@ impl Interpreter
                     reg_code,
                     fast_reg_code,
                     const_pool: Rc::new(const_pool),
+                    bound_args: Rc::new(Vec::new()),
                     env: func_env,
                 }));
                 ty.methods.borrow_mut().insert(method_key, func.clone());
@@ -14101,6 +14207,13 @@ impl Interpreter
                             Value::Uninitialized,
                             data.declarations.len(),
                         );
+                        self.ensure_slot_capacity(
+                            &mut new_slots,
+                            data.param_offset,
+                            data.params.len(),
+                            &data.bound_args,
+                        );
+                        self.apply_bound_args(&data.bound_args, &mut new_slots);
                         if !data.params.is_empty()
                         {
                             new_slots[data.param_offset] = default_int(i as i128);

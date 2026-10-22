@@ -794,6 +794,7 @@ pub struct FunctionData
     pub reg_code: Option<Rc<RegFunction>>,
     pub fast_reg_code: Option<Rc<FastRegFunction>>,
     pub const_pool: Rc<Vec<Value>>,
+    pub bound_args: Rc<Vec<(usize, Value)>>,
     pub env: Rc<RefCell<Environment>>,
 }
 
